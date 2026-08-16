@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "dotagents-standard": {
+      "source": "zaventh/dotagents-standard-skill",
+      "sourceType": "github",
+      "skillPath": "skills/dotagents-standard/SKILL.md",
+      "computedHash": "ad5d53be3fa676758e6b2e207e774b946d4c23f12960625f6ee97b35d48195e7"
+    }
+  }
+}
