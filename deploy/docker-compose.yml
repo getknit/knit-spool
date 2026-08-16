@@ -1,4 +1,6 @@
 # A single self-hosted spool behind your own TLS-terminating proxy (see Caddyfile / nginx.conf).
+# To have compose run the proxy too — Caddy, certificates issued and renewed automatically —
+# use docker-compose.tls.yml instead.
 services:
   spool:
     build: ..

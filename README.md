@@ -70,12 +70,24 @@ spec's §12 constants.
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×) |
 | `SPOOL_LOG_LEVEL` | `INFO` | root log level |
 
-The daemon serves plain WebSocket; terminate TLS at the reverse proxy you already run — see
-[`deploy/`](deploy/) for docker-compose, Caddy, and nginx snippets. Sizing target: idles in
-~128–256 MB on the cheapest VPS tier (`-Xmx256m` is the default).
+The daemon serves plain WebSocket; TLS terminates at a reverse proxy — either one you already run
+([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml)), or one compose brings up for you with
+certificates issued and renewed automatically:
+
+```sh
+cd deploy && cp .env.example .env   # set SPOOL_DOMAIN (already resolving here) + ACME_EMAIL
+docker compose -f docker-compose.tls.yml up -d
+```
+
+That runs Caddy on :80/:443 in front of the daemon, which is published nowhere but the compose
+network; clients get `wss://$SPOOL_DOMAIN/spool/v1`. Sizing target: idles in ~128–256 MB on the
+cheapest VPS tier (`-Xmx256m` is the default).
 
 Operator surface: `GET /healthz` (liveness), `GET /metrics` (Prometheus text; token-gated with
-`?k=` on private spools).
+`?k=` on private spools — the shipped proxy configs seal it off from the internet, so scrape it
+from inside your network). The bearer token rides in the query string, so those configs also keep
+it out of proxy access logs; do the same in any proxy of your own.
 
 ## Docker
 

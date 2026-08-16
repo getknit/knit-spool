@@ -1,5 +1,30 @@
 # Caddy terminates TLS and proxies WebSocket upgrades automatically.
 # Pair with SPOOL_TRUST_PROXY=true so per-IP limits see the real client address.
+# To have compose bring Caddy up too, use ./docker-compose.tls.yml + ./Caddyfile.compose.
 spool.example.com {
 	reverse_proxy 127.0.0.1:9470
+
+	# A spool is blinded by design — do not let the proxy log undo that. Caddy logs
+	# access by default, and the default fields would record the bearer token (it
+	# rides in ?k=), the exact client address, and a fingerprintable User-Agent.
+	log {
+		output stderr
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete k
+				}
+				request>remote_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>client_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>headers>User-Agent delete
+			}
+		}
+	}
 }

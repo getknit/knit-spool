@@ -4,3 +4,4 @@ build/
 .kotlin/
 *.iml
 local.properties
+deploy/.env

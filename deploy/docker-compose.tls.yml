@@ -1,0 +1,61 @@
+# Self-contained deploy: Caddy terminates TLS in front of the spool and obtains/renews
+# the certificate itself (ACME, Let's Encrypt by default). Only 80/443 are published —
+# the daemon is reachable solely over the compose network.
+#
+#   cd deploy && cp .env.example .env && $EDITOR .env   # SPOOL_DOMAIN, ACME_EMAIL
+#   docker compose -f docker-compose.tls.yml up -d
+#
+# Point SPOOL_DOMAIN's A/AAAA record at this host *before* the first start: ACME needs
+# :80 reachable from the internet to issue, and Let's Encrypt rate-limits failures.
+#
+# Clients then connect to wss://$SPOOL_DOMAIN/spool/v1 (+ ?k=$SPOOL_TOKEN if private).
+#
+# For an existing proxy on the host, use docker-compose.yml + Caddyfile/nginx.conf.
+
+name: knit-spool
+
+services:
+  spool:
+    build: ..
+    # or: image: <registry>/knit-spool:latest
+    restart: unless-stopped
+    expose:
+      - "9470" # compose network only — never published to the host
+    environment:
+      SPOOL_POW_BITS: "${SPOOL_POW_BITS:-20}" # spec §12 recommended difficulty
+      SPOOL_TOKEN: "${SPOOL_TOKEN:-}" # empty = public spool
+      SPOOL_TRUST_PROXY: "true" # Caddy appends X-Forwarded-For; per-IP limits need it
+      SPOOL_MAX_BYTES: "${SPOOL_MAX_BYTES:-268435456}"
+      SPOOL_LOG_LEVEL: "${SPOOL_LOG_LEVEL:-INFO}"
+    volumes:
+      - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
+    networks:
+      - spool
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      spool:
+        condition: service_healthy # the image ships a /healthz HEALTHCHECK
+    ports:
+      - "80:80" # ACME HTTP-01 + the HTTP->HTTPS redirect Caddy adds
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      SPOOL_DOMAIN: "${SPOOL_DOMAIN:?set SPOOL_DOMAIN in deploy/.env}"
+      ACME_EMAIL: "${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}"
+    volumes:
+      - ./Caddyfile.compose:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # issued certs and the ACME account key — must persist
+      - caddy-config:/config
+    networks:
+      - spool
+
+networks:
+  spool:
+
+volumes:
+  spool-data:
+  caddy-data:
+  caddy-config:

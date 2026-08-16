@@ -1,0 +1,54 @@
+# Caddy config for docker-compose.tls.yml (mounted read-only at /etc/caddy/Caddyfile).
+# Certificates are issued and renewed automatically; there is nothing to cron.
+#
+# Caddy proxies WebSocket upgrades natively and appends X-Forwarded-For, which is why
+# the compose file runs the daemon with SPOOL_TRUST_PROXY=true — per-IP connection and
+# new-scope limits would otherwise all see the proxy's address as one client.
+#
+# For a Caddy you already run on the host, use ./Caddyfile instead — same directives,
+# proxying to 127.0.0.1 rather than a compose service.
+{
+	email {$ACME_EMAIL}
+	# Uncomment to rehearse against the staging CA — untrusted certs, generous rate
+	# limits. Swap back and `docker compose restart caddy` for a real one.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$SPOOL_DOMAIN} {
+	# /metrics leaks no ciphertext but does expose scope counts and traffic shape, and
+	# the daemon only token-gates it on private spools. Sealed at the edge by default;
+	# scrape http://spool:9470/metrics from inside the compose network instead.
+	respond /metrics 404
+
+	reverse_proxy spool:9470 {
+		# The daemon pings every 30 s and gives up at 60 s; leave the proxy's read side
+		# open past that so idle-but-healthy subscriber connections are not cut here.
+		transport http {
+			read_timeout 0
+		}
+	}
+
+	# A spool is blinded by design — do not let the proxy log undo that. Caddy logs
+	# access by default, and the default fields would record the bearer token (it
+	# rides in ?k=), the exact client address, and a fingerprintable User-Agent.
+	log {
+		output stderr
+		format filter {
+			wrap console
+			fields {
+				request>uri query {
+					delete k
+				}
+				request>remote_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>client_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>headers>User-Agent delete
+			}
+		}
+	}
+}
