@@ -22,6 +22,23 @@ services:
     # The JVM is pinned to -Xmx256m; ~450 MB RSS with metaspace, threads, and CIO's
     # direct buffers. 512 MB leaves the heap room to spike without taking the box down.
     mem_limit: 512m
+    # Sizing for this tier. The daemon's own defaults track the spec's §12 constants and are
+    # deliberately left alone; these are deployment policy for a 1 GB box on a metered link.
+    #
+    # A $5-tier box's binding constraint is not CPU — the store thread sustains order-1000
+    # pushes/s here, while 1 TB/month of transfer works out to ~386 KB/s sustained outbound.
+    # Every push is amplified by (subscribers - 1) on fan-out, so blob size sets the bill.
+    environment:
+      # 16 KiB, down from the 64 KiB default: a 4x cut in the fan-out bytes each message costs.
+      # Raise it if this spool is meant to relay media rather than text.
+      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-16384}"
+      # 64 scopes is the first ceiling any real deployment hits, and it is nowhere near a
+      # hardware limit — a scope is a row plus a subscriber set. SPOOL_MAX_BYTES still bounds
+      # total payload. Past ~1000, raise SPOOL_SWEEP_MS with it: the sweeper walks every scope
+      # on the single store thread each tick.
+      SPOOL_MAX_SCOPES: "${SPOOL_MAX_SCOPES:-512}"
+      # 16 is low wherever carrier-grade NAT puts many mobile clients behind one address.
+      SPOOL_MAX_CONNS_PER_IP: "${SPOOL_MAX_CONNS_PER_IP:-64}"
     logging:
       driver: json-file
       options:
