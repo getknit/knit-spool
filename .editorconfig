@@ -1,0 +1,15 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+[*.{kt,kts}]
+# Kept in lockstep with the Knit app repo's ktlint setup (ktlint_official, default line length).
+ktlint_code_style = ktlint_official
+
+[*.{yml,yaml,toml,json}]
+indent_size = 2

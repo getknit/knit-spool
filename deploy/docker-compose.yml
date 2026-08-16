@@ -1,0 +1,18 @@
+# A single self-hosted spool behind your own TLS-terminating proxy (see Caddyfile / nginx.conf).
+services:
+  spool:
+    build: ..
+    # or: image: <registry>/knit-spool:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9470:9470"
+    environment:
+      SPOOL_POW_BITS: "20" # spec §12 recommended difficulty for public spools
+      # SPOOL_TOKEN: "change-me"      # private spool: wss://host/spool/v1?k=change-me
+      # SPOOL_TRUST_PROXY: "true"     # only when the proxy sets X-Forwarded-For
+      # SPOOL_MAX_BYTES: "268435456"  # payload watermark (default 256 MiB)
+    volumes:
+      - spool-data:/data
+
+volumes:
+  spool-data:

@@ -1,0 +1,12 @@
+.git
+.gradle
+.gitlab-ci.yml
+.idea
+.kotlin
+.agents
+.claude
+**/build
+*.iml
+local.properties
+deploy
+skills-lock.json

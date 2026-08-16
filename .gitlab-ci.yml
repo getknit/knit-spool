@@ -1,0 +1,56 @@
+# knit-spool CI — self-hosted GitLab. Kaniko builds the image without privileged runners.
+# Lint is ktlint (via `check`); detekt is deliberately deferred until the knit-next config
+# stabilizes off its alpha.
+stages: [test, package]
+
+variables:
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+
+default:
+  image: eclipse-temurin:21-jdk
+  cache:
+    key:
+      files:
+        - gradle/wrapper/gradle-wrapper.properties
+        - gradle/libs.versions.toml
+    paths:
+      - .gradle/caches
+      - .gradle/wrapper
+
+test:
+  stage: test
+  script:
+    - ./gradlew --no-daemon check
+  artifacts:
+    when: always
+    reports:
+      junit: "**/build/test-results/test/TEST-*.xml"
+
+# The conformance suite eats its own dogfood against the built daemon.
+conformance-selftest:
+  stage: test
+  script:
+    - ./gradlew --no-daemon :daemon:installDist :conformance:installDist
+    # Open scope-creation rate so the destructive quota check (~64 scopes) finishes in seconds.
+    - SPOOL_POW_BITS=8 SPOOL_RATE_NEW_SCOPES=10000 SPOOL_DATA_DIR="$CI_PROJECT_DIR/.spool-data" daemon/build/install/knit-spool/bin/knit-spool &
+    - sleep 5
+    - conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance ws://127.0.0.1:9470/spool/v1 --destructive
+
+docker:
+  stage: package
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 -w0)\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      ${CI_COMMIT_BRANCH:+$([ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && echo --destination "$CI_REGISTRY_IMAGE:latest")}
+      ${CI_COMMIT_TAG:+--destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"}
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'

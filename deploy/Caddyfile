@@ -1,0 +1,5 @@
+# Caddy terminates TLS and proxies WebSocket upgrades automatically.
+# Pair with SPOOL_TRUST_PROXY=true so per-IP limits see the real client address.
+spool.example.com {
+	reverse_proxy 127.0.0.1:9470
+}
