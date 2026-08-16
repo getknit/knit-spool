@@ -70,6 +70,8 @@ private const val RATE_STRIKE_WINDOW_MS = 10_000L
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
 private const val IP_IDLE_MS = 600_000L
 
+private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+
 /**
  * The spool daemon, SPOOL_PROTOCOL.md §6–§8: one WebSocket route at `/spool/v1`, one CBOR record
  * per binary message, hello negotiation first in both directions, then sub/list/pull/push against
@@ -627,7 +629,18 @@ class SpoolServer(
 
     private fun binary(bytes: ByteArray): Frame.Binary = Frame.Binary(true, bytes)
 
-    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+    // On the hot path several times per record — twice per push, and once per requested *and* served
+    // blob id in `handlePull`, so 128 calls for a full 64-id pull. `String.format` per byte measured
+    // ~100x a nibble table (≈6 us vs ≈0.05 us for a 32-byte scope id).
+    private fun hex(bytes: ByteArray): String {
+        val out = CharArray(bytes.size * 2)
+        for (i in bytes.indices) {
+            val v = bytes[i].toInt() and 0xff
+            out[i * 2] = HEX_DIGITS[v ushr 4]
+            out[i * 2 + 1] = HEX_DIGITS[v and 0x0f]
+        }
+        return String(out)
+    }
 
     private fun constantTimeEquals(
         a: String?,

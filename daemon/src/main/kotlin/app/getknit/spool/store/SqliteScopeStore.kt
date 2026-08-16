@@ -28,6 +28,8 @@ class SqliteScopeStore private constructor(
     companion object {
         private val log = LoggerFactory.getLogger(SqliteScopeStore::class.java)
 
+        private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+
         fun open(
             dataDir: Path,
             hardLimits: HardLimits,
@@ -42,6 +44,12 @@ class SqliteScopeStore private constructor(
 
     private val statements = HashMap<String, PreparedStatement>()
     private val bytesTotal = AtomicLong(0L)
+
+    /**
+     * Reused across pushes — `getInstance` costs ~1.2 us of provider lookup per call, and every
+     * store method is `@Synchronized` (the server serializes them anyway). `digest()` self-resets.
+     */
+    private val sha256 = MessageDigest.getInstance("SHA-256")
 
     /** Per-scope columns bundled for read-modify-write inside one transaction. */
     private class ScopeRow(
@@ -273,7 +281,7 @@ class SqliteScopeStore private constructor(
                 writeRow(scopeId, row, now)
                 return@tx PushResult.TooLarge
             }
-            if (!MessageDigest.getInstance("SHA-256").digest(data).contentEquals(blobId)) {
+            if (!sha256.digest(data).contentEquals(blobId)) {
                 writeRow(scopeId, row, now)
                 return@tx PushResult.BadId
             }
@@ -300,7 +308,10 @@ class SqliteScopeStore private constructor(
                 evictOldest(scopeId, row, now)
                 evicted = true
             }
-            enforceTombstoneCap(scopeId, row.bounds)
+            // Only expiry and eviction add tombstones, and bounds cannot change inside a push — so
+            // with neither, the cap still holds and its COUNT + DELETE would be pure overhead.
+            // `subscribe` keeps calling this unconditionally: re-subscribing *can* lower the cap.
+            if (expired || evicted) enforceTombstoneCap(scopeId, row.bounds)
             writeRow(scopeId, row, now)
             PushResult.Stored(digestInfo(row), evictedOrExpired = expired || evicted)
         }
@@ -366,10 +377,13 @@ class SqliteScopeStore private constructor(
         now: Long,
     ): Boolean {
         val dead = ArrayList<Pair<ByteArray, Long>>()
-        val select = prep("SELECT blob_id, length(data) FROM blobs WHERE scope_id = ? AND arrived_at + ? < ?")
+        // The cutoff is computed here, not as `arrived_at + ttl < now` in SQL: an expression over the
+        // indexed column is not sargable, so that form degrades to `SCAN blobs` — a walk of the
+        // scope's whole live set on every push, list, pull, and subscribe. This form range-seeks
+        // idx_blobs_eviction instead. Integer-exact rearrangement; ttlMs <= maxTtlMs so no overflow.
+        val select = prep("SELECT blob_id, length(data) FROM blobs WHERE scope_id = ? AND arrived_at < ?")
         select.setBytes(1, scopeId)
-        select.setLong(2, row.bounds.ttlMs)
-        select.setLong(3, now)
+        select.setLong(2, now - row.bounds.ttlMs)
         select.executeQuery().use { rows ->
             while (rows.next()) dead.add(rows.getBytes(1) to rows.getLong(2))
         }
@@ -512,5 +526,13 @@ class SqliteScopeStore private constructor(
 
     private fun prep(sql: String): PreparedStatement = statements.getOrPut(sql) { connection.prepareStatement(sql) }
 
-    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+    private fun hex(bytes: ByteArray): String {
+        val out = CharArray(bytes.size * 2)
+        for (i in bytes.indices) {
+            val v = bytes[i].toInt() and 0xff
+            out[i * 2] = HEX_DIGITS[v ushr 4]
+            out[i * 2 + 1] = HEX_DIGITS[v and 0x0f]
+        }
+        return String(out)
+    }
 }
