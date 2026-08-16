@@ -1,0 +1,37 @@
+# Overlay for a 1 GB box (Linode Nanode and the like), layered over docker-compose.tls.yml:
+#
+#   docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml up -d
+#
+# Three things change. The image is pulled or side-loaded rather than built — Gradle wants
+# more memory than the whole box has. Each container gets a ceiling, so an overrun is a
+# container restart instead of the kernel's OOM killer picking a victim (which, on a box
+# this size, is often sshd). And the json log driver gets capped, because Caddy's access
+# log otherwise grows without bound on a 25 GB disk.
+#
+# Side-loading the image over SSH, no registry needed:
+#
+#   docker save knit-spool:latest | gzip | ssh root@<host> 'gunzip | docker load'
+#
+# (docker save/load, not export/import — the latter flattens a container and drops the
+# ENTRYPOINT, ENV, USER, VOLUME, and HEALTHCHECK this image relies on.)
+
+services:
+  spool:
+    image: "${SPOOL_IMAGE:-knit-spool:latest}"
+    build: !reset null
+    # The JVM is pinned to -Xmx256m; ~450 MB RSS with metaspace, threads, and CIO's
+    # direct buffers. 512 MB leaves the heap room to spike without taking the box down.
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
