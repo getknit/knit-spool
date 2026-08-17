@@ -29,9 +29,11 @@ services:
     # pushes/s here, while 1 TB/month of transfer works out to ~386 KB/s sustained outbound.
     # Every push is amplified by (subscribers - 1) on fan-out, so blob size sets the bill.
     environment:
-      # 32 KiB, half the 64 KiB default: every frame is amplified by (subscribers - 1) on
-      # fan-out, so this is the knob that sets the monthly transfer bill.
-      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-32768}"
+      # 16 KiB, a quarter of the 64 KiB default: every frame is amplified by (subscribers - 1)
+      # on fan-out, so this is the knob that sets the monthly transfer bill. It has to stay
+      # at least 512 bytes under SPOOL_MAX_RECORD (131072 by default) to leave room for the
+      # CBOR envelope — the daemon refuses to start otherwise.
+      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-16384}"
       # 1 MiB per scope, down from the 16 MiB default. Attachments are the largest single
       # thing this spool will ever move, so on a metered link the default is a poor fit for
       # the tier. Note this budget is *per scope*, not spool-wide — but attachment bytes do
