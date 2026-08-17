@@ -29,9 +29,16 @@ services:
     # pushes/s here, while 1 TB/month of transfer works out to ~386 KB/s sustained outbound.
     # Every push is amplified by (subscribers - 1) on fan-out, so blob size sets the bill.
     environment:
-      # 16 KiB, down from the 64 KiB default: a 4x cut in the fan-out bytes each message costs.
-      # Raise it if this spool is meant to relay media rather than text.
-      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-16384}"
+      # 32 KiB, half the 64 KiB default: every frame is amplified by (subscribers - 1) on
+      # fan-out, so this is the knob that sets the monthly transfer bill.
+      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-32768}"
+      # 1 MiB per scope, down from the 16 MiB default. Attachments are the largest single
+      # thing this spool will ever move, so on a metered link the default is a poor fit for
+      # the tier. Note this budget is *per scope*, not spool-wide — but attachment bytes do
+      # count toward SPOOL_MAX_BYTES, so the global watermark still bounds total disk and
+      # sheds oldest-scope-first. 0 switches attachments off entirely, and the daemon then
+      # omits all three attachment limits from HELLO (spec §7.3).
+      SPOOL_MAX_ATTACH_BYTES: "${SPOOL_MAX_ATTACH_BYTES:-1048576}"
       # 64 scopes is the first ceiling any real deployment hits, and it is nowhere near a
       # hardware limit — a scope is a row plus a subscriber set. SPOOL_MAX_BYTES still bounds
       # total payload. Past ~1000, raise SPOOL_SWEEP_MS with it: the sweeper walks every scope
