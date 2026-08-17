@@ -11,4 +11,5 @@ deploy/.env
 spool-daemon.log
 conformance.tap
 build.env
+metadata.json
 trivy-*.json

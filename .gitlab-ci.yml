@@ -1,10 +1,10 @@
-# knit-spool CI — self-hosted GitLab. Kaniko builds the image without privileged runners.
+# knit-spool CI — self-hosted GitLab.
 # Lint is ktlint (via `check`); detekt is deliberately deferred until the knit-next config
 # stabilizes off its alpha.
 #
 # Stages: test -> package -> verify -> release.
 #   test     unit + spec-vector tests, and the conformance suite against the freshly built daemon
-#   package  the container image (kaniko) and the installDist tarballs
+#   package  the container image (Docker-in-Docker + BuildKit) and the installDist tarballs
 #   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) — never block a merge
 #   release  tag-only; cuts a GitLab release pointing at the tagged image and dist tarballs
 #
@@ -135,35 +135,50 @@ conformance-selftest:
       - spool-daemon.log
 
 # ---------------- package ----------------
-# Kaniko needs no privileged runner. The image digest is published as a dotenv artifact so the
-# scan job pins the exact image this pipeline produced rather than re-resolving a mutable tag.
+# Docker-in-Docker with BuildKit. This was kaniko, which Google archived — no upstream fixes and
+# no CVE patches, so it is not something to keep in a release path.
+#
+# Layers cache into $CI_REGISTRY_IMAGE/cache with mode=max, so the intermediate stages cache too —
+# the Gradle stage inside the Dockerfile is the expensive one and it is not the final layer. The
+# image digest is published as a dotenv artifact so the scan job pins the exact image this
+# pipeline pushed rather than re-resolving a mutable tag.
 docker:
   stage: package
-  image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
+  image: docker:29-cli
+  services:
+    - name: docker:29-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
+    BUILDKIT_PROGRESS: "plain"
+  before_script:
+    - apk add --no-cache jq
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" | docker login --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # The default `docker` driver cannot export a registry cache; docker-container can.
+    - docker buildx create --use --name knit --driver docker-container
   script:
-    - mkdir -p /kaniko/.docker
-    # busybox base64 has no -w, so strip the wrapping with tr.
     - |
-      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
-      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
-    - |
-      # Built as a positional-parameter list so each conditional destination is one readable line.
+      # Built as a positional-parameter list so each conditional tag is one readable line.
       # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
-      set -- --context "$CI_PROJECT_DIR" \
-             --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-             --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
-             --digest-file /kaniko/digest \
-             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+      set -- --file Dockerfile \
+             --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+             --cache-from "type=registry,ref=$CI_REGISTRY_IMAGE/cache" \
+             --cache-to "type=registry,ref=$CI_REGISTRY_IMAGE/cache,mode=max" \
+             --metadata-file metadata.json \
+             --push
       if [ -n "$CI_COMMIT_TAG" ]; then
-        set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+        set -- "$@" --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        set -- "$@" --destination "$CI_REGISTRY_IMAGE:latest"
+        set -- "$@" --tag "$CI_REGISTRY_IMAGE:latest"
       fi
-      /kaniko/executor "$@"
-    - echo "IMAGE_DIGEST=$(cat /kaniko/digest)" > build.env
+      docker buildx build "$@" .
+    - echo "IMAGE_DIGEST=$(jq -r '."containerimage.digest"' metadata.json)" > build.env
+    - cat build.env
   artifacts:
     reports:
       dotenv: build.env
