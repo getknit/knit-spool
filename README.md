@@ -108,12 +108,16 @@ Validate any spool implementation — this one or a third party's — over a liv
 ```sh
 ./gradlew :conformance:installDist
 conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
-    wss://spool.example.com/spool/v1 [--token T] [--pow-limit 24] [--destructive]
+    wss://spool.example.com/spool/v1 [--token T | --token-file PATH] [--pow-limit 24] [--destructive]
 ```
 
 TAP output; exit 0 = all MUST checks pass. `--destructive` enables the quota/rate checks (they
 fill real capacity — run them against spools you operate). CI runs the suite against the built
 daemon on every pipeline (`conformance-selftest`).
+
+Prefer `--token-file` against a spool you care about: `--token` puts the bearer token in argv,
+where every local user can read it out of `ps` for the life of the run, and most shells record it
+in history. The file is read once and may be mode 0600.
 
 ## Build and test
 

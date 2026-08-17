@@ -6,11 +6,15 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import java.nio.file.AccessDeniedException
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.Path
 import kotlin.system.exitProcess
 
 private const val USAGE =
     "usage: knit-spool-conformance <ws(s)://host[:port]/spool/v1> " +
-        "[--token T] [--timeout-ms 10000] [--pow-limit 24] [--destructive]"
+        "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive]"
 
 /**
  * The conformance CLI: validates ANY spool implementation over a live WebSocket against
@@ -45,6 +49,7 @@ private class Options(
 private fun parseArgs(args: Array<String>): Options {
     var url: String? = null
     var token: String? = null
+    var tokenFile: String? = null
     var timeoutMs = 10_000L
     var powLimit = 24
     var destructive = false
@@ -53,6 +58,10 @@ private fun parseArgs(args: Array<String>): Options {
         when (val arg = args[i]) {
             "--token" -> {
                 token = args.getOrNull(++i) ?: usageExit()
+            }
+
+            "--token-file" -> {
+                tokenFile = args.getOrNull(++i) ?: usageExit()
             }
 
             "--timeout-ms" -> {
@@ -76,23 +85,58 @@ private fun parseArgs(args: Array<String>): Options {
     }
     val parsed = url ?: usageExit()
     if (!parsed.startsWith("ws://") && !parsed.startsWith("wss://")) usageExit()
+    // Refuse both rather than letting one silently win: which token was actually sent is exactly
+    // the thing an operator must not have to guess when a run fails to authenticate.
+    if (token != null && tokenFile != null) argExit("--token and --token-file are mutually exclusive")
+    val bearer = token ?: tokenFile?.let(::readTokenFile)
     val connectUrl =
         when {
-            token == null -> parsed
-            '?' in parsed -> "$parsed&k=$token"
-            else -> "$parsed?k=$token"
+            bearer == null -> parsed
+            '?' in parsed -> "$parsed&k=$bearer"
+            else -> "$parsed?k=$bearer"
         }
     return Options(
         url = parsed,
         connectUrl = connectUrl,
-        hasToken = token != null,
+        hasToken = bearer != null,
         timeoutMs = timeoutMs,
         powLimit = powLimit,
         destructive = destructive,
     )
 }
 
+/**
+ * Reads the bearer token from a file, so it never reaches argv. `--token` is visible to every
+ * local user for the life of the run (`ps`, `/proc/<pid>/cmdline`) and lands in shell history;
+ * a file can be mode 0600. Surrounding whitespace is stripped, so a plain `... > token` with its
+ * trailing newline works.
+ */
+private fun readTokenFile(path: String): String {
+    val text =
+        try {
+            Files.readString(Path.of(path))
+        } catch (e: Exception) {
+            // The filesystem exceptions carry the path as their whole message, which would print
+            // it twice; say what actually went wrong instead.
+            val reason =
+                when (e) {
+                    is NoSuchFileException -> "no such file"
+                    is AccessDeniedException -> "permission denied"
+                    else -> e.message ?: e::class.simpleName ?: "unreadable"
+                }
+            argExit("cannot read --token-file $path: $reason")
+        }
+    return text.trim().ifEmpty { argExit("--token-file $path is empty") }
+}
+
 private fun usageExit(): Nothing {
+    System.err.println(USAGE)
+    exitProcess(2)
+}
+
+/** Exit 2 (bad arguments) with a specific reason rather than the bare usage line. */
+private fun argExit(message: String): Nothing {
+    System.err.println(message)
     System.err.println(USAGE)
     exitProcess(2)
 }
