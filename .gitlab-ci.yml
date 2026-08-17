@@ -149,9 +149,11 @@ conformance-selftest:
 # seccomp profile permits unshare) — not a change to this file. Until then, verify:trivy-image
 # scanning every pushed digest is what covers the risk of an unmaintained builder.
 #
-# --ignore-path /tmp because kaniko snapshots the whole filesystem after each RUN and will fail
-# the build if a file disappears mid-walk; the build stage's /tmp is scratch that never reaches
-# the runtime image anyway.
+# kaniko snapshots the whole filesystem after each RUN and fails the build if a file disappears
+# mid-walk, which the Kotlin compile daemon's /tmp lock file used to do. That is fixed in the
+# Dockerfile by compiling in-process. Do NOT "fix" it here with --ignore-path /tmp instead:
+# kaniko drops an ignored path from the filesystem entirely, and Gradle then dies on
+# "java.io.tmpdir is set to a directory that doesn't exist: /tmp".
 #
 # The image digest is published as a dotenv artifact so the scan job pins the exact image this
 # pipeline produced rather than re-resolving a mutable tag.
@@ -173,8 +175,7 @@ docker:
              --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
              --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
              --digest-file /kaniko/digest \
-             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache" \
-             --ignore-path /tmp
+             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi
