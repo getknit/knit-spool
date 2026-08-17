@@ -184,7 +184,7 @@ private suspend fun runSuite(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            val reason = e.message ?: (e::class.simpleName ?: "unknown failure")
+            val reason = describeFailure(e)
             if (check.must) {
                 report.fail(number, check.name, reason)
             } else {
@@ -194,3 +194,35 @@ private suspend fun runSuite(
     }
     return report.summary()
 }
+
+/**
+ * A one-line failure reason that stays diagnosable when the throwable is not one of ours.
+ *
+ * [CheckFailure] is raised with a written expected-vs-got message, so its message alone is the
+ * whole story and is returned unadorned — that is the spool failing the spec, which is what the
+ * report is for.
+ *
+ * Everything else is a bug in this tool, in a library, or in the transport, and those arrive as
+ * bare types with useless messages: a run against a remote spool reported `NullPointerException`
+ * and `IllegalArgumentException: Failed requirement.`, neither of which says where it came from or
+ * even whether the spool was at fault. For those, name the type, keep any message, and append the
+ * first frame of our own code plus the cause chain, so the next run is diagnosable from its output
+ * instead of needing a debugger attached to a remote endpoint.
+ */
+fun describeFailure(e: Throwable): String {
+    if (e is CheckFailure) return e.message ?: "check failed"
+    val type = e::class.simpleName ?: "unknown failure"
+    val message = e.message?.let { ": $it" } ?: " (no message)"
+    val origin =
+        e.stackTrace.firstOrNull { it.className.startsWith("app.getknit.spool") }
+            ?: e.stackTrace.firstOrNull()
+    val where = origin?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" } ?: ""
+    val causedBy =
+        generateSequence(e.cause) { it.cause }
+            .take(CAUSE_CHAIN_DEPTH)
+            .joinToString("") { c -> " <- ${c::class.simpleName}${c.message?.let { m -> ": $m" } ?: ""}" }
+    return "$type$message$where$causedBy"
+}
+
+/** How far down a `cause` chain [describeFailure] walks before the line stops being readable. */
+private const val CAUSE_CHAIN_DEPTH = 3
