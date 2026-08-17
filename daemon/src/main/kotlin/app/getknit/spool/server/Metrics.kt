@@ -20,6 +20,18 @@ class Metrics {
     val rateLimitedTotal = LongAdder()
     val shedsTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
+
+    /**
+     * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
+     * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
+     * a multiple of ingest that [eventsTotal] alone cannot tell you the size of.
+     *
+     * Counts CBOR record payload at frame construction: it excludes WebSocket and TLS framing
+     * (which add a few percent), and includes the rare frame dropped for a slow consumer rather
+     * than written. Treat it as an estimate of the same magnitude as the real figure, not a
+     * byte-exact accounting of what left the NIC.
+     */
+    val egressBytesTotal = LongAdder()
     private val errsTotal = ConcurrentHashMap<String, LongAdder>()
 
     fun err(code: String) {
@@ -42,6 +54,7 @@ class Metrics {
             line("knit_spool_rate_limited_total", "counter", rateLimitedTotal.sum())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
+            line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())
             line("knit_spool_live_bytes", "gauge", liveBytes)
             append("# TYPE knit_spool_errs_total counter\n")

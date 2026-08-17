@@ -92,6 +92,12 @@ Operator surface: `GET /healthz` (liveness), `GET /metrics` (Prometheus text; to
 from inside your network). The bearer token rides in the query string, so those configs also keep
 it out of proxy access logs; do the same in any proxy of your own.
 
+On a metered link, watch `knit_spool_egress_bytes_total`. Fan-out means one push leaves as
+(subscribers − 1) copies, so egress is a multiple of ingest that the record and push counters
+cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds long
+before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS framing, so
+it runs a few percent under the figure your provider bills.
+
 ## Docker
 
 ```sh

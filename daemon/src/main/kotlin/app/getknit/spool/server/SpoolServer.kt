@@ -778,7 +778,14 @@ class SpoolServer(
         out(conn, Err(t = RecordType.ERR, code = code, q = q, scope = scope, retryMs = retryMs))
     }
 
-    private fun binary(bytes: ByteArray): Frame.Binary = Frame.Binary(true, bytes)
+    /**
+     * Every outbound record is built here — hello, digest, blob, event, attachment chunk, ok, err —
+     * so this is the one place egress can be counted without a call site being able to escape it.
+     */
+    private fun binary(bytes: ByteArray): Frame.Binary {
+        metrics.egressBytesTotal.add(bytes.size.toLong())
+        return Frame.Binary(true, bytes)
+    }
 
     // On the hot path several times per record — twice per push, and once per requested *and* served
     // blob id in `handlePull`, so 128 calls for a full 64-id pull. `String.format` per byte measured
