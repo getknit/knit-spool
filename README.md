@@ -65,6 +65,8 @@ one conversation member.
 - [Operating](#-operating)
 - [Conformance](#-conformance)
 - [Build and test](#-build-and-test)
+- [Contributing](#-contributing)
+- [Security](#-security)
 - [License](#-license)
 
 ## How it works
@@ -273,10 +275,56 @@ JDK 21 — the Gradle wrapper pins Gradle 9.5.0.
 `check` runs the §13 spec-vector pins, the store contract against both backends (in-memory and
 SQLite), and the full server integration tests.
 
+## 🤝 Contributing
+
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), which also sets out the
+(deliberately modest) **support expectations**: this is a best-effort hobby project shipped as-is,
+with no warranty and no response-time guarantee. Development happens on
+[github.com/getknit/knit-spool](https://github.com/getknit/knit-spool); the issue and
+merge-request templates cover what to include. Participation is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md), and notable changes are recorded in
+[`CHANGELOG.md`](CHANGELOG.md).
+
+The one rule worth repeating here: **the spec is the product.** If the daemon and
+[`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md)
+disagree, the daemon is wrong — and a change to the protocol itself is a Knit-repo discussion that
+this repo follows, not leads.
+
+## 🔐 Security
+
+To report a vulnerability, see [`SECURITY.md`](SECURITY.md) — please **do not** open a public issue
+for security problems. That file also documents what a spool is trusted with, and which properties
+are intentional trade-offs (visible traffic metadata, TLS terminating at a proxy, PoW off by
+default) rather than findings.
+
 ## 📄 License
 
-AGPL-3.0-or-later — see [LICENSE](LICENSE). The Knit app is a separate GPL-3.0-or-later codebase;
-the two share a protocol spec and no code.
+knit-spool is free software, licensed under the **GNU Affero General Public License v3.0 or later**
+([`LICENSE`](LICENSE)).
+
+```
+Copyright (C) 2026 Jeffrey Walter Mixon
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this program.
+If not, see <https://www.gnu.org/licenses/>.
+```
+
+AGPL rather than GPL because a spool is a network service handling other people's ciphertext: under
+§13, running a **modified** version that other people's clients connect to obliges you to offer
+those users the source of your version. Publish your fork and say where it is.
+
+knit-spool depends on third-party open-source libraries, all under AGPL-compatible licenses; see
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) for the component list and their licenses.
+
+The Knit app is a separate GPL-3.0-or-later codebase; the two share a protocol spec and no code.
 
 ---
 
