@@ -19,8 +19,10 @@ private const val USAGE =
 /**
  * The conformance CLI: validates ANY spool implementation over a live WebSocket against
  * SPOOL_PROTOCOL.md §6–§8, speaking only the `:protocol` wire contract. TAP on stdout, a MUST
- * tally on stderr. Exit codes: 0 = every MUST check passed (skips and advisory shortfalls do not
- * fail the run), 1 = at least one MUST check failed, 2 = bad arguments or no handshake at all.
+ * tally on stderr. Exit codes: 0 = every MUST check reached a verdict and passed (skips and
+ * advisory shortfalls do not fail the run), 1 = at least one MUST check failed, 2 = bad arguments
+ * or no handshake at all, 3 = no MUST check failed but one or more could not be judged because the
+ * transport broke or this tool hit a bug — an inconclusive run, which is not a passing one.
  */
 fun main(args: Array<String>) {
     val options = parseArgs(args)
@@ -181,15 +183,20 @@ private suspend fun runSuite(
             report.skip(number, check.name, e.reason)
         } catch (e: Advisory) {
             report.advisory(number, check.name, check.must, e.reason)
+        } catch (e: CheckFailure) {
+            // The only category that judges the spool: a written expected-vs-got assertion.
+            if (check.must) {
+                report.fail(number, check.name, describeFailure(e))
+            } else {
+                report.advisory(number, check.name, false, describeFailure(e))
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            val reason = describeFailure(e)
-            if (check.must) {
-                report.fail(number, check.name, reason)
-            } else {
-                report.advisory(number, check.name, false, reason)
-            }
+            // TransportFailure, plus anything unclassified — a TLS fault, a bug in this tool. None
+            // of it says whether the spool conforms, so it is reported apart from the tally rather
+            // than charged to the implementation under test.
+            report.error(number, check.name, describeFailure(e))
         }
     }
     return report.summary()

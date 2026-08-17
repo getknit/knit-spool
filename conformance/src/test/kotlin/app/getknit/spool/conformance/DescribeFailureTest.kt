@@ -60,6 +60,16 @@ class DescribeFailureTest {
         assertTrue('\n' !in reason, "TAP diagnostics are one line per reason: $reason")
     }
 
+    @Test
+    fun `transport failure is named as such so it reads apart from a spec verdict`() {
+        // That it is not a CheckFailure — and so is never charged to the spool by the runner — the
+        // compiler already guarantees: the two are unrelated types. What is worth pinning is that
+        // the reason line says which of the two it was.
+        val reason = describeFailure(TransportFailure("connection died while awaiting a record (no close frame)"))
+        assertContains(reason, "TransportFailure")
+        assertContains(reason, "connection died while awaiting a record")
+    }
+
     private fun npeFromOurCode(): Throwable {
         val nothing: String? = null
         return runCatching { nothing!!.length }.exceptionOrNull()!!

@@ -37,7 +37,10 @@ class SpoolClient(
             try {
                 withTimeout(timeoutMs) { httpClient.webSocketSession(url) }
             } catch (e: TimeoutCancellationException) {
-                throw CheckFailure("could not open a WebSocket within $timeoutMs ms")
+                throw TransportFailure("could not open a WebSocket within $timeoutMs ms")
+            } catch (e: Exception) {
+                // The endpoint went away mid-run. That is not the spool failing the spec.
+                throw TransportFailure("could not open a WebSocket: ${describeFailure(e)}")
             }
         try {
             return Session(ws = ws, timeoutMs = timeoutMs).block()
@@ -49,6 +52,13 @@ class SpoolClient(
         }
     }
 }
+
+/**
+ * Close codes RFC 6455 §7.4.1 reserves and forbids on the wire: 1005 "No Status Rcvd" and 1006
+ * "Abnormal Closure". A client that reports one of these is telling you it never received a close
+ * frame at all, so they mark a dead transport rather than anything the spool did.
+ */
+private val SYNTHETIC_CLOSE_CODES = setOf<Short>(1005, 1006)
 
 /** One live spool connection: typed send/expect helpers over binary CBOR frames. */
 class Session(
@@ -176,9 +186,20 @@ class Session(
                 try {
                     ws.incoming.receive()
                 } catch (e: ClosedReceiveChannelException) {
-                    val reason = withTimeoutOrNull(1_000) { ws.closeReason.await() }
-                    val detail = reason?.let { "close ${it.code} ${it.message}" } ?: "no close frame"
-                    throw CheckFailure("connection closed while awaiting a record ($detail)")
+                    val reason =
+                        withTimeoutOrNull(1_000) { ws.closeReason.await() }
+                            ?: throw TransportFailure("connection died while awaiting a record (no close frame)")
+                    // 1005/1006 are reserved by RFC 6455 §7.4.1 and MUST NOT be sent in a close
+                    // frame, so the client synthesised them: the connection dropped without the
+                    // spool ever saying why. Only a code the spool actually sent judges the spool.
+                    if (reason.code in SYNTHETIC_CLOSE_CODES) {
+                        throw TransportFailure(
+                            "connection died while awaiting a record (close ${reason.code}, no close frame sent)",
+                        )
+                    }
+                    throw CheckFailure(
+                        "connection closed while awaiting a record (close ${reason.code} ${reason.message})",
+                    )
                 }
             if (frame is Frame.Binary) return frame.readBytes()
         }
