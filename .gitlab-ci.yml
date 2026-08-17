@@ -4,7 +4,7 @@
 #
 # Stages: test -> package -> verify -> release.
 #   test     unit + spec-vector tests, and the conformance suite against the freshly built daemon
-#   package  the container image (buildah, unprivileged) and the installDist tarballs
+#   package  the container image (kaniko — see the note on it below) and the installDist tarballs
 #   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) — never block a merge
 #   release  tag-only; cuts a GitLab release pointing at the tagged image and dist tarballs
 #
@@ -135,40 +135,49 @@ conformance-selftest:
       - spool-daemon.log
 
 # ---------------- package ----------------
-# Buildah, because the image has to be built without a privileged runner and the two obvious
-# alternatives are out: kaniko is archived by Google (no fixes, no CVE patches), and
-# Docker-in-Docker needs `privileged = true` on the runner — these runners are unprivileged, so
-# dind dies on "mount: permission denied (are you root?)" before the daemon ever listens.
+# Kaniko, reluctantly: Google archived it, so it gets no fixes and no CVE patches. It stays
+# because it is the only one of the three that this runner fleet can actually run — both
+# alternatives were tried against these runners and both are blocked at the kernel:
+#
+#   Docker-in-Docker   needs `privileged = true`; the dind service dies on
+#                      "mount: permission denied (are you root?)" before the daemon listens
+#   buildah            needs user namespaces; dies on
+#                      "unshare(CLONE_NEWUSER): Operation not permitted", even with
+#                      vfs storage and chroot isolation
+#
+# Replacing kaniko therefore needs a runner-side change (a privileged runner, or one whose
+# seccomp profile permits unshare) — not a change to this file. Until then, verify:trivy-image
+# scanning every pushed digest is what covers the risk of an unmaintained builder.
 #
 # The image digest is published as a dotenv artifact so the scan job pins the exact image this
-# pipeline pushed rather than re-resolving a mutable tag.
+# pipeline produced rather than re-resolving a mutable tag.
 docker:
   stage: package
-  image: quay.io/buildah/stable:latest
-  variables:
-    # vfs, not overlay: overlay needs a mount the unprivileged job container cannot make. It costs
-    # disk and speed (every layer is a full copy) but it is the only driver that works here.
-    STORAGE_DRIVER: "vfs"
-    # chroot isolation keeps RUN steps out of a new user namespace, which is also unavailable.
-    BUILDAH_ISOLATION: "chroot"
-    BUILDAH_FORMAT: "docker"
-  before_script:
-    - buildah version
-    - buildah login --username "$CI_REGISTRY_USER" --password "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
   script:
-    - buildah build --file Dockerfile --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - mkdir -p /kaniko/.docker
+    # busybox base64 has no -w, so strip the wrapping with tr.
     - |
-      # Push the immutable SHA tag first and capture its digest; the mutable tags are then just
-      # extra names for that same manifest.
-      buildah push --digestfile digest "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
+    - |
+      # Built as a positional-parameter list so each conditional destination is one readable line.
+      # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
+      set -- --context "$CI_PROJECT_DIR" \
+             --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+             --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+             --digest-file /kaniko/digest \
+             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
-        buildah push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "docker://$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        buildah push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "docker://$CI_REGISTRY_IMAGE:latest"
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:latest"
       fi
-    - echo "IMAGE_DIGEST=$(cat digest)" > build.env
-    - cat build.env
+      /kaniko/executor "$@"
+    - echo "IMAGE_DIGEST=$(cat /kaniko/digest)" > build.env
   artifacts:
     reports:
       dotenv: build.env
