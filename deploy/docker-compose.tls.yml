@@ -27,6 +27,8 @@ services:
       SPOOL_TRUST_PROXY: "true" # Caddy appends X-Forwarded-For; per-IP limits need it
       SPOOL_MAX_BYTES: "${SPOOL_MAX_BYTES:-268435456}"
       SPOOL_LOG_LEVEL: "${SPOOL_LOG_LEVEL:-INFO}"
+      # One status line every 5 min — what `docker compose logs -f spool` shows you. 0 = off.
+      SPOOL_STATUS_MS: "${SPOOL_STATUS_MS:-300000}"
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

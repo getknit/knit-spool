@@ -40,6 +40,9 @@ class Metrics {
 
     fun errCount(code: String): Long = errsTotal[code]?.sum() ?: 0L
 
+    /** Every error code seen so far with its total — what the status line diffs between lines. */
+    fun errsByCode(): Map<String, Long> = errsTotal.entries.associate { it.key to it.value.sum() }
+
     fun render(
         scopesCurrent: Int,
         liveBytes: Long,

@@ -116,7 +116,7 @@ Implements the full **v1** protocol:
   to close 4003), a global storage watermark with oldest-scope shedding.
 - **Persistence** — SQLite (WAL, self-healing boot recompute) or in-memory, behind one store
   contract, plus a periodic sweeper.
-- **Ops** — `/healthz`, `/metrics` (Prometheus text), graceful shutdown.
+- **Ops** — `/healthz`, `/metrics` (Prometheus text), a periodic status log line, graceful shutdown.
 
 ## 🚀 Run
 
@@ -147,6 +147,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_MAX_AGET` | `32` | max chunks per `aget`; an over-long request is truncated, never refused |
 | `SPOOL_MAX_BYTES` | `268435456` | payload watermark; over it the least-active scope is shed; 0 = unlimited |
 | `SPOOL_SWEEP_MS` | `60000` | sweeper cadence (expiry, cache pruning, watermark) |
+| `SPOOL_STATUS_MS` | `300000` | status log line cadence (5 min); 0 = off |
 | `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop for per-IP limits |
 | `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client IP |
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×) |
@@ -210,6 +211,29 @@ code.
 > cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds
 > long before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS
 > framing, so it runs a few percent under the figure your provider bills.
+
+### The status line
+
+Every `SPOOL_STATUS_MS` (5 min by default; `0` switches it off) the daemon logs one line — the
+`docker logs -f` view of a spool with no Prometheus in front of it:
+
+```text
+2026-08-17 14:05:00,123 INFO  a.getknit.spool.Status up=2h14m conns=3 accepted=+12 \
+scopes=12/64 live=4.2MiB/256.0MiB heap=96.4MiB/256.0MiB records=+142 pushes=+58 events=+170 \
+egress=+21.1MiB limited=+0 sheds=+0 errs=+3{rate=2,quota=1}
+```
+
+(Wrapped with `\` here to fit the page; in the log it is one line.)
+
+Gauges (`conns`, `scopes`, `live`, `heap`) are absolute and shown against their caps; everything
+with a `+` is the delta **since the previous line**, because on a scrolling log the useful question
+is what the last five minutes did, not what the process has done since boot — `/metrics` answers
+that one exactly. The error breakdown names the three busiest codes and summarizes the rest as
+`+Nmore`, so the line stays one line under any load.
+
+It logs under its own logger name, `app.getknit.spool.Status`, so a logback override can silence or
+re-level just this line; `SPOOL_LOG_LEVEL` is the root level and would take the rest of the daemon
+with it.
 
 ## 🧪 Conformance
 

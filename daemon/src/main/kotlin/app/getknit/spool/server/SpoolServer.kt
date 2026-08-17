@@ -111,6 +111,8 @@ class SpoolServer(
         val maxAget: Int = 32,
         val maxBytes: Long = 268_435_456L,
         val sweepMs: Long = 60_000L,
+        /** Cadence of the periodic status log line; 0 switches it off. */
+        val statusMs: Long = 300_000L,
         val trustProxy: Boolean = false,
         val maxConnsPerIp: Int = 16,
         val rateRecords: Int = 50,
@@ -120,7 +122,21 @@ class SpoolServer(
 
     private val log = LoggerFactory.getLogger(SpoolServer::class.java)
 
+    /**
+     * The periodic status line logs under its own name so an operator can re-level or silence just
+     * that line in logback — `SPOOL_LOG_LEVEL` is the root level and would take the rest with it.
+     */
+    private val statusLog = LoggerFactory.getLogger("app.getknit.spool.Status")
+
     val metrics = Metrics()
+
+    private val statusLine =
+        StatusLine(
+            metrics = metrics,
+            maxScopes = config.hardLimits.maxScopes,
+            maxBytes = config.maxBytes,
+            startedAtMs = clock(),
+        )
 
     /**
      * Every store call is serialized through one worker thread off the CIO event loops: the store
@@ -177,6 +193,16 @@ class SpoolServer(
                     while (isActive) {
                         delay(config.sweepMs)
                         runCatching { sweepTick() }.onFailure { log.error("sweep tick failed", it) }
+                    }
+                }
+                if (config.statusMs > 0) {
+                    launch {
+                        while (isActive) {
+                            delay(config.statusMs)
+                            // Never let a status line take the daemon down: it is an eyeball aid,
+                            // and /metrics remains the machine-readable surface either way.
+                            runCatching { statusTick() }.onFailure { log.warn("status tick failed", it) }
+                        }
                     }
                 }
                 routing {
@@ -708,6 +734,12 @@ class SpoolServer(
         powAccepted.entries.removeIf { it.value < minDay }
         ips.entries.removeIf { it.value.connections.get() == 0 && now - it.value.lastSeen > IP_IDLE_MS }
         maybeShed()
+    }
+
+    /** One status line: gauges read from the store, counters diffed since the last line. */
+    internal suspend fun statusTick() {
+        val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
+        statusLog.info(statusLine.render(clock(), scopeCount, liveBytes))
     }
 
     private suspend fun <T> withStore(block: () -> T): T = withContext(storeDispatcher) { block() }

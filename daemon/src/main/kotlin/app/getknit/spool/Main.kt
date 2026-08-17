@@ -33,6 +33,7 @@ private val KNOWN_VARS =
         "SPOOL_MAX_A_CHUNK",
         "SPOOL_MAX_BYTES",
         "SPOOL_SWEEP_MS",
+        "SPOOL_STATUS_MS",
         "SPOOL_TRUST_PROXY",
         "SPOOL_MAX_CONNS_PER_IP",
         "SPOOL_RATE_RECORDS",
@@ -78,6 +79,10 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     require(maxBlob + 512 <= maxRecord) {
         "SPOOL_MAX_BLOB ($maxBlob) + 512 bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
     }
+    // 0 is the off switch; anything else is a cadence, and a sub-second one would flood the log
+    // it exists to make readable.
+    val statusMs = longVar(env, "SPOOL_STATUS_MS", default = 300_000L, min = 0L)
+    require(statusMs == 0L || statusMs >= 1_000L) { "SPOOL_STATUS_MS must be 0 (off) or >= 1000, got $statusMs" }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
         token = env("SPOOL_TOKEN")?.takeIf { it.isNotEmpty() },
@@ -98,6 +103,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
             ),
         maxBytes = longVar(env, "SPOOL_MAX_BYTES", default = 268_435_456L, min = 0L),
         sweepMs = longVar(env, "SPOOL_SWEEP_MS", default = 60_000L, min = 1_000L),
+        statusMs = statusMs,
         trustProxy = boolVar(env, "SPOOL_TRUST_PROXY", default = false),
         maxConnsPerIp = intVar(env, "SPOOL_MAX_CONNS_PER_IP", default = 16, min = 1),
         rateRecords = intVar(env, "SPOOL_RATE_RECORDS", default = 50, min = 1),
