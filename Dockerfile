@@ -8,7 +8,10 @@ RUN ./gradlew --no-daemon :daemon:installDist
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /src/daemon/build/install/knit-spool/ /app/
-RUN mkdir /data && chown 65532:65532 /data
+# -p, not a bare mkdir: kaniko processes the VOLUME below during stage setup and creates /data
+# before this RUN executes, so a bare mkdir fails with "File exists" there while succeeding
+# under docker build. -p is idempotent and correct for both.
+RUN mkdir -p /data && chown 65532:65532 /data
 ENV SPOOL_DATA_DIR=/data
 VOLUME /data
 EXPOSE 9470
