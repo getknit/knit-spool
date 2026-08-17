@@ -1,14 +1,67 @@
 # knit-spool CI — self-hosted GitLab. Kaniko builds the image without privileged runners.
 # Lint is ktlint (via `check`); detekt is deliberately deferred until the knit-next config
 # stabilizes off its alpha.
-stages: [test, package]
+#
+# Stages: test -> package -> verify -> release.
+#   test     unit + spec-vector tests, and the conformance suite against the freshly built daemon
+#   package  the container image (kaniko) and the installDist tarballs
+#   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) — never block a merge
+#   release  tag-only; cuts a GitLab release pointing at the tagged image and dist tarballs
+#
+# The instance runners are untagged, so a job can land on either the small "service" VM or the
+# 24c/62 GB workstation. Everything below is written to survive the small one.
+
+stages:
+  - test
+  - package
+  - verify
+  - release
 
 variables:
   GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
   GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+  # The daemon's own defaults are fine for CI except the two that make the destructive quota
+  # checks (~64 scopes) take minutes instead of seconds. Kept here so the conformance job's
+  # command line stays readable and the knobs are visible in one place.
+  SPOOL_POW_BITS: "8"
+  SPOOL_RATE_NEW_SCOPES: "10000"
+  SPOOL_PORT: "9470"
+
+workflow:
+  rules: # avoid duplicate branch+MR pipelines
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_COMMIT_TAG
 
 default:
   image: eclipse-temurin:21-jdk
+  interruptible: true
+  timeout: 30m
+  # Infrastructure flakes only. A script failure or a genuine timeout is a real signal — retrying
+  # it just burns another 30 minutes of runner and reports the same result.
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - scheduler_failure
+      - api_failure
+      - stale_schedule
+
+# ---- shared setup for Gradle jobs ----
+.gradle:
+  before_script:
+    # A CI memory profile, written to $GRADLE_USER_HOME so it beats any project gradle.properties.
+    # The small instance runner has ~2 GB; an uncapped Kotlin compile worker is what the OOM killer
+    # reaps there. 1280m is comfortable for this codebase (three small JVM modules) and stays
+    # resident. Harmless on the big runner — the build is not heap-bound.
+    - |
+      mkdir -p "$GRADLE_USER_HOME"
+      cat > "$GRADLE_USER_HOME/gradle.properties" <<'EOF'
+      org.gradle.jvmargs=-Xmx1280m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8
+      org.gradle.daemon=false
+      kotlin.compiler.execution.strategy=in-process
+      EOF
+    - chmod +x ./gradlew
   cache:
     key:
       files:
@@ -18,39 +71,207 @@ default:
       - .gradle/caches
       - .gradle/wrapper
 
+# ----------------- test ------------------
+# `check` runs the JVM tests plus ktlintCheck, so lint failures block here rather than sitting
+# advisory in verify — the codebase is already clean and the rule set is stable.
 test:
+  extends: .gradle
   stage: test
   script:
-    - ./gradlew --no-daemon check
+    - ./gradlew --no-daemon check --console=plain --stacktrace
   artifacts:
     when: always
+    expire_in: 1 week
     reports:
       junit: "**/build/test-results/test/TEST-*.xml"
+    paths:
+      - "*/build/reports/tests/test/"
+      - "*/build/reports/ktlint/"
 
-# The conformance suite eats its own dogfood against the built daemon.
+# The conformance suite eats its own dogfood against the built daemon: same wire contract an
+# external implementation would be held to, run against the daemon this commit produces.
+#
+# It talks TAP on stdout and tallies MUSTs on stderr; both are teed to an artifact so a failure is
+# diagnosable without re-running. The daemon is health-polled rather than slept at — a fixed sleep
+# either wastes seconds or, on a loaded runner, races the bind and reports a bogus failure.
 conformance-selftest:
+  extends: .gradle
   stage: test
   script:
-    - ./gradlew --no-daemon :daemon:installDist :conformance:installDist
-    # Open scope-creation rate so the destructive quota check (~64 scopes) finishes in seconds.
-    - SPOOL_POW_BITS=8 SPOOL_RATE_NEW_SCOPES=10000 SPOOL_DATA_DIR="$CI_PROJECT_DIR/.spool-data" daemon/build/install/knit-spool/bin/knit-spool &
-    - sleep 5
-    - conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance ws://127.0.0.1:9470/spool/v1 --destructive
+    - ./gradlew --no-daemon :daemon:installDist :conformance:installDist --console=plain
+    - mkdir -p "$CI_PROJECT_DIR/.spool-data"
+    - |
+      SPOOL_DATA_DIR="$CI_PROJECT_DIR/.spool-data" \
+        daemon/build/install/knit-spool/bin/knit-spool > spool-daemon.log 2>&1 &
+      echo $! > .spool.pid
+    - |
+      # temurin ships bash but no curl, so probe with /dev/tcp — same trick the Dockerfile's
+      # HEALTHCHECK uses. Bail the moment the daemon dies instead of polling a corpse for 60s.
+      for _ in $(seq 1 60); do
+        if exec 3<>"/dev/tcp/127.0.0.1/$SPOOL_PORT" \
+           && printf 'GET /healthz HTTP/1.0\r\n\r\n' >&3 \
+           && grep -q ' 200 ' <&3; then
+          echo "daemon healthy"; break
+        fi
+        if ! kill -0 "$(cat .spool.pid)" 2>/dev/null; then
+          echo "daemon exited before becoming healthy:"; cat spool-daemon.log; exit 1
+        fi
+        sleep 1
+      done
+    - |
+      set -o pipefail
+      conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
+        "ws://127.0.0.1:$SPOOL_PORT/spool/v1" --destructive 2>&1 | tee conformance.tap
+  after_script:
+    # Reap the daemon so the runner does not leak a JVM between jobs, and dump its log on failure —
+    # a conformance MUST failure is usually explained by a line the daemon logged, not by the TAP.
+    - '[ -f .spool.pid ] && kill "$(cat .spool.pid)" 2>/dev/null || true'
+    - '[ "$CI_JOB_STATUS" != "success" ] && tail -n 100 spool-daemon.log || true'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - conformance.tap
+      - spool-daemon.log
 
+# ---------------- package ----------------
+# Kaniko needs no privileged runner. The image digest is published as a dotenv artifact so the
+# scan job pins the exact image this pipeline produced rather than re-resolving a mutable tag.
 docker:
   stage: package
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
   script:
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 -w0)\"}}}" > /kaniko/.docker/config.json
-    - >-
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
-      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-      ${CI_COMMIT_BRANCH:+$([ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ] && echo --destination "$CI_REGISTRY_IMAGE:latest")}
-      ${CI_COMMIT_TAG:+--destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"}
+    - mkdir -p /kaniko/.docker
+    # busybox base64 has no -w, so strip the wrapping with tr.
+    - |
+      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
+    - |
+      # Built as a positional-parameter list so each conditional destination is one readable line.
+      # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
+      set -- --context "$CI_PROJECT_DIR" \
+             --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+             --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+             --digest-file /kaniko/digest \
+             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+      fi
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:latest"
+      fi
+      /kaniko/executor "$@"
+    - echo "IMAGE_DIGEST=$(cat /kaniko/digest)" > build.env
+  artifacts:
+    reports:
+      dotenv: build.env
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# Standalone tarballs for operators who run the daemon without Docker, and the artifact the
+# tagged release links to.
+dist:
+  extends: .gradle
+  stage: package
+  script:
+    - ./gradlew --no-daemon :daemon:distTar :daemon:distZip :conformance:distTar --console=plain
+  artifacts:
+    name: "knit-spool-${CI_COMMIT_REF_SLUG}"
+    expire_in: 1 month
+    paths:
+      - daemon/build/distributions/
+      - conformance/build/distributions/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# ---------------- verify (advisory) ------
+# All three are allow_failure: they report, they do not gate. `needs: []` starts the two that do
+# not depend on the image as soon as the pipeline does, instead of idling behind the package stage.
+verify:trivy-fs:
+  stage: verify
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs: []
+  allow_failure: true
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+  cache:
+    - key: trivy-db
+      paths: [.trivycache/]
+  script:
+    - trivy --version
+    - trivy fs --scanners vuln,secret,misconfig --exit-code 0 --format table .
+    - trivy fs --scanners vuln,secret,misconfig --format json --output trivy-fs.json .
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths: [trivy-fs.json]
+
+# Scans the exact image digest this pipeline pushed — the JRE base layer is where the CVEs
+# actually live, and nothing else in the pipeline looks at it.
+verify:trivy-image:
+  stage: verify
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs: ["docker"]
+  allow_failure: true
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache/"
+    TRIVY_USERNAME: "$CI_REGISTRY_USER"
+    TRIVY_PASSWORD: "$CI_REGISTRY_PASSWORD"
+  cache:
+    - key: trivy-db
+      paths: [.trivycache/]
+  script:
+    - trivy image --exit-code 0 --format table "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+    - trivy image --format json --output trivy-image.json "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths: [trivy-image.json]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+# The repo already carries a tuned .mdlrc (relaxed style, three rules disabled with reasons) but
+# nothing ran it — the README is the project's front door and is hand-maintained, so lint it.
+verify:markdown:
+  stage: verify
+  image: ruby:3.3-alpine
+  needs: []
+  allow_failure: true
+  before_script:
+    - apk add --no-cache git
+    - gem install mdl --no-document
+  script:
+    # git ls-files keeps the scan on tracked docs — no vendored or build-output Markdown.
+    - git ls-files '*.md' | xargs -r mdl
+
+# ---------------- release ----------------
+# Tag-only. The image and tarballs already exist by this stage; this just records them as a
+# GitLab release so `:tag` is discoverable next to its artifacts.
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs: ["docker", "dist"]
+  script:
+    - echo "releasing $CI_COMMIT_TAG"
+  release:
+    tag_name: "$CI_COMMIT_TAG"
+    description: "knit-spool $CI_COMMIT_TAG — image `$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG` (digest `$IMAGE_DIGEST`)."
+    assets:
+      links:
+        - name: "Container image"
+          url: "$CI_PROJECT_URL/container_registry"
+        - name: "Distribution tarballs"
+          url: "$CI_PROJECT_URL/-/jobs/artifacts/$CI_COMMIT_TAG/download?job=dist"
+  rules:
     - if: '$CI_COMMIT_TAG'

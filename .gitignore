@@ -5,3 +5,10 @@ build/
 *.iml
 local.properties
 deploy/.env
+# Written by the conformance-selftest CI job (and by running it by hand the same way).
+.spool-data/
+.spool.pid
+spool-daemon.log
+conformance.tap
+build.env
+trivy-*.json
