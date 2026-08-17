@@ -1,0 +1,13 @@
+style "relaxed"
+# MD029: ordered-list numbering is intentional in the docs.
+# MD002: the README title (`# Knit`) is an H1 nested in a centered <div>, which
+#        mdl's parser reads as raw HTML — so it flags the next heading as the
+#        first. MD002 is deprecated (superseded by MD041) and conflicts with the
+#        centered-title README idiom.
+# MD024: CHANGELOG.md is Keep-a-Changelog shaped, so every release repeats the
+#        same `### Added` / `### Fixed` / `### Changed` headings under its own
+#        `## [version]`. mdl's MD024 has an `allow_different_nesting` parameter
+#        that would permit exactly that, but setting a rule parameter needs a
+#        custom Ruby style file — more machinery than one repeated heading is
+#        worth. Every release would otherwise trip this.
+rules "~MD029", "~MD002", "~MD024"

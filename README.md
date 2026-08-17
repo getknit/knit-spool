@@ -1,23 +1,92 @@
+<div align="center">
+
 # knit-spool
 
-The reference **spool** — a scoped, blinded store-and-forward relay daemon for
-[Knit](https://github.com/getknit/knit)'s Internet plane.
+**The reference *spool* — a scoped, blinded store-and-forward relay for
+[Knit](https://github.com/getknit/knit)'s Internet plane.**
 
-A spool holds, per conversation "scope", a bounded set of end-to-end-sealed frames and a digest
+It holds sealed frames for scope ids it cannot map to anyone, and forgets everything else.
+
+![Kotlin](https://img.shields.io/badge/Kotlin-2.4.0-7F52FF?logo=kotlin&logoColor=white)
+![Ktor](https://img.shields.io/badge/Ktor-3.3.0%20CIO-087CFA?logo=ktor&logoColor=white)
+![JDK](https://img.shields.io/badge/JDK-21-orange?logo=openjdk&logoColor=white)
+![Protocol](https://img.shields.io/badge/spool%20protocol-v1%20(%C2%A713%20vectors%20pinned)-2EA043)
+![Footprint](https://img.shields.io/badge/RSS-~128%E2%80%93256%20MB-00BCD4)
+![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
+
+</div>
+
+---
+
+## What a spool is
+
+A spool holds, per conversation **scope**, a bounded set of end-to-end-sealed frames and a digest
 over them, streams new arrivals to connected subscribers, and heals divergence by digest
-anti-entropy. It never learns node ids, message content, rosters, or delivery facts — it stores
-ciphertext for scope ids it cannot map to anyone. Spools never talk to each other: clients
-multi-home across several spools and union them, so no spool is load-bearing and a wiped spool is
-refilled by any one conversation member.
+anti-entropy.
 
-**The protocol spec is the product.** The normative spec lives in the Knit repo:
-[`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md).
-This daemon implements the spec — never the other way around — and `SpecVectorTest` pins this
-implementation to the spec's §13 vectors byte-for-byte. Third-party spool implementations are
-first-class; this repo exists so nobody *has* to write one, and ships the conformance suite that
-validates any implementation.
+It never learns node ids, message content, rosters, or delivery facts — it stores ciphertext for
+scope ids it cannot map to anyone. Spools never talk to each other: clients multi-home across
+several spools and union them, so **no spool is load-bearing** and a wiped spool is refilled by any
+one conversation member.
 
-## Modules
+> [!IMPORTANT]
+> **The protocol spec is the product.** The normative spec lives in the Knit repo:
+> [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md).
+> This daemon implements the spec — never the other way around — and `SpecVectorTest` pins this
+> implementation to the spec's §13 vectors byte-for-byte. Third-party spool implementations are
+> first-class; this repo exists so nobody *has* to write one, and ships the conformance suite that
+> validates any implementation.
+
+### At a glance
+
+| | |
+|---|---|
+| **What** | Store-and-forward relay daemon for Knit's optional Internet plane |
+| **Wire** | CBOR records over one WebSocket, `wss://host/spool/v1` (`?k=` token on private spools) |
+| **Stack** | Kotlin 2.4.0 · Ktor 3.3.0 (CIO) · kotlinx-serialization CBOR · SQLite (WAL) · JDK 21 |
+| **Sees** | Scope ids, blob ids, ciphertext, sizes, timing |
+| **Never sees** | Node ids, plaintext, rosters, who read what, which spools a client also uses |
+| **Config** | Environment variables only; invalid values refuse to start |
+| **Ops** | `GET /healthz`, `GET /metrics` (Prometheus text) |
+| **Footprint** | Idles in ~128–256 MB on the cheapest VPS tier (`-Xmx256m` default) |
+| **License** | AGPL-3.0-or-later |
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Modules](#-modules)
+- [Status](#-status)
+- [Run](#-run)
+- [Configuration](#-configuration)
+- [Deploy](#-deploy)
+- [Docker](#-docker)
+- [Operating](#-operating)
+- [Conformance](#-conformance)
+- [Build and test](#-build-and-test)
+- [License](#-license)
+
+## How it works
+
+```
+   ┌─────────┐   push   ┌────────────┐   event   ┌─────────┐
+   │ Phone A │─────────►│  spool-1   │──────────►│ Phone B │
+   │  seals  │          └────────────┘           │ unions  │
+   │  frame  │   push   ┌────────────┐   pull    │ + opens │
+   │  once   │─────────►│  spool-2   │◄──────────│         │
+   └─────────┘          └────────────┘           └─────────┘
+                  no spool-to-spool link, ever
+```
+
+The sender seals a frame once and pushes the same bytes to each spool it knows. Every member
+subscribes to the scope on the spools *it* knows and unions what comes back, so overlap is the only
+thing two members need — not agreement on a spool list. Each spool sees an opaque 32-byte scope id,
+a blob id, ciphertext, and timing; a spool that vanishes takes nothing with it that another member
+can't re-push.
+
+A client that has been away sends its scope digest instead of a full pull. Same digest, nothing to
+do — an idle conversation costs one round trip.
+
+## 📦 Modules
 
 | Module | Artifact | What |
 |---|---|---|
@@ -28,26 +97,38 @@ validates any implementation.
 `:conformance` depends only on `:protocol` — it tests the wire contract, not this repo's
 internals.
 
-## Status
+## ✅ Status
 
-Implements the full v1 protocol: record layer with spec-vector conformance, hello/version
-negotiation, bearer-token private spools, sub/digest/list/pull/push with live `event` fan-out,
-oldest-by-arrival eviction, count-bounded tombstones, per-scope digests with unsolicited
-re-anchors after eviction/expiry, stateless PoW (SUB *and* the shed-scope PUSH-recreate path) with
-the per-`(scope, day)` cache, per-connection and per-IP rate limits (`rate` + `retryMs`,
-escalating to close 4003), a global storage watermark with oldest-scope shedding, SQLite
-persistence (WAL, self-healing boot recompute), a periodic sweeper, `/healthz` + `/metrics`
-(Prometheus text), and graceful shutdown.
+Implements the full **v1** protocol:
 
-## Run
+- **Record layer** — CBOR `hello`/`sub`/`digest`/`list`/`pull`/`blob`/`push`/`event`/`ok`/`err`,
+  with spec-vector conformance and forward-compatible tolerance of unknown records and fields.
+- **Handshake** — version negotiation, advertised limits, bearer-token private spools.
+- **Fan-out** — live `event` delivery to every other subscriber of the scope, `q`-correlated
+  replies, idempotent duplicate pushes.
+- **Retention** — oldest-by-arrival eviction, count-bounded tombstones, per-scope digests with
+  unsolicited re-anchors after eviction or expiry.
+- **Attachments** (§6.5/§7.3) — `ahave`/`ahas`/`aget`/`achunk`/`aput`, chunk presence bitmaps,
+  first-write-wins with `conflict` on mismatch, truncated (never refused) over-long `aget`, and a
+  per-scope byte quota. Set `SPOOL_MAX_ATTACH_BYTES=0` and the family disappears from `hello`.
+- **Abuse control** — stateless PoW (SUB *and* the shed-scope PUSH-recreate path) with the
+  per-`(scope, day)` cache, per-connection and per-IP rate limits (`rate` + `retryMs`, escalating
+  to close 4003), a global storage watermark with oldest-scope shedding.
+- **Persistence** — SQLite (WAL, self-healing boot recompute) or in-memory, behind one store
+  contract, plus a periodic sweeper.
+- **Ops** — `/healthz`, `/metrics` (Prometheus text), graceful shutdown.
+
+## 🚀 Run
 
 ```sh
 ./gradlew :daemon:run                      # listens on :9470, PoW off, public, in-memory
 SPOOL_TOKEN=s3cret ./gradlew :daemon:run   # private spool: wss://host/spool/v1?k=s3cret
 ```
 
-Configuration is environment variables only; invalid values refuse to start. Defaults follow the
-spec's §12 constants.
+## 🔧 Configuration
+
+Environment variables only; invalid values refuse to start, and an unrecognized `SPOOL_*` name is
+logged as a probable typo. Defaults follow the spec's §12 constants.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -59,7 +140,7 @@ spec's §12 constants.
 | `SPOOL_MAX_SCOPES` | `64` | max scopes held |
 | `SPOOL_MAX_FRAMES` | `1000` | per-scope frame-cap ceiling |
 | `SPOOL_MAX_TTL_MS` | `604800000` | per-scope TTL ceiling (7 d) |
-| `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes |
+| `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes (must fit `SPOOL_MAX_BLOB` + 512) |
 | `SPOOL_MAX_PULL` | `64` | max blob ids per `pull` |
 | `SPOOL_MAX_ATTACH_BYTES` | `16777216` | per-scope attachment byte quota (§6.5); **0 turns attachments off** — the three attachment limits then vanish from HELLO and a conforming client never sends `ahave`/`aget`/`aput` |
 | `SPOOL_MAX_A_CHUNK` | `49221` | max sealed attachment-chunk bytes (the spec's structural 48 KiB plus framing) |
@@ -73,8 +154,10 @@ spec's §12 constants.
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×) |
 | `SPOOL_LOG_LEVEL` | `INFO` | root log level |
 
-The daemon serves plain WebSocket; TLS terminates at a reverse proxy — either one you already run
-([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
+## 🌐 Deploy
+
+The daemon serves plain WebSocket; **TLS terminates at a reverse proxy**. Either one you already
+run ([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
 [`deploy/docker-compose.yml`](deploy/docker-compose.yml)), or one compose brings up for you with
 certificates issued and renewed automatically:
 
@@ -84,53 +167,93 @@ docker compose -f docker-compose.tls.yml up -d
 ```
 
 That runs Caddy on :80/:443 in front of the daemon, which is published nowhere but the compose
-network; clients get `wss://$SPOOL_DOMAIN/spool/v1`. Sizing target: idles in ~128–256 MB on the
-cheapest VPS tier (`-Xmx256m` is the default).
+network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 
-Operator surface: `GET /healthz` (liveness), `GET /metrics` (Prometheus text; token-gated with
-`?k=` on private spools — the shipped proxy configs seal it off from the internet, so scrape it
-from inside your network). The bearer token rides in the query string, so those configs also keep
-it out of proxy access logs; do the same in any proxy of your own.
+> [!TIP]
+> **On a 1 GB box** (Linode Nanode and friends), layer the tiny overlay on top:
+>
+> ```sh
+> docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml up -d
+> ```
+>
+> It pulls or side-loads the image instead of building it (Gradle wants more memory than the whole
+> box has), caps each container so an overrun is a restart rather than the kernel's OOM killer
+> taking sshd, bounds the json log driver, and re-sizes the limits for a metered link — 32 KiB
+> blobs, 1 MiB of attachments per scope, 512 scopes, 64 connections per IP. Side-load with
+> `docker save knit-spool:latest | gzip | ssh root@host 'gunzip | docker load'` — `save`/`load`,
+> not `export`/`import`, which flattens the image and drops its ENTRYPOINT and HEALTHCHECK.
 
-On a metered link, watch `knit_spool_egress_bytes_total`. Fan-out means one push leaves as
-(subscribers − 1) copies, so egress is a multiple of ingest that the record and push counters
-cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds long
-before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS framing, so
-it runs a few percent under the figure your provider bills.
-
-## Docker
+## 🐳 Docker
 
 ```sh
 docker build -t knit-spool .
 docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 knit-spool
 ```
 
-The image persists to the `/data` volume by default and carries a `/healthz` HEALTHCHECK.
+The image persists to the `/data` volume by default, runs as uid 65532, and carries a `/healthz`
+HEALTHCHECK.
 
-## Conformance
+## 📊 Operating
+
+`GET /healthz` (liveness) and `GET /metrics` (Prometheus text; token-gated with `?k=` on private
+spools — the shipped proxy configs seal it off from the internet, so scrape it from inside your
+network). The bearer token rides in the query string, so those configs also keep it out of proxy
+access logs; do the same in any proxy of your own.
+
+Exported: connections (current + total), records, pushes, events, PoW verifications, rate-limit
+hits, sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by
+code.
+
+> [!NOTE]
+> **On a metered link, watch `knit_spool_egress_bytes_total`.** Fan-out means one push leaves as
+> (subscribers − 1) copies, so egress is a multiple of ingest that the record and push counters
+> cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds
+> long before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS
+> framing, so it runs a few percent under the figure your provider bills.
+
+## 🧪 Conformance
 
 Validate any spool implementation — this one or a third party's — over a live connection:
 
 ```sh
 ./gradlew :conformance:installDist
 conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
-    wss://spool.example.com/spool/v1 [--token T | --token-file PATH] [--pow-limit 24] [--destructive]
+    wss://spool.example.com/spool/v1 \
+    [--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive]
 ```
 
-TAP output; exit 0 = all MUST checks pass. `--destructive` enables the quota/rate checks (they
-fill real capacity — run them against spools you operate). CI runs the suite against the built
-daemon on every pipeline (`conformance-selftest`).
+TAP on stdout, a MUST tally on stderr. Exit **0** = every MUST check passed (skips and advisory
+shortfalls don't fail the run), **1** = a MUST check failed, **2** = bad arguments or no handshake
+at all. The attachment checks skip themselves against a spool that advertised no §7.3 limits —
+which is exactly the client behaviour the spec requires. `--destructive` enables the quota and
+rate-limit checks; they fill real capacity, so run them against spools you operate. CI runs the
+whole suite against the freshly built daemon on every pipeline (`conformance-selftest`).
 
-Prefer `--token-file` against a spool you care about: `--token` puts the bearer token in argv,
-where every local user can read it out of `ps` for the life of the run, and most shells record it
-in history. The file is read once and may be mode 0600.
+> [!WARNING]
+> Prefer `--token-file` against a spool you care about. `--token` puts the bearer token in argv,
+> where every local user can read it out of `ps` for the life of the run, and most shells record it
+> in history. The file is read once and may be mode 0600.
 
-## Build and test
+## 🔨 Build and test
 
-JDK 21. `./gradlew check` compiles, lints (ktlint), and runs every suite: the §13 spec-vector
-pins, the store contract against both backends, and the full server integration tests.
+JDK 21 — the Gradle wrapper pins Gradle 9.5.0.
 
-## License
+```sh
+./gradlew check                 # compile + ktlint + every suite
+./gradlew ktlintFormat          # autoformat
+./gradlew :daemon:installDist   # runnable dist at daemon/build/install/knit-spool/
+```
+
+`check` runs the §13 spec-vector pins, the store contract against both backends (in-memory and
+SQLite), and the full server integration tests.
+
+## 📄 License
 
 AGPL-3.0-or-later — see [LICENSE](LICENSE). The Knit app is a separate GPL-3.0-or-later codebase;
 the two share a protocol spec and no code.
+
+---
+
+<div align="center">
+<sub>AGPL-3.0-or-later — <code>app.getknit.spool</code></sub>
+</div>
