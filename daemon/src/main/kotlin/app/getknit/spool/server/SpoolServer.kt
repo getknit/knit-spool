@@ -61,11 +61,19 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Headroom over `maxRecord` for the WebSocket frame envelope before the transport kills it (1009). */
 private const val FRAME_SLACK = 1024L
+
+/**
+ * Message Ktor's pinger attaches when a peer stops answering pings: it calls
+ * `sendCloseSequence(reason, IOException("Ping timeout"))`, which closes both `incoming` and
+ * `outgoing` with that cause. Matched by text because Ktor exposes no distinct exception type.
+ */
+private const val PING_TIMEOUT_MESSAGE = "Ping timeout"
 
 /** Consecutive undeliverable events before a subscriber is closed 4003 (spec §7.2). */
 private const val SLOW_CONSUMER_LIMIT = 8
@@ -253,8 +261,8 @@ class SpoolServer(
     ) {
         val conn = Conn(session, ipState)
         activeSessions.add(session)
-        conn.out.send(binary(RecordCodec.encode(serverHello())))
         try {
+            conn.out.send(binary(RecordCodec.encode(serverHello())))
             var helloed = false
             for (frame in session.incoming) {
                 val bytes = (frame as? Frame.Binary)?.readBytes() ?: continue
@@ -332,6 +340,12 @@ class SpoolServer(
                     }
                 }
             }
+        } catch (e: IOException) {
+            // A peer that stopped answering pings — sleep, network drop, killed process. Expected
+            // churn, and the finally below still unwinds the connection, so don't let it reach
+            // Ktor's handler and land as ERROR-with-stack-trace. Anything else still propagates.
+            if (e.message != PING_TIMEOUT_MESSAGE) throw e
+            log.info("connection dropped: ping timeout")
         } finally {
             activeSessions.remove(session)
             conn.subscriptions.keys.forEach { scopeHex ->
