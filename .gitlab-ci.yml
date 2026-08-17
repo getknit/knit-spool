@@ -149,6 +149,10 @@ conformance-selftest:
 # seccomp profile permits unshare) — not a change to this file. Until then, verify:trivy-image
 # scanning every pushed digest is what covers the risk of an unmaintained builder.
 #
+# --ignore-path /tmp because kaniko snapshots the whole filesystem after each RUN and will fail
+# the build if a file disappears mid-walk; the build stage's /tmp is scratch that never reaches
+# the runtime image anyway.
+#
 # The image digest is published as a dotenv artifact so the scan job pins the exact image this
 # pipeline produced rather than re-resolving a mutable tag.
 docker:
@@ -169,7 +173,8 @@ docker:
              --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
              --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
              --digest-file /kaniko/digest \
-             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache" \
+             --ignore-path /tmp
       if [ -n "$CI_COMMIT_TAG" ]; then
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi

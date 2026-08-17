@@ -2,7 +2,11 @@
 FROM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 COPY . .
-RUN ./gradlew --no-daemon :daemon:installDist
+# in-process compilation keeps the Kotlin compile off a forked daemon. That daemon writes lock
+# files under /tmp and deletes them on exit, which races kaniko's filesystem snapshot in CI
+# ("Failed to get file info for /tmp/kotlin-daemon.*.log.lck"). It is also leaner, which suits a
+# build stage that is thrown away.
+RUN ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :daemon:installDist
 
 # Runtime stage — JRE only; ciphertext-on-disk workloads want nothing fancier.
 FROM eclipse-temurin:21-jre
