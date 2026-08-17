@@ -149,10 +149,14 @@ docker:
     - name: docker:29-dind
       alias: docker
   variables:
-    DOCKER_HOST: "tcp://docker:2376"
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_TLS_VERIFY: "1"
-    DOCKER_CERT_PATH: "/certs/client"
+    # Plain TCP, not dind's TLS default. TLS shares its client certs through a /certs/client
+    # volume that the runner has to mount into the job container, and these runners do not — the
+    # job dies on "unable to resolve docker endpoint: open /certs/client/ca.pem". The endpoint is
+    # only reachable from this job's own service network, never off the runner. If the runner
+    # config ever grows `volumes = ["/certs/client"]`, switch back to 2376 with
+    # DOCKER_TLS_CERTDIR "/certs" and DOCKER_TLS_VERIFY 1.
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
     BUILDKIT_PROGRESS: "plain"
   before_script:
     - apk add --no-cache jq
