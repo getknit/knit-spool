@@ -19,6 +19,7 @@ class Metrics {
     val powVerifiedTotal = LongAdder()
     val rateLimitedTotal = LongAdder()
     val shedsTotal = LongAdder()
+    val attachChunksStoredTotal = LongAdder()
     private val errsTotal = ConcurrentHashMap<String, LongAdder>()
 
     fun err(code: String) {
@@ -40,6 +41,7 @@ class Metrics {
             line("knit_spool_pow_verified_total", "counter", powVerifiedTotal.sum())
             line("knit_spool_rate_limited_total", "counter", rateLimitedTotal.sum())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
+            line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())
             line("knit_spool_live_bytes", "gauge", liveBytes)
             append("# TYPE knit_spool_errs_total counter\n")

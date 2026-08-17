@@ -3,13 +3,66 @@ package app.getknit.spool.store
 
 import app.getknit.spool.protocol.ScopeBounds
 
-/** The spool-wide caps SUB declarations are clamped to (advertised in HELLO). */
+/**
+ * The spool-wide caps SUB declarations are clamped to (advertised in HELLO).
+ *
+ * [maxAttachBytes] and [maxAChunk] are the attachment budget of spec §6.5. Unlike the frame bounds
+ * they are never declared per scope: attachments sit outside the digest, so there is nothing for
+ * members to converge on and the quota stays purely the operator's. A zero [maxAttachBytes] switches
+ * attachment support off, and the server then omits all three attachment limits from HELLO.
+ */
 class HardLimits(
     val maxBlob: Int,
     val maxFramesCap: Int,
     val maxTtlMs: Long,
     val maxScopes: Int,
+    val maxAttachBytes: Int = 0,
+    val maxAChunk: Int = DEFAULT_MAX_A_CHUNK,
+) {
+    val attachments: Boolean get() = maxAttachBytes > 0
+
+    companion object {
+        /** A sealed chunk at the spec's structural 48 KiB: `1 + 12 + 40 + 49152 + 16` (§12). */
+        const val DEFAULT_MAX_A_CHUNK = 49_221
+    }
+}
+
+/** One attachment's presence, the payload behind an `ahas` (spec §7.3). */
+class AttachmentInfo(
+    val total: Int,
+    val bits: ByteArray,
+    val dead: Boolean,
 )
+
+/** One stored chunk returned by [ScopeStore.attachmentGet]. */
+class AttachmentChunk(
+    val idx: Int,
+    val total: Int,
+    val cid: ByteArray,
+    val data: ByteArray,
+)
+
+sealed class AputResult {
+    /** Newly stored. [evicted] lists whole attachments dropped to stay inside the byte quota. */
+    class Stored(
+        val evicted: List<ByteArray>,
+    ) : AputResult()
+
+    /** Byte-identical chunk already at that position — acked, nothing changed (§6.5). */
+    object Duplicate : AputResult()
+
+    /** A *different* chunk already holds that position, or `total` disagrees. First write wins. */
+    object Conflict : AputResult()
+
+    object Tombstoned : AputResult()
+
+    object TooLarge : AputResult()
+
+    object BadId : AputResult()
+
+    /** The attachment cannot fit the per-scope byte budget even with every other one evicted. */
+    object QuotaExceeded : AputResult()
+}
 
 /** A scope's digest anchor: what a `digest` record carries (spec §7.2). */
 class DigestInfo(
@@ -123,6 +176,35 @@ interface ScopeStore : AutoCloseable {
 
     /** Drops the least-recently-active scope entirely (watermark policy), or null when empty. */
     fun shedOldestScope(): ShedScope?
+
+    // --- Attachments (spec §6.5/§7.3). Only reachable when [HardLimits.attachments] is on. ---
+
+    /** One attachment's presence bitmap; `total = 0` when unknown, `dead` when tombstoned. */
+    fun attachmentPresence(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        now: Long,
+    ): AttachmentInfo
+
+    /** The stored chunks in `[from, from + n)`; indices the spool lacks are simply absent. */
+    fun attachmentGet(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        from: Int,
+        n: Int,
+        now: Long,
+    ): List<AttachmentChunk>
+
+    /** Stores one sealed chunk; see [AputResult] for the outcomes §6.5 requires. */
+    fun attachmentPut(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        total: Int,
+        cid: ByteArray,
+        data: ByteArray,
+        now: Long,
+    ): AputResult
 
     override fun close()
 

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.protocol.Achunk
+import app.getknit.spool.protocol.Aget
+import app.getknit.spool.protocol.Ahas
+import app.getknit.spool.protocol.Ahave
+import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.Digest
@@ -20,6 +25,7 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.store.AputResult
 import app.getknit.spool.store.DigestInfo
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
@@ -94,6 +100,7 @@ class SpoolServer(
         val maxRecord: Int,
         val maxPull: Int,
         val hardLimits: HardLimits,
+        val maxAget: Int = 32,
         val maxBytes: Long = 268_435_456L,
         val sweepMs: Long = 60_000L,
         val trustProxy: Boolean = false,
@@ -301,6 +308,21 @@ class SpoolServer(
                         if (push == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, push.q) { handlePush(conn, push) }
                     }
 
+                    RecordType.AHAVE -> {
+                        val ahave = RecordCodec.decode<Ahave>(bytes)
+                        if (ahave == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, ahave.q) { handleAhave(conn, ahave) }
+                    }
+
+                    RecordType.AGET -> {
+                        val aget = RecordCodec.decode<Aget>(bytes)
+                        if (aget == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, aget.q) { handleAget(conn, aget) }
+                    }
+
+                    RecordType.APUT -> {
+                        val aput = RecordCodec.decode<Aput>(bytes)
+                        if (aput == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, aput.q) { handleAput(conn, aput) }
+                    }
+
                     null -> {
                         sendErr(conn, ErrCode.MALFORMED)
                     }
@@ -394,6 +416,130 @@ class SpoolServer(
         }
         val missing = wanted.filter { hex(it) !in servedHex }
         out(conn, Ok(t = RecordType.OK, q = pull.q, missing = missing.ifEmpty { null }))
+    }
+
+    private suspend fun handleAhave(
+        conn: Conn,
+        ahave: Ahave,
+    ) {
+        if (!requireAttachments(conn, ahave.q, ahave.scope)) return
+        if (!requireSub(conn, ahave.scope, ahave.q)) return
+        val info = withStore { store.attachmentPresence(ahave.scope, ahave.aid, clock()) }
+        out(
+            conn,
+            Ahas(
+                t = RecordType.AHAS,
+                q = ahave.q,
+                scope = ahave.scope,
+                aid = ahave.aid,
+                total = info.total,
+                bits = info.bits,
+                dead = info.dead,
+            ),
+        )
+    }
+
+    private suspend fun handleAget(
+        conn: Conn,
+        aget: Aget,
+    ) {
+        if (!requireAttachments(conn, aget.q, aget.scope)) return
+        if (!requireSub(conn, aget.scope, aget.q)) return
+        // Truncated, never an error — the `pull` rule of §7.2, reapplied.
+        val chunks = withStore { store.attachmentGet(aget.scope, aget.aid, aget.from, minOf(aget.n, config.maxAget), clock()) }
+        for (chunk in chunks) {
+            out(
+                conn,
+                Achunk(
+                    t = RecordType.ACHUNK,
+                    scope = aget.scope,
+                    aid = aget.aid,
+                    idx = chunk.idx,
+                    total = chunk.total,
+                    cid = chunk.cid,
+                    data = chunk.data,
+                ),
+            )
+        }
+        // A bare ok: indices we lack simply do not arrive, and the client already knows which from
+        // the bitmap, so there is nothing to enumerate back (§7.3).
+        out(conn, Ok(t = RecordType.OK, q = aget.q))
+    }
+
+    private suspend fun handleAput(
+        conn: Conn,
+        aput: Aput,
+    ) {
+        if (!requireAttachments(conn, aput.q, aput.scope)) return
+        if (!requireSub(conn, aput.scope, aput.q)) return
+        val retryMs = conn.pushBucket.take()
+        if (retryMs > 0) {
+            rateLimited(conn, q = aput.q, scope = aput.scope, retryMs = retryMs)
+            return
+        }
+        val now = clock()
+        // An aput can recreate a shed scope exactly as a push can (§6.2/§6.4), so it passes the same
+        // creation gates and re-subscribes the connection's remembered bounds before storing.
+        if (withStore { store.isUnknownScope(aput.scope) }) {
+            if (!newScopeGates(conn, aput.scope, aput.pow?.d, aput.pow?.n, aput.q, now)) return
+            val declared = conn.subscriptions[hex(aput.scope)] ?: return
+            when (val result = withStore { store.subscribe(aput.scope, declared, now) }) {
+                is SubscribeResult.Subscribed -> {
+                    conn.out.send(binary(RecordCodec.encode(digestRecord(aput.scope, result.digest))))
+                }
+
+                SubscribeResult.QuotaExceeded -> {
+                    sendErr(conn, ErrCode.QUOTA, q = aput.q, scope = aput.scope)
+                    return
+                }
+            }
+        }
+        when (val result = withStore { store.attachmentPut(aput.scope, aput.aid, aput.idx, aput.total, aput.cid, aput.data, now) }) {
+            is AputResult.Stored -> {
+                metrics.attachChunksStoredTotal.increment()
+                out(conn, Ok(t = RecordType.OK, q = aput.q))
+                maybeShed()
+            }
+
+            AputResult.Duplicate -> {
+                out(conn, Ok(t = RecordType.OK, q = aput.q))
+            }
+
+            AputResult.Conflict -> {
+                sendErr(conn, ErrCode.CONFLICT, q = aput.q, scope = aput.scope)
+            }
+
+            AputResult.Tombstoned -> {
+                sendErr(conn, ErrCode.TOMBSTONED, q = aput.q, scope = aput.scope)
+            }
+
+            AputResult.TooLarge -> {
+                sendErr(conn, ErrCode.TOO_LARGE, q = aput.q, scope = aput.scope)
+            }
+
+            AputResult.BadId -> {
+                sendErr(conn, ErrCode.BAD_ID, q = aput.q, scope = aput.scope)
+            }
+
+            AputResult.QuotaExceeded -> {
+                sendErr(conn, ErrCode.QUOTA, q = aput.q, scope = aput.scope)
+            }
+        }
+    }
+
+    /**
+     * Refuses an attachment record on a spool with attachments switched off. Such a spool omits the
+     * limits from HELLO and a conforming client never sends these — but "the client should not have"
+     * is not a reason to leave its `q` hanging until timeout.
+     */
+    private suspend fun requireAttachments(
+        conn: Conn,
+        q: Long,
+        scope: ByteArray,
+    ): Boolean {
+        if (config.hardLimits.attachments) return true
+        sendErr(conn, ErrCode.MALFORMED, q = q, scope = scope)
+        return false
     }
 
     private suspend fun handlePush(
@@ -592,6 +738,11 @@ class SpoolServer(
                     maxPull = config.maxPull,
                     maxFramesCap = config.hardLimits.maxFramesCap,
                     maxTtlMs = config.hardLimits.maxTtlMs,
+                    // All three, or none: their presence IS the attachment capability signal (§7.3),
+                    // and a client that sees them absent never sends us an attachment record.
+                    maxAttachBytes = config.hardLimits.maxAttachBytes.takeIf { config.hardLimits.attachments },
+                    maxAChunk = config.hardLimits.maxAChunk.takeIf { config.hardLimits.attachments },
+                    maxAget = config.maxAget.takeIf { config.hardLimits.attachments },
                 ),
             powBits = config.powBits,
         )

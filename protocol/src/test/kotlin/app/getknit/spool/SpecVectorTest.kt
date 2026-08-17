@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool
 
+import app.getknit.spool.protocol.Achunk
+import app.getknit.spool.protocol.Aget
+import app.getknit.spool.protocol.Ahas
+import app.getknit.spool.protocol.Ahave
+import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Err
@@ -133,6 +138,82 @@ class SpecVectorTest {
                     RecordCodec.encode(
                         Err(t = RecordType.ERR, code = ErrCode.RATE, msg = "slow down", retryMs = 30_000L),
                     ),
+                "helloSpoolAttach" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                    maxAttachBytes = 16_777_216,
+                                    maxAChunk = 49_221,
+                                    maxAget = 32,
+                                ),
+                            powBits = 20,
+                        ),
+                    ),
+                "ahave" to
+                    RecordCodec.encode(Ahave(t = RecordType.AHAVE, q = 5L, scope = fixture(32, 1), aid = fixture(32, 7))),
+                "ahas" to
+                    RecordCodec.encode(
+                        Ahas(
+                            t = RecordType.AHAS,
+                            q = 5L,
+                            scope = fixture(32, 1),
+                            aid = fixture(32, 7),
+                            total = 3,
+                            bits = fixture(1, 9),
+                        ),
+                    ),
+                "ahasDead" to
+                    RecordCodec.encode(
+                        Ahas(
+                            t = RecordType.AHAS,
+                            q = 5L,
+                            scope = fixture(32, 1),
+                            aid = fixture(32, 7),
+                            total = 0,
+                            bits = ByteArray(0),
+                            dead = true,
+                        ),
+                    ),
+                "aget" to
+                    RecordCodec.encode(
+                        Aget(t = RecordType.AGET, q = 6L, scope = fixture(32, 1), aid = fixture(32, 7), from = 0, n = 2),
+                    ),
+                "achunk" to
+                    RecordCodec.encode(
+                        Achunk(
+                            t = RecordType.ACHUNK,
+                            scope = fixture(32, 1),
+                            aid = fixture(32, 7),
+                            idx = 1,
+                            total = 3,
+                            cid = fixture(32, 8),
+                            data = fixture(48, 6),
+                        ),
+                    ),
+                "aput" to
+                    RecordCodec.encode(
+                        Aput(
+                            t = RecordType.APUT,
+                            q = 7L,
+                            scope = fixture(32, 1),
+                            aid = fixture(32, 7),
+                            idx = 1,
+                            total = 3,
+                            cid = fixture(32, 8),
+                            data = fixture(48, 6),
+                            pow = PowStamp(n = 42L, d = 20_680L),
+                        ),
+                    ),
             )
         for ((name, encoded) in vectors) {
             assertEquals(EXPECTED.getValue(name), encoded.toHex(), "record vector '$name' diverges from the spec")
@@ -241,6 +322,45 @@ class SpecVectorTest {
                     "a461746365727264636f64656a746f6d6273746f6e65646171046573636f70655820" +
                     "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
                 "errRate" to "a461746365727264636f64656472617465636d736769736c6f7720646f776e6772657472794d73197530",
+                "helloSpoolAttach" to
+                    "a561746568656c6c6f617601636d696e01666c696d697473a9676d6178426c6f621a" +
+                    "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
+                    "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
+                    "0c84006e6d617841747461636842797465731a01000000696d6178414368756e6b19" +
+                    "c045676d617841676574182067706f774269747314",
+                "ahave" to
+                    "a461746561686176656171056573636f7065582001080f161d242b323940474e555c" +
+                    "636a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f46" +
+                    "4d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0",
+                "ahas" to
+                    "a6617464616861736171056573636f7065582001080f161d242b323940474e555c63" +
+                    "6a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f464d" +
+                    "545b626970777e858c939aa1a8afb6bdc4cbd2d9e065746f74616c03646269747341" +
+                    "09",
+                "ahasDead" to
+                    "a7617464616861736171056573636f7065582001080f161d242b323940474e555c63" +
+                    "6a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f464d" +
+                    "545b626970777e858c939aa1a8afb6bdc4cbd2d9e065746f74616c00646269747340" +
+                    "6464656164f5",
+                "aget" to
+                    "a6617464616765746171066573636f7065582001080f161d242b323940474e555c63" +
+                    "6a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f464d" +
+                    "545b626970777e858c939aa1a8afb6bdc4cbd2d9e06466726f6d00616e02",
+                "achunk" to
+                    "a7617466616368756e6b6573636f7065582001080f161d242b323940474e555c636a" +
+                    "71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f464d54" +
+                    "5b626970777e858c939aa1a8afb6bdc4cbd2d9e0636964780165746f74616c036363" +
+                    "69645820080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3" +
+                    "dae164646174615830060d141b222930373e454c535a61686f767d848b9299a0a7ae" +
+                    "b5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f",
+                "aput" to
+                    "a9617464617075746171076573636f7065582001080f161d242b323940474e555c63" +
+                    "6a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f464d" +
+                    "545b626970777e858c939aa1a8afb6bdc4cbd2d9e0636964780165746f74616c0363" +
+                    "6369645820080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5cc" +
+                    "d3dae164646174615830060d141b222930373e454c535a61686f767d848b9299a0a7" +
+                    "aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f63706f77a2616e182a61" +
+                    "641950c8",
             )
     }
 }

@@ -28,6 +28,9 @@ private val KNOWN_VARS =
         "SPOOL_MAX_TTL_MS",
         "SPOOL_MAX_RECORD",
         "SPOOL_MAX_PULL",
+        "SPOOL_MAX_AGET",
+        "SPOOL_MAX_ATTACH_BYTES",
+        "SPOOL_MAX_A_CHUNK",
         "SPOOL_MAX_BYTES",
         "SPOOL_SWEEP_MS",
         "SPOOL_TRUST_PROXY",
@@ -81,12 +84,17 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         powBits = intVar(env, "SPOOL_POW_BITS", default = 0, min = 0, max = 30),
         maxRecord = maxRecord,
         maxPull = intVar(env, "SPOOL_MAX_PULL", default = 64, min = 1),
+        maxAget = intVar(env, "SPOOL_MAX_AGET", default = 32, min = 1),
         hardLimits =
             HardLimits(
                 maxBlob = maxBlob,
                 maxFramesCap = intVar(env, "SPOOL_MAX_FRAMES", default = 1_000, min = 1),
                 maxTtlMs = longVar(env, "SPOOL_MAX_TTL_MS", default = 604_800_000L, min = 1L),
                 maxScopes = intVar(env, "SPOOL_MAX_SCOPES", default = 64, min = 1),
+                // 0 switches attachments off entirely; the server then omits all three limits from
+                // HELLO and a conforming client never sends an attachment record (spec §7.3).
+                maxAttachBytes = intVar(env, "SPOOL_MAX_ATTACH_BYTES", default = 16_777_216, min = 0),
+                maxAChunk = intVar(env, "SPOOL_MAX_A_CHUNK", default = HardLimits.DEFAULT_MAX_A_CHUNK, min = 1),
             ),
         maxBytes = longVar(env, "SPOOL_MAX_BYTES", default = 268_435_456L, min = 0L),
         sweepMs = longVar(env, "SPOOL_SWEEP_MS", default = 60_000L, min = 1_000L),

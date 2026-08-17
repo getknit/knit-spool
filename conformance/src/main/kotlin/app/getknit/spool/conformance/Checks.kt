@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.conformance
 
+import app.getknit.spool.protocol.Achunk
+import app.getknit.spool.protocol.Aget
+import app.getknit.spool.protocol.Ahas
+import app.getknit.spool.protocol.Ahave
+import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.Digest
@@ -149,9 +154,149 @@ fun allChecks(): List<Check> =
         qCorrelation(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
+        attachmentRoundTrip(),
+        attachmentBadId(),
+        attachmentFirstWriteWins(),
+        attachmentGetTruncated(),
+        // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
+        // which no later check can create the fresh scope it needs.
         rateLimit(),
         quotaScopes(),
     )
+
+/**
+ * Skips every attachment check on a spool that did not advertise the §7.3 limits. Attachment support
+ * is optional; what is NOT optional is that a spool without it is never sent these records, which is
+ * exactly what this skip models on the client side.
+ */
+private fun Ctx.requireAttachments(): app.getknit.spool.protocol.Limits {
+    val limits = limits()
+    if (!limits.attachments) throw SkipCheck("spool advertises no attachment limits (§7.3)")
+    return limits
+}
+
+/** §4.5/§7.3: an attachment chunk stores, shows up in the presence bitmap, and reads back byte-exact. */
+private fun attachmentRoundTrip(): Check =
+    Check(name = "attachment-round-trip") { ctx ->
+        ctx.requireAttachments()
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            ctx.subscribeFresh(this, scope)
+            val aid = ctx.randomScope()
+            val (cid, data) = ctx.randomBlob(64)
+
+            val putQ = nextQ()
+            send(Aput(t = RecordType.APUT, q = putQ, scope = scope, aid = aid, idx = 1, total = 2, cid = cid, data = data))
+            val ok = expect<Ok>(RecordType.OK)
+            ensure(ok.q == putQ) { "expected aput ok q=$putQ, got ${ok.q}" }
+
+            send(Ahave(t = RecordType.AHAVE, q = nextQ(), scope = scope, aid = aid))
+            val has = expect<Ahas>(RecordType.AHAS)
+            ensure(has.total == 2) { "expected ahas total=2, got ${has.total}" }
+            ensure(!has.dead) { "expected ahas dead=false for a live attachment" }
+            // Chunk 1 only: MSB-first bit 1 of byte 0 ⇒ 0b0100_0000.
+            ensure(has.bits.size == 1 && (has.bits[0].toInt() and 0xFF) == 0x40) {
+                "expected bitmap 0x40 for chunk 1 of 2, got ${hex(has.bits)}"
+            }
+
+            val getQ = nextQ()
+            send(Aget(t = RecordType.AGET, q = getQ, scope = scope, aid = aid, from = 0, n = 2))
+            val chunk = expect<Achunk>(RecordType.ACHUNK)
+            ensure(chunk.idx == 1) { "expected the only stored chunk at idx 1, got ${chunk.idx}" }
+            ensure(chunk.total == 2) { "expected achunk total=2, got ${chunk.total}" }
+            ensure(chunk.cid.contentEquals(cid)) { "expected cid ${hex(cid)}, got ${hex(chunk.cid)}" }
+            ensure(chunk.data.contentEquals(data)) { "achunk data differs from what was put" }
+            // Indices the spool lacks simply do not arrive; the aget terminates with a bare ok.
+            val done = expect<Ok>(RecordType.OK)
+            ensure(done.q == getQ) { "expected aget ok q=$getQ, got ${done.q}" }
+        }
+    }
+
+/** §6.5: an aput whose cid is not SHA-256(data) is refused with bad_id. */
+private fun attachmentBadId(): Check =
+    Check(name = "attachment-bad-id") { ctx ->
+        ctx.requireAttachments()
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            ctx.subscribeFresh(this, scope)
+            val (_, data) = ctx.randomBlob(32)
+            send(
+                Aput(
+                    t = RecordType.APUT,
+                    q = nextQ(),
+                    scope = scope,
+                    aid = ctx.randomScope(),
+                    idx = 0,
+                    total = 1,
+                    cid = ByteArray(32),
+                    data = data,
+                ),
+            )
+            expectErr(ErrCode.BAD_ID)
+        }
+    }
+
+/** §6.5: first write wins — an identical re-put is acked, a differing one is `conflict`. */
+private fun attachmentFirstWriteWins(): Check =
+    Check(name = "attachment-first-write-wins") { ctx ->
+        ctx.requireAttachments()
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            ctx.subscribeFresh(this, scope)
+            val aid = ctx.randomScope()
+            val (cid, data) = ctx.randomBlob(48)
+            val (otherCid, otherData) = ctx.randomBlob(48)
+            send(Aput(t = RecordType.APUT, q = nextQ(), scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data))
+            expect<Ok>(RecordType.OK)
+
+            // Byte-identical: the deterministic seal means honest members re-push exactly this.
+            send(Aput(t = RecordType.APUT, q = nextQ(), scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data))
+            expect<Ok>(RecordType.OK)
+
+            send(
+                Aput(
+                    t = RecordType.APUT,
+                    q = nextQ(),
+                    scope = scope,
+                    aid = aid,
+                    idx = 0,
+                    total = 1,
+                    cid = otherCid,
+                    data = otherData,
+                ),
+            )
+            expectErr(ErrCode.CONFLICT)
+        }
+    }
+
+/** §7.3: an aget beyond `maxAget` is truncated, never an error — the `pull` rule reapplied. */
+private fun attachmentGetTruncated(): Check =
+    Check(name = "attachment-get-truncated") { ctx ->
+        val limits = ctx.requireAttachments()
+        val maxAget = limits.maxAget ?: throw SkipCheck("no maxAget advertised")
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            ctx.subscribeFresh(this, scope)
+            val aid = ctx.randomScope()
+            val (cid, data) = ctx.randomBlob(32)
+            val total = maxAget + 2
+            send(
+                Aput(t = RecordType.APUT, q = nextQ(), scope = scope, aid = aid, idx = 0, total = total, cid = cid, data = data),
+            )
+            expect<Ok>(RecordType.OK)
+
+            val getQ = nextQ()
+            send(Aget(t = RecordType.AGET, q = getQ, scope = scope, aid = aid, from = 0, n = total))
+            val chunk = expect<Achunk>(RecordType.ACHUNK)
+            ensure(chunk.idx == 0) { "expected chunk 0, got ${chunk.idx}" }
+            val ok = expect<Ok>(RecordType.OK)
+            ensure(ok.q == getQ) { "an over-long aget must be truncated and acked, not refused" }
+        }
+    }
 
 /** §7.1: the spool's hello arrives unprompted and advertises sane min/limits/powBits. */
 private fun helloFirst(): Check =

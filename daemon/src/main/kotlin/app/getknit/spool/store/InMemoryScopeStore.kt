@@ -18,14 +18,31 @@ class InMemoryScopeStore(
         val arrivedAt: Long,
     )
 
+    private class StoredChunk(
+        val cid: ByteArray,
+        val data: ByteArray,
+    )
+
+    /** One attachment (spec §6.5). [arrivedAt] is stamped by the FIRST chunk and never extended. */
+    private class StoredAttachment(
+        val total: Int,
+        val arrivedAt: Long,
+    ) {
+        val chunks = HashMap<Int, StoredChunk>()
+        var bytes = 0L
+    }
+
     private class Scope(
         var bounds: ScopeBounds,
         var lastActivity: Long,
     ) {
         val live = LinkedHashMap<String, StoredBlob>() // insertion order == arrival order
         val tombstones = LinkedHashMap<String, Long>() // hex id → tombstone expiry
+        val attachments = LinkedHashMap<String, StoredAttachment>() // hex aid → attachment
+        val attachTombstones = LinkedHashMap<String, Long>() // hex aid → tombstone expiry
         var digest = 0L
         var liveBytes = 0L
+        var attachBytes = 0L
     }
 
     private val scopes = LinkedHashMap<String, Scope>()
@@ -135,12 +152,133 @@ class InMemoryScopeStore(
     override fun shedOldestScope(): ShedScope? {
         val oldest = scopes.entries.minByOrNull { it.value.lastActivity } ?: return null
         scopes.remove(oldest.key)
-        bytesTotal -= oldest.value.liveBytes
+        val freed = oldest.value.liveBytes + oldest.value.attachBytes
+        bytesTotal -= freed
         return ShedScope(
             scopeId = unhex(oldest.key),
             bounds = oldest.value.bounds,
-            freedBytes = oldest.value.liveBytes,
+            freedBytes = freed,
         )
+    }
+
+    @Synchronized
+    override fun attachmentPresence(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        now: Long,
+    ): AttachmentInfo {
+        val scope = scopes[hex(scopeId)] ?: return ABSENT
+        scope.lastActivity = now
+        sweepScope(scope, now)
+        val key = hex(aid)
+        if (key in scope.attachTombstones) return AttachmentInfo(total = 0, bits = ByteArray(0), dead = true)
+        val held = scope.attachments[key] ?: return ABSENT
+        return AttachmentInfo(total = held.total, bits = bitmapOf(held), dead = false)
+    }
+
+    @Synchronized
+    override fun attachmentGet(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        from: Int,
+        n: Int,
+        now: Long,
+    ): List<AttachmentChunk> {
+        if (from < 0 || n <= 0) return emptyList()
+        val scope = scopes[hex(scopeId)] ?: return emptyList()
+        scope.lastActivity = now
+        sweepScope(scope, now)
+        val held = scope.attachments[hex(aid)] ?: return emptyList()
+        return (from until minOf(from + n, held.total)).mapNotNull { index ->
+            held.chunks[index]?.let { AttachmentChunk(idx = index, total = held.total, cid = it.cid, data = it.data) }
+        }
+    }
+
+    @Synchronized
+    @Suppress("ReturnCount") // one guard per §6.5 rejection reason; a nested pyramid would read worse
+    override fun attachmentPut(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        total: Int,
+        cid: ByteArray,
+        data: ByteArray,
+        now: Long,
+    ): AputResult {
+        val scope = scopes[hex(scopeId)] ?: return AputResult.BadId
+        scope.lastActivity = now
+        sweepScope(scope, now)
+        if (data.size > hardLimits.maxAChunk) return AputResult.TooLarge
+        if (!MessageDigest.getInstance("SHA-256").digest(data).contentEquals(cid)) return AputResult.BadId
+        if (total < 1 || idx !in 0 until total) return AputResult.Conflict
+        val key = hex(aid)
+        if (key in scope.attachTombstones) return AputResult.Tombstoned
+        val existing = scope.attachments[key]
+        // A disagreeing `total` is the same class of fault as a disagreeing chunk: first write wins.
+        if (existing != null && existing.total != total) return AputResult.Conflict
+        existing?.chunks?.get(idx)?.let {
+            return if (it.cid.contentEquals(cid)) AputResult.Duplicate else AputResult.Conflict
+        }
+        val attachment = existing ?: StoredAttachment(total, now).also { scope.attachments[key] = it }
+        attachment.chunks[idx] = StoredChunk(cid = cid, data = data)
+        attachment.bytes += data.size
+        scope.attachBytes += data.size
+        bytesTotal += data.size
+        return enforceAttachmentQuota(scope, key, now)
+    }
+
+    /**
+     * Brings [scope] back inside the byte budget by dropping whole attachments oldest-first, never
+     * the one just written and never a partial chunk set. If nothing else is left to drop, the new
+     * attachment simply cannot fit: it is removed WITHOUT a tombstone, so a later retry against a
+     * roomier spool (or the same one after a sweep) is still possible.
+     */
+    private fun enforceAttachmentQuota(
+        scope: Scope,
+        key: String,
+        now: Long,
+    ): AputResult {
+        val evicted = mutableListOf<ByteArray>()
+        while (scope.attachBytes > hardLimits.maxAttachBytes) {
+            val victim =
+                scope.attachments.entries
+                    .filter { it.key != key }
+                    .minByOrNull { it.value.arrivedAt }
+            if (victim == null) {
+                dropAttachment(scope, key, tombstone = false, now = now)
+                return AputResult.QuotaExceeded
+            }
+            dropAttachment(scope, victim.key, tombstone = true, now = now)
+            evicted.add(unhex(victim.key))
+        }
+        return AputResult.Stored(evicted)
+    }
+
+    private fun dropAttachment(
+        scope: Scope,
+        key: String,
+        tombstone: Boolean,
+        now: Long,
+    ) {
+        val removed = scope.attachments.remove(key) ?: return
+        scope.attachBytes -= removed.bytes
+        bytesTotal -= removed.bytes
+        if (!tombstone) return
+        scope.attachTombstones[key] = now + scope.bounds.ttlMs
+        val cap = ScopeStore.tombstoneCap(scope.bounds)
+        while (scope.attachTombstones.size > cap) {
+            scope.attachTombstones.remove(scope.attachTombstones.keys.firstOrNull() ?: return)
+        }
+    }
+
+    private fun bitmapOf(attachment: StoredAttachment): ByteArray {
+        val out = ByteArray((attachment.total + BITS_PER_BYTE - 1) / BITS_PER_BYTE)
+        for (index in attachment.chunks.keys) {
+            if (index in 0 until attachment.total) {
+                out[index / BITS_PER_BYTE] = (out[index / BITS_PER_BYTE].toInt() or (0x80 ushr (index % BITS_PER_BYTE))).toByte()
+            }
+        }
+        return out
     }
 
     override fun close() = Unit
@@ -161,7 +299,11 @@ class InMemoryScopeStore(
         removeToTombstone(scope, oldest.key, now)
     }
 
-    /** Expires live blobs and tombstones; returns true when the live set changed. */
+    /**
+     * Expires live blobs, attachments, and both tombstone sets. The returned flag is about the
+     * **frame** set only: attachments are outside the digest (§6.5), so an expiring attachment must
+     * not provoke a digest broadcast that says nothing changed.
+     */
     private fun sweepScope(
         scope: Scope,
         now: Long,
@@ -169,6 +311,11 @@ class InMemoryScopeStore(
         val dead = scope.live.entries.filter { it.value.arrivedAt + scope.bounds.ttlMs < now }
         dead.forEach { removeToTombstone(scope, it.key, now) }
         scope.tombstones.entries.removeIf { it.value < now }
+        scope.attachments.entries
+            .filter { it.value.arrivedAt + scope.bounds.ttlMs < now }
+            .map { it.key }
+            .forEach { dropAttachment(scope, it, tombstone = true, now = now) }
+        scope.attachTombstones.entries.removeIf { it.value < now }
         return dead.isNotEmpty()
     }
 
@@ -214,5 +361,7 @@ class InMemoryScopeStore(
 
     private companion object {
         private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+        private const val BITS_PER_BYTE = 8
+        private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
     }
 }

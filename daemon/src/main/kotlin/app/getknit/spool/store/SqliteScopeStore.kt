@@ -30,6 +30,10 @@ class SqliteScopeStore private constructor(
 
         private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
+        private const val BITS_PER_BYTE = 8
+
+        private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
+
         fun open(
             dataDir: Path,
             hardLimits: HardLimits,
@@ -57,6 +61,7 @@ class SqliteScopeStore private constructor(
         var digest: Long,
         var liveCount: Int,
         var liveBytes: Long,
+        var attachBytes: Long,
     )
 
     private fun initialize() {
@@ -83,6 +88,7 @@ class SqliteScopeStore private constructor(
                   digest        INTEGER NOT NULL DEFAULT 0,
                   live_count    INTEGER NOT NULL DEFAULT 0,
                   live_bytes    INTEGER NOT NULL DEFAULT 0,
+                  attach_bytes  INTEGER NOT NULL DEFAULT 0,
                   last_activity INTEGER NOT NULL
                 ) WITHOUT ROWID
                 """.trimIndent(),
@@ -111,7 +117,52 @@ class SqliteScopeStore private constructor(
                 """.trimIndent(),
             )
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_tombstones_expiry ON tombstones(scope_id, expires_at)")
-            statement.executeUpdate("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')")
+            // Attachments (spec §6.5). A rowid table for the chunks: WITHOUT ROWID suits small key
+            // rows, not the ~48 KiB payload each of these carries — same reasoning as `blobs`.
+            statement.executeUpdate(
+                """
+                CREATE TABLE IF NOT EXISTS attachments (
+                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                  aid        BLOB NOT NULL,
+                  total      INTEGER NOT NULL,
+                  arrived_at INTEGER NOT NULL,
+                  PRIMARY KEY (scope_id, aid)
+                ) WITHOUT ROWID
+                """.trimIndent(),
+            )
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_attachments_eviction ON attachments(scope_id, arrived_at)")
+            statement.executeUpdate(
+                """
+                CREATE TABLE IF NOT EXISTS attachment_chunks (
+                  scope_id BLOB NOT NULL,
+                  aid      BLOB NOT NULL,
+                  idx      INTEGER NOT NULL,
+                  cid      BLOB NOT NULL,
+                  data     BLOB NOT NULL,
+                  PRIMARY KEY (scope_id, aid, idx)
+                )
+                """.trimIndent(),
+            )
+            statement.executeUpdate(
+                """
+                CREATE TABLE IF NOT EXISTS attachment_tombstones (
+                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                  aid        BLOB NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  PRIMARY KEY (scope_id, aid)
+                ) WITHOUT ROWID
+                """.trimIndent(),
+            )
+            // schema 1 → 2 adds the attach_bytes column. A fresh database already has it from the
+            // CREATE above and reports no stored version, so the ALTER runs only for an existing v1.
+            val existingVersion =
+                statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'").use {
+                    if (it.next()) it.getString(1) else null
+                }
+            if (existingVersion == "1") {
+                statement.executeUpdate("ALTER TABLE scopes ADD COLUMN attach_bytes INTEGER NOT NULL DEFAULT 0")
+            }
+            statement.executeUpdate("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')")
         }
         connection.autoCommit = false
         recomputeOnBoot()
@@ -148,7 +199,17 @@ class SqliteScopeStore private constructor(
                         update.setBytes(4, scopeId)
                         update.executeUpdate()
                     }
-                    total += bytes
+                    var attachBytes = 0L
+                    val attachSelect = prep("SELECT COALESCE(SUM(length(data)), 0) FROM attachment_chunks WHERE scope_id = ?")
+                    attachSelect.setBytes(1, scopeId)
+                    attachSelect.executeQuery().use { attachRows ->
+                        if (attachRows.next()) attachBytes = attachRows.getLong(1)
+                    }
+                    val healAttach = prep("UPDATE scopes SET attach_bytes = ? WHERE scope_id = ?")
+                    healAttach.setLong(1, attachBytes)
+                    healAttach.setBytes(2, scopeId)
+                    healAttach.executeUpdate()
+                    total += bytes + attachBytes
                 }
             }
             bytesTotal.set(total)
@@ -201,7 +262,7 @@ class SqliteScopeStore private constructor(
                 insert.setInt(4, clamped.maxBlob)
                 insert.setLong(5, now)
                 insert.executeUpdate()
-                row = ScopeRow(clamped, digest = 0L, liveCount = 0, liveBytes = 0L)
+                row = ScopeRow(clamped, digest = 0L, liveCount = 0, liveBytes = 0L, attachBytes = 0L)
             } else {
                 row.bounds = clamped
             }
@@ -336,7 +397,7 @@ class SqliteScopeStore private constructor(
         tx {
             val select =
                 prep(
-                    "SELECT scope_id, max_frames, ttl_ms, max_blob, live_bytes FROM scopes " +
+                    "SELECT scope_id, max_frames, ttl_ms, max_blob, live_bytes + attach_bytes FROM scopes " +
                         "ORDER BY last_activity ASC LIMIT 1",
                 )
             val shed =
@@ -353,12 +414,184 @@ class SqliteScopeStore private constructor(
                         freedBytes = rows.getLong(5),
                     )
                 }
+            // attachment_chunks has no foreign key of its own (see dropAttachment), so the scope
+            // cascade would leave its rows behind — a shed scope must take its bytes with it.
+            val deleteChunks = prep("DELETE FROM attachment_chunks WHERE scope_id = ?")
+            deleteChunks.setBytes(1, shed.scopeId)
+            deleteChunks.executeUpdate()
             val delete = prep("DELETE FROM scopes WHERE scope_id = ?")
             delete.setBytes(1, shed.scopeId)
             delete.executeUpdate()
             bytesTotal.addAndGet(-shed.freedBytes)
             shed
         }
+
+    @Synchronized
+    override fun attachmentPresence(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        now: Long,
+    ): AttachmentInfo =
+        tx {
+            val row = readRow(scopeId) ?: return@tx ABSENT
+            sweepScope(scopeId, row, now)
+            writeRow(scopeId, row, now)
+            if (exists("SELECT 1 FROM attachment_tombstones WHERE scope_id = ? AND aid = ?", scopeId, aid)) {
+                return@tx AttachmentInfo(total = 0, bits = ByteArray(0), dead = true)
+            }
+            val totalSelect = prep("SELECT total FROM attachments WHERE scope_id = ? AND aid = ?")
+            totalSelect.setBytes(1, scopeId)
+            totalSelect.setBytes(2, aid)
+            val total = totalSelect.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
+            if (total <= 0) return@tx ABSENT
+            val bits = ByteArray((total + BITS_PER_BYTE - 1) / BITS_PER_BYTE)
+            val chunkSelect = prep("SELECT idx FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
+            chunkSelect.setBytes(1, scopeId)
+            chunkSelect.setBytes(2, aid)
+            chunkSelect.executeQuery().use { rows ->
+                while (rows.next()) {
+                    val index = rows.getInt(1)
+                    if (index in 0 until total) {
+                        bits[index / BITS_PER_BYTE] =
+                            (bits[index / BITS_PER_BYTE].toInt() or (0x80 ushr (index % BITS_PER_BYTE))).toByte()
+                    }
+                }
+            }
+            AttachmentInfo(total = total, bits = bits, dead = false)
+        }
+
+    @Synchronized
+    override fun attachmentGet(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        from: Int,
+        n: Int,
+        now: Long,
+    ): List<AttachmentChunk> {
+        if (from < 0 || n <= 0) return emptyList()
+        return tx {
+            val row = readRow(scopeId) ?: return@tx emptyList()
+            sweepScope(scopeId, row, now)
+            writeRow(scopeId, row, now)
+            val totalSelect = prep("SELECT total FROM attachments WHERE scope_id = ? AND aid = ?")
+            totalSelect.setBytes(1, scopeId)
+            totalSelect.setBytes(2, aid)
+            val total = totalSelect.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
+            if (total <= 0) return@tx emptyList()
+            val select =
+                prep(
+                    "SELECT idx, cid, data FROM attachment_chunks WHERE scope_id = ? AND aid = ? " +
+                        "AND idx >= ? AND idx < ? ORDER BY idx ASC",
+                )
+            select.setBytes(1, scopeId)
+            select.setBytes(2, aid)
+            select.setInt(3, from)
+            select.setInt(4, minOf(from.toLong() + n, total.toLong()).toInt())
+            val out = ArrayList<AttachmentChunk>()
+            select.executeQuery().use { rows ->
+                while (rows.next()) {
+                    out.add(AttachmentChunk(idx = rows.getInt(1), total = total, cid = rows.getBytes(2), data = rows.getBytes(3)))
+                }
+            }
+            out
+        }
+    }
+
+    @Synchronized
+    @Suppress("ReturnCount") // one guard per §6.5 rejection reason
+    override fun attachmentPut(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        total: Int,
+        cid: ByteArray,
+        data: ByteArray,
+        now: Long,
+    ): AputResult {
+        // The cheap, DB-free rejections run first so no path returns after a sweep without writing
+        // the scope row back.
+        if (data.size > hardLimits.maxAChunk) return AputResult.TooLarge
+        if (!sha256.digest(data).contentEquals(cid)) return AputResult.BadId
+        if (total < 1 || idx !in 0 until total) return AputResult.Conflict
+        return tx {
+            val row = readRow(scopeId) ?: return@tx AputResult.BadId
+            sweepScope(scopeId, row, now)
+            if (exists("SELECT 1 FROM attachment_tombstones WHERE scope_id = ? AND aid = ?", scopeId, aid)) {
+                writeRow(scopeId, row, now)
+                return@tx AputResult.Tombstoned
+            }
+            val header = prep("SELECT total FROM attachments WHERE scope_id = ? AND aid = ?")
+            header.setBytes(1, scopeId)
+            header.setBytes(2, aid)
+            val heldTotal = header.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
+            // A disagreeing `total` is the same class of fault as a disagreeing chunk: first write wins.
+            if (heldTotal != 0 && heldTotal != total) {
+                writeRow(scopeId, row, now)
+                return@tx AputResult.Conflict
+            }
+            val heldCid = prep("SELECT cid FROM attachment_chunks WHERE scope_id = ? AND aid = ? AND idx = ?")
+            heldCid.setBytes(1, scopeId)
+            heldCid.setBytes(2, aid)
+            heldCid.setInt(3, idx)
+            val existingCid = heldCid.executeQuery().use { if (it.next()) it.getBytes(1) else null }
+            if (existingCid != null) {
+                writeRow(scopeId, row, now)
+                return@tx if (existingCid.contentEquals(cid)) AputResult.Duplicate else AputResult.Conflict
+            }
+            if (heldTotal == 0) {
+                val insertHeader = prep("INSERT INTO attachments (scope_id, aid, total, arrived_at) VALUES (?, ?, ?, ?)")
+                insertHeader.setBytes(1, scopeId)
+                insertHeader.setBytes(2, aid)
+                insertHeader.setInt(3, total)
+                insertHeader.setLong(4, now)
+                insertHeader.executeUpdate()
+            }
+            val insert = prep("INSERT INTO attachment_chunks (scope_id, aid, idx, cid, data) VALUES (?, ?, ?, ?, ?)")
+            insert.setBytes(1, scopeId)
+            insert.setBytes(2, aid)
+            insert.setInt(3, idx)
+            insert.setBytes(4, cid)
+            insert.setBytes(5, data)
+            insert.executeUpdate()
+            row.attachBytes += data.size
+            bytesTotal.addAndGet(data.size.toLong())
+            val result = enforceAttachmentQuota(scopeId, row, aid, now)
+            writeRow(scopeId, row, now)
+            result
+        }
+    }
+
+    /**
+     * Brings the scope back inside the byte budget by dropping whole attachments oldest-first, never
+     * the one just written. When nothing else remains to drop, the new attachment cannot fit at all:
+     * it is removed WITHOUT a tombstone, so a retry after a sweep (or against a roomier spool) still
+     * works.
+     */
+    private fun enforceAttachmentQuota(
+        scopeId: ByteArray,
+        row: ScopeRow,
+        aid: ByteArray,
+        now: Long,
+    ): AputResult {
+        val evicted = ArrayList<ByteArray>()
+        while (row.attachBytes > hardLimits.maxAttachBytes) {
+            val select =
+                prep(
+                    "SELECT aid FROM attachments WHERE scope_id = ? AND aid != ? " +
+                        "ORDER BY arrived_at ASC, aid ASC LIMIT 1",
+                )
+            select.setBytes(1, scopeId)
+            select.setBytes(2, aid)
+            val victim = select.executeQuery().use { if (it.next()) it.getBytes(1) else null }
+            if (victim == null) {
+                dropAttachment(scopeId, row, aid, tombstone = false, now = now)
+                return AputResult.QuotaExceeded
+            }
+            dropAttachment(scopeId, row, victim, tombstone = true, now = now)
+            evicted.add(victim)
+        }
+        return AputResult.Stored(evicted)
+    }
 
     @Synchronized
     override fun close() {
@@ -392,7 +625,79 @@ class SqliteScopeStore private constructor(
         expire.setBytes(1, scopeId)
         expire.setLong(2, now)
         expire.executeUpdate()
+        sweepAttachments(scopeId, row, now)
         return dead.isNotEmpty()
+    }
+
+    /**
+     * Expires attachments and their tombstones. Deliberately contributes nothing to [sweepScope]'s
+     * return value: attachments sit outside the digest (§6.5), so an expiring one must not provoke a
+     * digest broadcast announcing a frame set that did not move.
+     */
+    private fun sweepAttachments(
+        scopeId: ByteArray,
+        row: ScopeRow,
+        now: Long,
+    ) {
+        val dead = ArrayList<ByteArray>()
+        // Same sargable form as the blob sweep: a bare column compared to a precomputed cutoff, so
+        // idx_attachments_eviction range-seeks instead of the scope's attachments being scanned.
+        val select = prep("SELECT aid FROM attachments WHERE scope_id = ? AND arrived_at < ?")
+        select.setBytes(1, scopeId)
+        select.setLong(2, now - row.bounds.ttlMs)
+        select.executeQuery().use { rows ->
+            while (rows.next()) dead.add(rows.getBytes(1))
+        }
+        dead.forEach { dropAttachment(scopeId, row, it, tombstone = true, now = now) }
+        val expire = prep("DELETE FROM attachment_tombstones WHERE scope_id = ? AND expires_at < ?")
+        expire.setBytes(1, scopeId)
+        expire.setLong(2, now)
+        expire.executeUpdate()
+    }
+
+    /** Drops one whole attachment — never a partial chunk set, per §6.5. */
+    private fun dropAttachment(
+        scopeId: ByteArray,
+        row: ScopeRow,
+        aid: ByteArray,
+        tombstone: Boolean,
+        now: Long,
+    ) {
+        var freed = 0L
+        val sum = prep("SELECT COALESCE(SUM(length(data)), 0) FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
+        sum.setBytes(1, scopeId)
+        sum.setBytes(2, aid)
+        sum.executeQuery().use { if (it.next()) freed = it.getLong(1) }
+        // Chunks are deleted explicitly rather than through the parent's cascade: the pair is not
+        // declared as a composite foreign key, so nothing else would collect them.
+        val deleteChunks = prep("DELETE FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
+        deleteChunks.setBytes(1, scopeId)
+        deleteChunks.setBytes(2, aid)
+        deleteChunks.executeUpdate()
+        val delete = prep("DELETE FROM attachments WHERE scope_id = ? AND aid = ?")
+        delete.setBytes(1, scopeId)
+        delete.setBytes(2, aid)
+        if (delete.executeUpdate() == 0 && freed == 0L) return
+        row.attachBytes -= freed
+        bytesTotal.addAndGet(-freed)
+        if (!tombstone) return
+        val insert = prep("INSERT OR REPLACE INTO attachment_tombstones (scope_id, aid, expires_at) VALUES (?, ?, ?)")
+        insert.setBytes(1, scopeId)
+        insert.setBytes(2, aid)
+        insert.setLong(3, now + row.bounds.ttlMs)
+        insert.executeUpdate()
+        val cap = ScopeStore.tombstoneCap(row.bounds)
+        val trim =
+            prep(
+                "DELETE FROM attachment_tombstones WHERE scope_id = ? AND aid IN (" +
+                    "SELECT aid FROM attachment_tombstones WHERE scope_id = ? ORDER BY expires_at ASC, aid ASC " +
+                    "LIMIT max(0, (SELECT COUNT(*) FROM attachment_tombstones WHERE scope_id = ?) - ?))",
+            )
+        trim.setBytes(1, scopeId)
+        trim.setBytes(2, scopeId)
+        trim.setBytes(3, scopeId)
+        trim.setInt(4, cap)
+        trim.executeUpdate()
     }
 
     private fun evictOldest(
@@ -456,7 +761,8 @@ class SqliteScopeStore private constructor(
     }
 
     private fun readRow(scopeId: ByteArray): ScopeRow? {
-        val select = prep("SELECT max_frames, ttl_ms, max_blob, digest, live_count, live_bytes FROM scopes WHERE scope_id = ?")
+        val select =
+            prep("SELECT max_frames, ttl_ms, max_blob, digest, live_count, live_bytes, attach_bytes FROM scopes WHERE scope_id = ?")
         select.setBytes(1, scopeId)
         return select.executeQuery().use { rows ->
             if (!rows.next()) return@use null
@@ -470,6 +776,7 @@ class SqliteScopeStore private constructor(
                 digest = rows.getLong(4),
                 liveCount = rows.getInt(5),
                 liveBytes = rows.getLong(6),
+                attachBytes = rows.getLong(7),
             )
         }
     }
@@ -482,7 +789,7 @@ class SqliteScopeStore private constructor(
         val update =
             prep(
                 "UPDATE scopes SET max_frames = ?, ttl_ms = ?, max_blob = ?, digest = ?, live_count = ?, live_bytes = ?, " +
-                    "last_activity = COALESCE(?, last_activity) WHERE scope_id = ?",
+                    "attach_bytes = ?, last_activity = COALESCE(?, last_activity) WHERE scope_id = ?",
             )
         update.setInt(1, row.bounds.maxFrames)
         update.setLong(2, row.bounds.ttlMs)
@@ -490,8 +797,9 @@ class SqliteScopeStore private constructor(
         update.setLong(4, row.digest)
         update.setInt(5, row.liveCount)
         update.setLong(6, row.liveBytes)
-        if (lastActivity == null) update.setNull(7, java.sql.Types.INTEGER) else update.setLong(7, lastActivity)
-        update.setBytes(8, scopeId)
+        update.setLong(7, row.attachBytes)
+        if (lastActivity == null) update.setNull(8, java.sql.Types.INTEGER) else update.setLong(8, lastActivity)
+        update.setBytes(9, scopeId)
         update.executeUpdate()
     }
 

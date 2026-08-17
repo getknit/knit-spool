@@ -25,6 +25,14 @@ object RecordType {
     const val EVENT = "event"
     const val OK = "ok"
     const val ERR = "err"
+
+    // The attachment family (spec §7.3). Only ever seen by a spool that advertised the three
+    // attachment limits in HELLO; one that did not is never sent them.
+    const val AHAVE = "ahave"
+    const val AHAS = "ahas"
+    const val AGET = "aget"
+    const val ACHUNK = "achunk"
+    const val APUT = "aput"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -39,6 +47,9 @@ object ErrCode {
     const val NOT_SUBSCRIBED = "not_subscribed"
     const val MALFORMED = "malformed"
     const val INTERNAL = "internal"
+
+    /** An `aput` whose `cid` differs from the chunk already stored at that position (§6.5). */
+    const val CONFLICT = "conflict"
 }
 
 /** WebSocket close codes for failures before or outside the record layer (spec §7.1). */
@@ -56,6 +67,11 @@ class RecordHead(
     val t: String,
 )
 
+/**
+ * The HELLO limits. The three attachment fields are the capability signal of spec §7.3: present
+ * together, or absent together. A client must not send attachment records to a spool that omitted
+ * them — an unknown record type is skipped without an answer, which would strand the client's `q`.
+ */
 @Serializable
 class Limits(
     val maxBlob: Int,
@@ -64,7 +80,12 @@ class Limits(
     val maxPull: Int,
     val maxFramesCap: Int,
     val maxTtlMs: Long,
-)
+    val maxAttachBytes: Int? = null,
+    val maxAChunk: Int? = null,
+    val maxAget: Int? = null,
+) {
+    val attachments: Boolean get() = maxAttachBytes != null && maxAChunk != null && maxAget != null
+}
 
 @Serializable
 class PowStamp(
@@ -160,6 +181,67 @@ class Ok(
     val t: String,
     val q: Long,
     val missing: List<ByteArray>? = null,
+)
+
+/** Client→spool: what does this spool hold for one attachment (§7.3)? Answered by [Ahas]. */
+@Serializable
+class Ahave(
+    val t: String,
+    val q: Long,
+    val scope: ByteArray,
+    val aid: ByteArray,
+)
+
+/**
+ * Spool→client: one attachment's presence. [total] is 0 when unknown, [dead] when tombstoned, and
+ * [bits] is the presence bitmap — chunk *i* is bit *i % 8*, MSB-first, of byte *i / 8*.
+ */
+@Serializable
+class Ahas(
+    val t: String,
+    val q: Long,
+    val scope: ByteArray,
+    val aid: ByteArray,
+    val total: Int,
+    val bits: ByteArray,
+    val dead: Boolean = false,
+)
+
+/** Client→spool: fetch up to [n] chunks from [from] (truncated at `maxAget`); [Achunk]s then a bare OK. */
+@Serializable
+class Aget(
+    val t: String,
+    val q: Long,
+    val scope: ByteArray,
+    val aid: ByteArray,
+    val from: Int,
+    val n: Int,
+)
+
+/** Spool→client: one sealed attachment chunk. No `q` — attributed like [Blob]. */
+@Serializable
+class Achunk(
+    val t: String,
+    val scope: ByteArray,
+    val aid: ByteArray,
+    val idx: Int,
+    val total: Int,
+    val cid: ByteArray,
+    val data: ByteArray,
+)
+
+/** Client→spool: store one sealed chunk. `cid` re-verified; first write wins at a position. */
+@Serializable
+class Aput(
+    val t: String,
+    val q: Long,
+    val scope: ByteArray,
+    val aid: ByteArray,
+    val idx: Int,
+    val total: Int,
+    val cid: ByteArray,
+    val data: ByteArray,
+    val pow: PowStamp? = null,
 )
 
 @Serializable

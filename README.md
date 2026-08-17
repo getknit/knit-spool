@@ -61,6 +61,9 @@ spec's §12 constants.
 | `SPOOL_MAX_TTL_MS` | `604800000` | per-scope TTL ceiling (7 d) |
 | `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes |
 | `SPOOL_MAX_PULL` | `64` | max blob ids per `pull` |
+| `SPOOL_MAX_ATTACH_BYTES` | `16777216` | per-scope attachment byte quota (§6.5); **0 turns attachments off** — the three attachment limits then vanish from HELLO and a conforming client never sends `ahave`/`aget`/`aput` |
+| `SPOOL_MAX_A_CHUNK` | `49221` | max sealed attachment-chunk bytes (the spec's structural 48 KiB plus framing) |
+| `SPOOL_MAX_AGET` | `32` | max chunks per `aget`; an over-long request is truncated, never refused |
 | `SPOOL_MAX_BYTES` | `268435456` | payload watermark; over it the least-active scope is shed; 0 = unlimited |
 | `SPOOL_SWEEP_MS` | `60000` | sweeper cadence (expiry, cache pruning, watermark) |
 | `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop for per-IP limits |
