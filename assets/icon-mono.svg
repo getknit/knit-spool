@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+<g fill="none" stroke="currentColor" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 180 l24 44 l24 -44"/>
+    <path d="M208 189 l24 44 l24 -44"/>
+    <path d="M256 189 l24 44 l24 -44"/>
+    <path d="M304 180 l24 44 l24 -44"/>
+    <path d="M160 232 l24 44 l24 -44"/>
+    <path d="M208 241 l24 44 l24 -44"/>
+    <path d="M256 241 l24 44 l24 -44"/>
+    <path d="M304 232 l24 44 l24 -44"/>
+    <path d="M160 284 l24 44 l24 -44"/>
+    <path d="M208 293 l24 44 l24 -44"/>
+    <path d="M256 293 l24 44 l24 -44"/>
+    <path d="M304 284 l24 44 l24 -44"/>
+  </g>
+  <path d="M368 368 C424 372 444 406 424 426 C408 442 384 434 386 416" fill="none" stroke="currentColor" stroke-width="22" stroke-linecap="round"/>
+  <rect x="128" y="118" width="256" height="50" rx="25" fill="currentColor"/>
+  <rect x="128" y="344" width="256" height="50" rx="25" fill="currentColor"/>
+</svg>

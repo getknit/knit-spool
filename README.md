@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/icon-256.png" width="128" height="128" alt="knit-spool">
+
 # knit-spool
 
 **The reference *spool* — a scoped, blinded store-and-forward relay for

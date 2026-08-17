@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="thread" gradientUnits="userSpaceOnUse" x1="140" y1="130" x2="400" y2="420">
+      <stop offset="0" stop-color="#A88BFF"/>
+      <stop offset="0.5" stop-color="#7F52FF"/>
+      <stop offset="1" stop-color="#00BCD4"/>
+    </linearGradient>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="256" y1="0" x2="256" y2="512">
+      <stop offset="0" stop-color="#241F38"/>
+      <stop offset="1" stop-color="#12101B"/>
+    </linearGradient>
+    <linearGradient id="flange" gradientUnits="userSpaceOnUse" x1="256" y1="110" x2="256" y2="400">
+      <stop offset="0" stop-color="#F4F1FF"/>
+      <stop offset="1" stop-color="#B4A9D6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g fill="none" stroke="url(#thread)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 180 l24 44 l24 -44"/>
+    <path d="M208 189 l24 44 l24 -44"/>
+    <path d="M256 189 l24 44 l24 -44"/>
+    <path d="M304 180 l24 44 l24 -44"/>
+    <path d="M160 232 l24 44 l24 -44"/>
+    <path d="M208 241 l24 44 l24 -44"/>
+    <path d="M256 241 l24 44 l24 -44"/>
+    <path d="M304 232 l24 44 l24 -44"/>
+    <path d="M160 284 l24 44 l24 -44"/>
+    <path d="M208 293 l24 44 l24 -44"/>
+    <path d="M256 293 l24 44 l24 -44"/>
+    <path d="M304 284 l24 44 l24 -44"/>
+  </g>
+  <path d="M368 368 C424 372 444 406 424 426 C408 442 384 434 386 416" fill="none" stroke="url(#thread)" stroke-width="22" stroke-linecap="round"/>
+  <rect x="128" y="118" width="256" height="50" rx="25" fill="url(#flange)"/>
+  <rect x="128" y="344" width="256" height="50" rx="25" fill="url(#flange)"/>
+</svg>
