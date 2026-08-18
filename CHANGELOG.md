@@ -13,8 +13,13 @@ as such — those are the ones operators have to read.
 
 ## Unreleased
 
-First implementation of the **v1** spool protocol. Nothing has been tagged yet; the version is
-`0.1.0-SNAPSHOT` and every interface below is subject to change until it is.
+Nothing yet.
+
+## 0.1.0 - 2026-08-17
+
+First implementation of the **v1** spool protocol, and the first tagged release. Pre-1.0: every
+interface below is subject to change, and only the wire protocol's own compatibility rules — which
+are versioned separately, above — are stable.
 
 ### Added
 
