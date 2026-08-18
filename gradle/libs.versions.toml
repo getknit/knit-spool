@@ -7,6 +7,7 @@ logback = "1.5.18"
 sqliteJdbc = "3.50.3.0"
 ktlintPlugin = "14.2.0"
 ktlintTool = "1.8.0"
+kover = "0.9.9"
 
 [libraries]
 kotlinx-serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbor", version.ref = "kotlinxSerialization" }
@@ -23,3 +24,4 @@ sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }

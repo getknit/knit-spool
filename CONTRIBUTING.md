@@ -87,6 +87,31 @@ conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
 `--destructive` enables the quota and rate-limit checks; they fill real capacity, so run them only
 against spools you operate.
 
+### Coverage
+
+Coverage is measured with [Kover](https://github.com/Kotlin/kotlinx-kover) and merged across all
+three modules. It is not part of `check` — ask for it:
+
+```sh
+./gradlew koverHtmlReport          # build/reports/kover/html/index.html
+./gradlew koverVerify              # enforce the line/branch floors
+./gradlew :daemon:koverHtmlReport  # one module on its own
+```
+
+CI runs the same reports in the `test` job, publishes the XML as a GitLab coverage report so the
+merge-request diff is annotated line by line, and gates on `koverVerify`.
+
+The floors in the root `build.gradle.kts` are a **ratchet**: they sit a few points under today's
+numbers so that ordinary refactoring passes and deleting tests does not. If a change raises
+coverage, raise the floor with it. Do not lower a floor to turn a red build green — that is the one
+edit the ratchet exists to prevent, and it will be asked about in review.
+
+Two things are excluded from the report, both in `build.gradle.kts` with a comment: the
+kotlinx-serialization-generated `$serializer` classes, and the two `main` entry points, which no
+unit test can reach and which `conformance-selftest` covers for real, out of process. `:conformance`
+itself scores low for the same out-of-process reason — its checks run against a live server — so
+judge a conformance change by the self-test, not by the number.
+
 New configuration knobs are **environment variables only** (`SPOOL_*`), must refuse to start on an
 invalid value, and belong in the README's configuration table in the same commit.
 
@@ -97,8 +122,8 @@ Development happens on the self-hosted GitLab at
 merge-request templates will guide you through what to include. Keep each merge request focused on a
 single change with a clear description of what and why.
 
-CI runs the tests, the conformance self-test, a kaniko image build, and advisory Trivy and
-markdownlint scans. The advisory jobs report without gating; the test jobs gate.
+CI runs the tests with coverage, the conformance self-test, a kaniko image build, and advisory Trivy
+and markdownlint scans. The advisory jobs report without gating; the test jobs gate.
 
 ## Security
 

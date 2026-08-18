@@ -3,7 +3,8 @@
 # stabilizes off its alpha.
 #
 # Stages: test -> package -> verify -> release.
-#   test     unit + spec-vector tests, and the conformance suite against the freshly built daemon
+#   test     unit + spec-vector tests with Kover coverage, and the conformance suite against the
+#            freshly built daemon
 #   package  the container image (kaniko — see the note on it below) and the installDist tarballs
 #   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) — never block a merge
 #   release  tag-only; cuts a GitLab release pointing at the tagged image and dist tarballs
@@ -74,19 +75,38 @@ default:
 # ----------------- test ------------------
 # `check` runs the JVM tests plus ktlintCheck, so lint failures block here rather than sitting
 # advisory in verify — the codebase is already clean and the rule set is stable.
+#
+# Coverage rides along in the same job rather than getting its own: Kover reports from the test
+# execution's binary output, so a separate job would re-run every suite to measure what this one
+# already ran. The root-project (`:`-prefixed) tasks are the merged three-module report; the
+# unqualified names would fan out to per-module reports and print three more coverage lines for
+# the `coverage:` regex below to trip over.
+#
+# koverVerify is a second invocation on purpose. Gradle does not guarantee that command-line task
+# order is execution order, so bundling it with the reports risks the floors failing the build
+# before the XML that explains the failure is written. Here the reports always exist first, and the
+# second call is near-instant — everything it needs is already up to date.
 test:
   extends: .gradle
   stage: test
+  coverage: '/Total line coverage: \d+(?:\.\d+)?%/'
   script:
-    - ./gradlew --no-daemon check --console=plain --stacktrace
+    - ./gradlew --no-daemon check :koverXmlReport :koverHtmlReport :koverLog --console=plain --stacktrace
+    - ./gradlew --no-daemon :koverVerify --console=plain
   artifacts:
     when: always
     expire_in: 1 week
     reports:
       junit: "**/build/test-results/test/TEST-*.xml"
+      # Kover's XML is JaCoCo format, which is what paints per-line coverage into the MR diff.
+      coverage_report:
+        coverage_format: jacoco
+        path: build/reports/kover/report.xml
     paths:
       - "*/build/reports/tests/test/"
       - "*/build/reports/ktlint/"
+      # Root project, not `*/` — the merged report lands in the root build dir.
+      - "build/reports/kover/"
 
 # The conformance suite eats its own dogfood against the built daemon: same wire contract an
 # external implementation would be held to, run against the daemon this commit produces.

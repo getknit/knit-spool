@@ -13,6 +13,7 @@ It holds sealed frames for scope ids it cannot map to anyone, and forgets everyt
 ![Ktor](https://img.shields.io/badge/Ktor-3.3.0%20CIO-087CFA?logo=ktor&logoColor=white)
 ![JDK](https://img.shields.io/badge/JDK-21-orange?logo=openjdk&logoColor=white)
 ![Protocol](https://img.shields.io/badge/spool%20protocol-v1%20(%C2%A713%20vectors%20pinned)-2EA043)
+![Coverage](https://github.com/getknit/knit-spool/badges/main/coverage.svg?style=flat)
 ![Footprint](https://img.shields.io/badge/RSS-~128%E2%80%93256%20MB-00BCD4)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
 
@@ -277,6 +278,26 @@ JDK 21 — the Gradle wrapper pins Gradle 9.5.0.
 
 `check` runs the §13 spec-vector pins, the store contract against both backends (in-memory and
 SQLite), and the full server integration tests.
+
+### Coverage
+
+[Kover](https://github.com/Kotlin/kotlinx-kover), merged across all three modules:
+
+```sh
+./gradlew koverHtmlReport          # build/reports/kover/html/index.html
+./gradlew koverXmlReport           # JaCoCo-format XML, what CI hands GitLab
+./gradlew koverVerify              # enforce the line/branch floors
+./gradlew :daemon:koverHtmlReport  # one module on its own
+```
+
+Nothing is wired to `check` — reports are asked for explicitly. CI runs them in the `test` job and
+publishes the XML as a GitLab coverage report, which paints the merge-request diff line by line.
+
+The merged total sits well under the per-module numbers (`:protocol` ~98%, `:daemon` ~91%) for a
+structural reason worth knowing before reading it: `:conformance`'s check bodies only execute
+against a live server, which happens in the `conformance-selftest` job — a separate process that
+Kover does not instrument. Judge daemon and protocol changes by the merged report; judge conformance
+changes by whether the self-test still passes.
 
 ## 🤝 Contributing
 

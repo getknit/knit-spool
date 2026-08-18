@@ -54,6 +54,12 @@ First implementation of the **v1** spool protocol. Nothing has been tagged yet; 
 - **CI** (self-hosted GitLab) — tests and ktlint, the conformance suite run against the freshly
   built daemon, a kaniko image build, advisory Trivy filesystem/image and markdownlint scans, and a
   tag-only release job.
+- **Coverage reporting** (Kover) — one merged report over all three modules
+  (`./gradlew koverHtmlReport`), plus per-module reports. CI publishes the JaCoCo-format XML as a
+  GitLab coverage report, so coverage is painted into the merge-request diff and tracked as a job
+  percentage; `koverVerify` holds line and branch floors as a ratchet against tests being deleted.
+  Process entry points and generated serializers are excluded — the former only run out of process,
+  under `conformance-selftest`, where Kover cannot see them.
 
 ### Changed
 
