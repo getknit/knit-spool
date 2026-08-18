@@ -161,6 +161,9 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 
 ## 🌐 Deploy
 
+Picking a host first? [`HOSTING.md`](HOSTING.md) covers what a spool needs from a box, which
+providers fit, and which container platforms are the wrong shape for a long-lived WebSocket.
+
 The daemon serves plain WebSocket; **TLS terminates at a reverse proxy**. Either one you already
 run ([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
 [`deploy/docker-compose.yml`](deploy/docker-compose.yml)), or one compose brings up for you with
