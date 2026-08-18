@@ -1,0 +1,90 @@
+name: Triage
+
+# Keyword auto-labeling for newly opened issues, so a report lands with an `area:` tag instead of
+# only `needs-triage`. Advisory only: this workflow never removes a label, never closes anything,
+# and never comments. Canned replies and closes live in .github/label-actions.yml and are driven by
+# labels a human applies.
+#
+# Runs on `opened` ONLY, deliberately not `edited`. An `edited` run would re-add labels the
+# maintainer had just removed by hand, and there is no way to distinguish "the regex was wrong" from
+# "the text changed". Hand-labeling wins after the first pass.
+#
+# Matching runs over the title plus a SCRUBBED body: issue-form headings (`### ...`) and UNCHECKED
+# checkbox lines are stripped first. The forms in .github/ISSUE_TEMPLATE render their own scaffolding
+# into every single issue ("### Blindness impact", "### Spec impact", ...), so a naive regex would
+# tag every feature request `area: protocol`. Checked boxes survive the scrub on purpose — those are
+# a real signal.
+#
+# Actions are pinned by commit SHA here because this job holds `issues: write` and is triggered by
+# anyone who can open an issue. (ci.yml pins by major tag; it runs only on maintainer-controlled
+# refs and on PR code that cannot reach a token.)
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label:
+    name: Auto-label
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const issue = context.payload.issue;
+            // GitHub delivers issue bodies with CRLF; normalize before any line-anchored matching.
+            const body = (issue.body || '').replace(/\r\n?/g, '\n');
+
+            const scrubbed = [
+              issue.title || '',
+              ...body
+                .split('\n')
+                .filter((l) => !/^\s{0,3}#{1,6}\s/.test(l))        // form headings
+                .filter((l) => !/^\s*[-*]\s*\[\s*\]\s/.test(l)),   // UNCHECKED checkbox boilerplate
+            ].join('\n');
+
+            const RULES = [
+              ['area: protocol',    /\bCBOR\b|wire format|spec vector|§13|handshake|\bhello\b|record layer|forward[- ]compat/i],
+              ['area: storage',     /\bSQLite\b|\bWAL\b|\bstore\b|retention|evict|tombstone|\bdigest\b|anti-?entropy|sweeper|SPOOL_DATA_DIR/i],
+              ['area: attachments', /attachment|\bahave\b|\bahas\b|\baget\b|\bachunk\b|\baput\b|chunk (bitmap|presence)|MAX_ATTACH/i],
+              ['area: abuse',       /\bPoW\b|proof[- ]of[- ]work|rate[- ]limit|\bquota\b|shed(ding)?|watermark|\b4003\b|retryMs/i],
+              ['area: ops',         /\/metrics|\/healthz|prometheus|status line|log level|graceful shutdown|SPOOL_STATUS_MS/i],
+              ['area: deploy',      /docker|compose|\bcaddy\b|\bnginx\b|reverse proxy|\bTLS\b|\bACME\b|Let'?s Encrypt|TRUST_PROXY|\bVPS\b/i],
+              ['area: conformance', /conformance|\bTAP\b|--destructive|self-?test/i],
+              ['area: build',       /\bgradle\b|\bktlint\b|\bkover\b|\bJDK\b|lockfile|installDist|distTar/i],
+            ];
+
+            const labels = new Set(
+              RULES.filter(([, re]) => re.test(scrubbed)).map(([name]) => name),
+            );
+
+            // The bug form's dropdowns beat prose.
+            const store = /^###\s*Store backend\s*$\n+^(.+)$/m.exec(body);
+            if (store && /SQLite/i.test(store[1])) labels.add('area: storage');
+
+            const client = /^###\s*Client that hit it\s*$\n+^(.+)$/m.exec(body);
+            if (client && /conformance/i.test(client[1])) labels.add('area: conformance');
+
+            // The feature form asks outright whether the wire contract has to change. That answer
+            // is worth more than any keyword, and it routes the issue to the Knit repo.
+            const spec = /^###\s*Spec impact\s*$\n+^(.+)$/m.exec(body);
+            if (spec && /^Needs a spec change/i.test(spec[1].trim())) {
+              labels.add('area: protocol');
+              labels.add('needs-spec-decision');
+            }
+
+            if (labels.size === 0) {
+              core.info(`no keyword match on #${issue.number}; leaving to manual triage`);
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: issue.number,
+              labels: [...labels],
+            });
+            core.info(`labeled #${issue.number}: ${[...labels].join(', ')}`);

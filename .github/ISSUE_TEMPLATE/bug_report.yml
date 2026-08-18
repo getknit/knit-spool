@@ -1,0 +1,135 @@
+name: 🐛 Bug report
+description: Report a defect in knit-spool, the reference store-and-forward relay daemon.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. **Please search existing issues before opening a new one.**
+
+        - knit-spool is a **best-effort hobby project shipped as-is** — issues are welcome but may
+          not be triaged, answered, or fixed on any timeline (see `CONTRIBUTING.md`).
+        - **Do not report security vulnerabilities here.** See `SECURITY.md` for private disclosure —
+          public disclosure before a fix exists puts the people relying on running spools at risk.
+        - **The spec is the product.** If the daemon disagrees with
+          [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md),
+          quote the section: the spec wins, and that makes this a bug here. If the *spec* is what
+          looks wrong, open it in the Knit repo instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, in order?
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Actual behavior, including any error text, `err` code, or daemon log lines.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Expected behavior, and the spec section it follows from if there is one.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: knit-spool version / commit
+      description: The commit SHA you built from, or the image tag plus digest.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How it runs
+      options:
+        - "./gradlew :daemon:run"
+        - Dist tarball
+        - Container (plain docker run)
+        - Compose — docker-compose.tls.yml
+        - Compose — docker-compose.tiny.yml
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store backend
+      description: SQLite is in use whenever `SPOOL_DATA_DIR` is set.
+      options:
+        - In-memory (SPOOL_DATA_DIR unset)
+        - SQLite (SPOOL_DATA_DIR set)
+    validations:
+      required: true
+  - type: input
+    id: proxy
+    attributes:
+      label: Reverse proxy in front
+      description: Caddy / nginx / other / none — and the value of `SPOOL_TRUST_PROXY`.
+      placeholder: "Caddy, SPOOL_TRUST_PROXY=true"
+  - type: input
+    id: platform
+    attributes:
+      label: JDK and OS
+      placeholder: "Temurin 21.0.5, Debian 12 (amd64)"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Client that hit it
+      options:
+        - The Knit app
+        - The conformance runner (:conformance)
+        - My own spool client implementation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: >-
+        The non-default `SPOOL_*` variables, with `SPOOL_TOKEN` redacted. "Defaults" is a fine
+        answer.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / conformance output
+      description: |
+        Daemon log excerpts around the failure, and the relevant `/metrics` counters if they moved.
+        If the conformance suite catches it, paste the failing TAP lines:
+
+        ```
+        conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
+            ws://127.0.0.1:9470/spool/v1
+        ```
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go to SECURITY.md privately).
+          required: true
+        - label: I understand knit-spool is a best-effort hobby project with no support guarantee.
+          required: true

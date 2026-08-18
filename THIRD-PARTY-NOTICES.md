@@ -57,8 +57,13 @@ time from upstream layers.
 - **ktlint** and the `org.jlleitschuh.gradle.ktlint` plugin — [pinterest/ktlint](https://github.com/pinterest/ktlint)
   (MIT) and [JLLeitschuh/ktlint-gradle](https://github.com/JLLeitschuh/ktlint-gradle) (MIT).
 - **kotlin-test** / JUnit Platform, used by the test suites only.
-- CI-only images referenced from [`.gitlab-ci.yml`](.gitlab-ci.yml): kaniko (Apache-2.0), Trivy
-  (Apache-2.0), `mdl` (MIT), and GitLab's release-cli (MIT).
+- CI-only images referenced from [`.gitlab-ci.yml`](.gitlab-ci.yml), the maintainer's internal
+  pipeline: kaniko (Apache-2.0), Trivy (Apache-2.0), `mdl` (MIT), and GitLab's release-cli (MIT).
+- CI-only GitHub Actions referenced from [`.github/workflows/`](.github/workflows/):
+  `actions/checkout`, `actions/setup-java`, `actions/upload-artifact`, `actions/github-script`,
+  `actions/stale`, and `gradle/actions` (all MIT), plus
+  [`dessant/label-actions`](https://github.com/dessant/label-actions) (MIT) and
+  [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) (MIT).
 
 ## Referenced, not redistributed
 

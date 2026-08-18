@@ -1,0 +1,131 @@
+# Canned replies and thread actions, keyed by label — https://github.com/dessant/label-actions
+# Consumed by .github/workflows/label-actions.yml (default config path for the action).
+#
+# The maintainer's triage decision IS the trigger: apply `needs-repro` and the bot asks for the
+# missing details; apply `spec` and it explains and closes. Nothing here fires from an issue's own
+# content — .github/workflows/triage.yml only adds `area:` labels and never these.
+#
+# Tone follows CONTRIBUTING.md: knit-spool is best-effort, shipped as-is, and saying so plainly
+# beats silence. `{issue-author}` is a placeholder the action substitutes.
+#
+# Every entry is scoped under `issues:` so a label of the same name on a pull request does nothing.
+
+needs-repro:
+  issues:
+    comment: |
+      Thanks for the report, @{issue-author}. As filed this one can't be acted on — there isn't
+      enough detail to reproduce it.
+
+      Please add whichever of these you can:
+
+      - the **commit or image digest** you're running
+      - **how it runs** — `:daemon:run`, dist tarball, container, or compose — and whether a reverse
+        proxy sits in front
+      - the **store backend** (`SPOOL_DATA_DIR` set or not) and any non-default `SPOOL_*` values,
+        with `SPOOL_TOKEN` redacted
+      - the **daemon log lines** around the failure, and any `/metrics` counter that moved
+
+      The fastest reproduction is usually the conformance runner, which talks the same wire contract
+      an external implementation would be held to:
+
+      ```
+      ./gradlew :daemon:installDist :conformance:installDist
+      daemon/build/install/knit-spool/bin/knit-spool &
+      conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
+          ws://127.0.0.1:9470/spool/v1
+      ```
+
+      A failing TAP line from that run is worth more than a prose description. Without a
+      reproduction this will be closed in a couple of weeks. That isn't a dismissal — comment any
+      time with the details and it can be reopened.
+
+spec:
+  issues:
+    comment: |
+      Thanks, @{issue-author} — this is about the spool **protocol spec** rather than this daemon's
+      implementation of it, so it belongs in the Knit repo where
+      [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md)
+      lives.
+
+      The spec is the product: this daemon implements it and follows once a change lands there, so
+      there's nothing to decide in this repo until it does. Please open it at
+      [getknit/knit](https://github.com/getknit/knit/issues) and link back here.
+
+      If it turns out the daemon is the one disagreeing with the spec as written, reopen this
+      quoting the section — that *is* a bug here.
+    close: true
+    close-reason: 'not planned'
+
+upstream:
+  issues:
+    comment: |
+      Thanks for tracking this down, @{issue-author}. This looks like a dependency, JDK, or
+      deployment-stack issue rather than something this daemon can fix in its own code — the spool
+      is a thin Ktor/CIO server, so JVM, SQLite, and reverse-proxy behavior shows through to the
+      operator.
+
+      Closing, since there's no change to make in this repo. If a workaround turns out to be
+      possible on our side, comment here and it can be reopened.
+    close: true
+    close-reason: 'not planned'
+
+duplicate:
+  issues:
+    comment: |
+      Thanks, @{issue-author} — this is already tracked in the linked issue. Closing so the
+      discussion stays in one place.
+
+      Please add anything new over there. A "me too" with your commit or image digest, store
+      backend, and proxy setup is genuinely useful: spool bugs often turn out to be
+      deployment-specific.
+    close: true
+    close-reason: 'not planned'
+
+question:
+  issues:
+    comment: |
+      Thanks for asking, @{issue-author}. This reads as an operator or usage question rather than a
+      defect, so it belongs in
+      [Discussions](https://github.com/getknit/knit-spool/discussions) — more people see it there,
+      and it stays findable for the next person running a spool.
+
+      Closing this issue; please repost it in Discussions. If it turns out to be a real bug, open a
+      bug report with reproduction steps. [`HOSTING.md`](https://github.com/getknit/knit-spool/blob/main/HOSTING.md)
+      covers most deployment questions already.
+    close: true
+    close-reason: 'not planned'
+
+wontfix:
+  issues:
+    comment: |
+      Thanks for raising it, @{issue-author}. This isn't something that'll be taken on. knit-spool
+      is a best-effort hobby project shipped as-is, and part of keeping it maintainable is declining
+      scope — see the support expectations in
+      [`CONTRIBUTING.md`](https://github.com/getknit/knit-spool/blob/main/CONTRIBUTING.md).
+
+      That's a capacity decision, not a judgment on the idea. knit-spool is AGPL-3.0-or-later and
+      the wire contract is public, so a fork — or an entirely separate spool implementation that the
+      conformance suite validates — is entirely welcome.
+    close: true
+    close-reason: 'not planned'
+
+deferred:
+  issues:
+    comment: |
+      Thanks, @{issue-author} — this is real, and it's deliberately deferred rather than overlooked.
+      `CONTRIBUTING.md` and the [README](https://github.com/getknit/knit-spool#readme) cover what's
+      parked and why.
+
+      Leaving this open as the tracking issue. No timeline attached, and it's exempt from the
+      stale bot.
+
+invalid:
+  issues:
+    comment: |
+      Thanks for writing in, @{issue-author}, but this doesn't describe something actionable in the
+      knit-spool codebase, so it's being closed.
+
+      If that's wrong, reopen with reproduction steps and the version, deployment, and configuration
+      details the bug form asks for.
+    close: true
+    close-reason: 'not planned'

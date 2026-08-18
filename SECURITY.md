@@ -11,12 +11,13 @@ If you run a spool, track `main` or a tagged image built from it.
 
 ## Reporting a vulnerability
 
-**Please do not open a public issue or merge request for security vulnerabilities.** Public
+**Please do not open a public issue or pull request for security vulnerabilities.** Public
 disclosure before a fix exists puts the people relying on running spools at risk.
 
-Report privately by email to **jeff.mixon@gmail.com**. If you already have an account on
-<https://github.com>, a **confidential issue** on the project works too — tick
-*This issue is confidential* so it stays visible only to project members. Please include:
+Report privately through GitHub's [**private vulnerability reporting**][report] — the
+"Report a vulnerability" button on the repository's *Security* tab — which opens a private draft
+advisory visible only to the maintainers. If you'd prefer email, write to **jeff.mixon@gmail.com**.
+Please include:
 
 - a description of the issue and its impact,
 - steps to reproduce (or a proof of concept), and
@@ -25,6 +26,8 @@ Report privately by email to **jeff.mixon@gmail.com**. If you already have an ac
 Please allow reasonable time for a fix before any public disclosure. As a best-effort hobby project,
 there is no guaranteed acknowledgement or remediation timeline, but genuine reports will be
 reviewed.
+
+[report]: https://github.com/getknit/knit-spool/security/advisories/new
 
 Vulnerabilities in the **sealed payload itself** — the E2E crypto envelope, key handling, safety
 numbers — belong to the Knit app, not to this repo: report those through

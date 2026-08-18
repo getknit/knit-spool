@@ -13,7 +13,7 @@ It holds sealed frames for scope ids it cannot map to anyone, and forgets everyt
 ![Ktor](https://img.shields.io/badge/Ktor-3.3.0%20CIO-087CFA?logo=ktor&logoColor=white)
 ![JDK](https://img.shields.io/badge/JDK-21-orange?logo=openjdk&logoColor=white)
 ![Protocol](https://img.shields.io/badge/spool%20protocol-v1%20(%C2%A713%20vectors%20pinned)-2EA043)
-![Coverage](https://github.com/getknit/knit-spool/badges/main/coverage.svg?style=flat)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fgetknit%2Fknit-spool%2Fbadges%2Fcoverage.json)](https://github.com/getknit/knit-spool/actions/workflows/ci.yml)
 ![Footprint](https://img.shields.io/badge/RSS-~128%E2%80%93256%20MB-00BCD4)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
 
@@ -286,13 +286,13 @@ SQLite), and the full server integration tests.
 
 ```sh
 ./gradlew koverHtmlReport          # build/reports/kover/html/index.html
-./gradlew koverXmlReport           # JaCoCo-format XML, what CI hands GitLab
+./gradlew koverXmlReport           # JaCoCo-format XML, what CI reports from
 ./gradlew koverVerify              # enforce the line/branch floors
 ./gradlew :daemon:koverHtmlReport  # one module on its own
 ```
 
-Nothing is wired to `check` — reports are asked for explicitly. CI runs them in the `test` job and
-publishes the XML as a GitLab coverage report, which paints the merge-request diff line by line.
+Nothing is wired to `check` — reports are asked for explicitly. CI runs them alongside the tests,
+gates on `koverVerify`, and publishes the merged percentage as the coverage badge above.
 
 The merged total sits well under the per-module numbers (`:protocol` ~98%, `:daemon` ~91%) for a
 structural reason worth knowing before reading it: `:conformance`'s check bodies only execute
@@ -304,9 +304,9 @@ changes by whether the self-test still passes.
 
 Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), which also sets out the
 (deliberately modest) **support expectations**: this is a best-effort hobby project shipped as-is,
-with no warranty and no response-time guarantee. Development happens on
-[github.com/getknit/knit-spool](https://github.com/getknit/knit-spool); the issue and
-merge-request templates cover what to include. Participation is governed by the
+with no warranty and no response-time guarantee. Development happens on GitHub at
+[github.com/getknit/knit-spool](https://github.com/getknit/knit-spool); the issue and pull-request
+templates cover what to include. Participation is governed by the
 [Code of Conduct](CODE_OF_CONDUCT.md), and notable changes are recorded in
 [`CHANGELOG.md`](CHANGELOG.md).
 

@@ -21,8 +21,8 @@ allprojects {
 // :daemon's server tests, and only a merged report credits those lines to :protocol.
 //
 //   ./gradlew koverHtmlReport         merged, human-readable: build/reports/kover/html/index.html
-//   ./gradlew koverXmlReport          merged JaCoCo-format XML, what CI feeds GitLab
-//   ./gradlew koverLog                one line on stdout, what CI's coverage regex reads
+//   ./gradlew koverXmlReport          merged JaCoCo-format XML, what both CIs report from
+//   ./gradlew koverLog                one line on stdout, what GitLab CI's coverage regex reads
 //   ./gradlew koverVerify             enforces the floors below
 //   ./gradlew :daemon:koverHtmlReport one module on its own
 //
@@ -85,7 +85,8 @@ kover {
             log {
                 onCheck = false
                 header = "knit-spool"
-                // GitLab's `coverage:` regex in .gitlab-ci.yml matches this exact wording.
+                // The `coverage:` regex in .gitlab-ci.yml matches this exact wording. GitHub
+                // Actions parses build/reports/kover/report.xml instead, so it is unaffected.
                 format = "Total line coverage: <value>%"
                 groupBy = GroupingEntityType.APPLICATION
                 coverageUnits = CoverageUnit.LINE

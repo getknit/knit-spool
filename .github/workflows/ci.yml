@@ -1,0 +1,192 @@
+name: CI
+
+# Public CI for github.com/getknit/knit-spool. Mirrors the gating jobs of the maintainer's internal
+# .gitlab-ci.yml (test -> conformance) so pull requests opened here get the same checks. The parts
+# that are deliberately NOT mirrored: the kaniko container build and the Trivy/markdownlint scans
+# stay on the internal pipeline, because they need a registry credential and they are advisory
+# anyway — nothing there gates a contribution.
+#
+# `check` covers compile, ktlint, the §13 spec vectors, both store backends, and the server
+# integration tests, so there is no separate lint job: a style failure blocks here rather than
+# sitting advisory.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check & coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The root-project (`:`-prefixed) Kover tasks are the merged three-module report. The
+      # unqualified names would fan out to per-module reports instead.
+      #
+      # koverVerify is a second invocation on purpose. Gradle does not guarantee that command-line
+      # task order is execution order, so bundling it with the reports risks the floors failing the
+      # build before the XML that explains the failure is written.
+      - name: check + merged coverage report
+        run: ./gradlew check :koverXmlReport :koverHtmlReport :koverLog --console=plain --stacktrace
+      - name: Enforce coverage floors
+        run: ./gradlew :koverVerify --console=plain
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            */build/reports/tests/test/
+            */build/reports/ktlint/
+          if-no-files-found: ignore
+
+      # Root project, not `*/` — the merged report lands in the root build dir. The badge job
+      # consumes this rather than re-running the suite.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build/reports/kover/
+          if-no-files-found: ignore
+
+  conformance:
+    name: Conformance self-test
+    runs-on: ubuntu-latest
+    env:
+      # The daemon's own defaults are fine for CI except the two that make the destructive quota
+      # checks (~64 scopes) take minutes instead of seconds.
+      SPOOL_POW_BITS: '8'
+      SPOOL_RATE_NEW_SCOPES: '10000'
+      SPOOL_PORT: '9470'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Eats its own dogfood: the same wire contract an external implementation would be held to,
+      # run against the daemon this commit produces.
+      - name: Build daemon and conformance runner
+        run: ./gradlew :daemon:installDist :conformance:installDist --console=plain
+
+      # Health-polled rather than slept at — a fixed sleep either wastes seconds or, on a loaded
+      # runner, races the bind and reports a bogus failure. Bail the moment the daemon dies instead
+      # of polling a corpse.
+      - name: Start daemon
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.spool-data"
+          SPOOL_DATA_DIR="$GITHUB_WORKSPACE/.spool-data" \
+            daemon/build/install/knit-spool/bin/knit-spool > spool-daemon.log 2>&1 &
+          echo $! > .spool.pid
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$SPOOL_PORT/healthz" >/dev/null 2>&1; then
+              echo "daemon healthy"; exit 0
+            fi
+            if ! kill -0 "$(cat .spool.pid)" 2>/dev/null; then
+              echo "daemon exited before becoming healthy:"; cat spool-daemon.log; exit 1
+            fi
+            sleep 1
+          done
+          echo "daemon never became healthy:"; cat spool-daemon.log; exit 1
+
+      # TAP on stdout, MUST tallies on stderr; both teed to an artifact so a failure is diagnosable
+      # without re-running.
+      - name: Run conformance suite
+        run: |
+          set -o pipefail
+          conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
+            "ws://127.0.0.1:$SPOOL_PORT/spool/v1" --destructive 2>&1 | tee conformance.tap
+
+      # A conformance MUST failure is usually explained by a line the daemon logged, not by the TAP.
+      - name: Daemon log on failure
+        if: failure()
+        run: tail -n 100 spool-daemon.log || true
+
+      - name: Stop daemon
+        if: always()
+        run: '[ -f .spool.pid ] && kill "$(cat .spool.pid)" 2>/dev/null || true'
+
+      - name: Upload conformance output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-output
+          path: |
+            conformance.tap
+            spool-daemon.log
+          if-no-files-found: ignore
+
+  badge:
+    name: Publish coverage badge
+    # Default-branch pushes only. A pull_request run cannot write to the repo (and a fork's token
+    # could not anyway), so the badge tracks main rather than whatever was last proposed.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: kover
+
+      # Kover's XML is JaCoCo format: the last report-level LINE counter is the merged total.
+      # Written as a shields.io endpoint payload so the README badge matches the shields styling of
+      # every other badge up there.
+      - name: Render badge payload
+        run: |
+          python3 - <<'PY'
+          import json, xml.etree.ElementTree as ET
+          root = ET.parse('kover/report.xml').getroot()
+          c = [e for e in root.findall('counter') if e.get('type') == 'LINE'][-1]
+          covered, missed = int(c.get('covered')), int(c.get('missed'))
+          pct = round(100 * covered / (covered + missed))
+          color = ('brightgreen' if pct >= 90 else 'green' if pct >= 80 else
+                   'yellowgreen' if pct >= 70 else 'yellow' if pct >= 60 else
+                   'orange' if pct >= 50 else 'red')
+          json.dump({'schemaVersion': 1, 'label': 'coverage',
+                     'message': f'{pct}%', 'color': color}, open('coverage.json', 'w'))
+          print(f'{pct}% ({covered}/{covered + missed} lines)')
+          PY
+
+      # Committed to an orphan `badges` branch, not to main: the badge changes on most merges, and
+      # a bot commit per merge on the default branch would drown the history. `git commit ||
+      # exit 0` makes an unchanged percentage a no-op rather than a failure.
+      - name: Push to badges branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir badges && cd badges
+          git init -q
+          git remote add origin "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY"
+          if git fetch -q --depth=1 origin badges 2>/dev/null; then
+            git checkout -q FETCH_HEAD -- . 2>/dev/null || true
+            git checkout -q -b badges FETCH_HEAD
+          else
+            git checkout -q --orphan badges
+          fi
+          cp ../coverage.json coverage.json
+          git add coverage.json
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "chore(badge): coverage for ${GITHUB_SHA:0:7}" || exit 0
+          git push -q origin badges

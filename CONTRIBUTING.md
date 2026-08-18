@@ -10,7 +10,7 @@ knit-spool is released **as-is** under the [GNU AGPL v3.0-or-later](LICENSE). It
 **best-effort, hobby basis**, with **no support, warranty, or response-time guarantee** of any kind —
 this is the "NO WARRANTY" clause of the AGPL, stated plainly:
 
-- Issues and merge requests are welcome, but may not be triaged, answered, or accepted.
+- Issues and pull requests are welcome, but may not be triaged, answered, or accepted.
 - There is **no commitment** to fix bugs, review contributions on any timeline, or keep any
   interface stable beyond the wire protocol's own compatibility rules.
 - Do not depend on any spool where failure matters. By design no spool is load-bearing: clients
@@ -54,7 +54,7 @@ check that can only pass against this server does not belong in it.
 - **Keep the blindness property.** A spool sees scope ids, blob ids, ciphertext, sizes, and timing —
   and must never be able to learn node ids, plaintext, rosters, or delivery facts. A change that
   logs, persists, exports, or derives anything outside that set needs a very good reason and a note
-  in the merge request. The same goes for the bearer token: it rides in the query string, so it must
+  in the pull request. The same goes for the bearer token: it rides in the query string, so it must
   stay out of logs.
 
 ## Development
@@ -70,7 +70,7 @@ the Knit app's config settles off its alpha); ktlint runs as part of `check`.
 ```
 
 `check` runs the §13 spec-vector pins, the store contract against **both** backends (in-memory and
-SQLite), and the full server integration tests. Please run it before opening a merge request, and
+SQLite), and the full server integration tests. Please run it before opening a pull request, and
 match the surrounding code style.
 
 If your change touches the wire, run the conformance suite against your own build the way CI does —
@@ -98,8 +98,8 @@ three modules. It is not part of `check` — ask for it:
 ./gradlew :daemon:koverHtmlReport  # one module on its own
 ```
 
-CI runs the same reports in the `test` job, publishes the XML as a GitLab coverage report so the
-merge-request diff is annotated line by line, and gates on `koverVerify`.
+CI runs the same reports alongside the tests, gates on `koverVerify`, and publishes the merged
+percentage as the README's coverage badge.
 
 The floors in the root `build.gradle.kts` are a **ratchet**: they sit a few points under today's
 numbers so that ordinary refactoring passes and deleting tests does not. If a change raises
@@ -117,17 +117,18 @@ invalid value, and belong in the README's configuration table in the same commit
 
 ## Where to submit
 
-Development happens on the self-hosted GitLab at
-<https://github.com/getknit/knit-spool>. Open issues and merge requests there; the issue and
-merge-request templates will guide you through what to include. Keep each merge request focused on a
-single change with a clear description of what and why.
+Development and contributions happen on GitHub at <https://github.com/getknit/knit-spool>. Open
+issues and pull requests there; the issue and pull-request templates will guide you through what to
+include. Keep each pull request focused on a single change with a clear description of what and why.
 
-CI runs the tests with coverage, the conformance self-test, a kaniko image build, and advisory Trivy
-and markdownlint scans. The advisory jobs report without gating; the test jobs gate.
+CI on a pull request runs the tests with coverage, `koverVerify`, and the conformance self-test
+against a freshly built daemon; ktlint rides along inside `check`. The maintainer also runs an
+internal GitLab pipeline that adds the container-image build and advisory Trivy and markdownlint
+scans — those never gate a contribution.
 
 ## Security
 
-**Do not** report security vulnerabilities through public issues or merge requests. See
+**Do not** report security vulnerabilities through public issues or pull requests. See
 [`SECURITY.md`](SECURITY.md) for private disclosure.
 
 ## Running a modified spool (AGPL §13)

@@ -1,6 +1,7 @@
 <!--
-Thanks for contributing to knit-spool! Keep each merge request focused on a single change.
-By submitting, you agree your contribution is licensed under AGPL-3.0-or-later (see CONTRIBUTING.md).
+Thanks for contributing to knit-spool! Keep each pull request focused on a single change.
+By submitting, you agree your contribution is licensed under AGPL-3.0-or-later (see CONTRIBUTING.md)
+and that every commit is signed off under the DCO (`git commit -s`).
 -->
 
 ### What and why
@@ -12,7 +13,7 @@ By submitting, you agree your contribution is licensed under AGPL-3.0-or-later (
 <!-- Check what you ran / did. -->
 
 - [ ] `./gradlew check` (compile, ktlint, spec vectors, both store backends, integration tests)
-- [ ] Conformance suite against a locally built daemon (`conformance-selftest` does this in CI)
+- [ ] Conformance suite against a locally built daemon (CI's `conformance` job does this too)
 - [ ] `--destructive` conformance run, if this touches quotas, rate limits, or shedding
 - [ ] Ran the daemon against a real client, if this touches the wire
 

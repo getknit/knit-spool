@@ -51,15 +51,20 @@ First implementation of the **v1** spool protocol. Nothing has been tagged yet; 
   access logs; a self-contained TLS compose stack that issues and renews certificates; and a *tiny*
   overlay for 1 GB boxes that side-loads or pulls the image instead of building it, caps every
   container, bounds the log driver, and re-sizes the limits for a metered link.
-- **CI** (self-hosted GitLab) — tests and ktlint, the conformance suite run against the freshly
-  built daemon, a kaniko image build, advisory Trivy filesystem/image and markdownlint scans, and a
-  tag-only release job.
+- **CI** — two pipelines over the same gating checks. GitHub Actions
+  ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `check` with merged coverage,
+  `koverVerify`, and the conformance suite against the freshly built daemon on every pull request,
+  and publishes the coverage badge on a default-branch push. The maintainer's internal GitLab
+  pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) runs the same two test jobs and adds what needs a
+  registry credential: a kaniko image build, advisory Trivy filesystem/image and markdownlint scans,
+  and a tag-only release job.
+- **Community and automation** — GitHub issue forms, a pull-request template, label-driven canned
+  replies, keyword triage, and stale sweeps under [`.github/`](.github/).
 - **Coverage reporting** (Kover) — one merged report over all three modules
-  (`./gradlew koverHtmlReport`), plus per-module reports. CI publishes the JaCoCo-format XML as a
-  GitLab coverage report, so coverage is painted into the merge-request diff and tracked as a job
-  percentage; `koverVerify` holds line and branch floors as a ratchet against tests being deleted.
-  Process entry points and generated serializers are excluded — the former only run out of process,
-  under `conformance-selftest`, where Kover cannot see them.
+  (`./gradlew koverHtmlReport`), plus per-module reports. `koverVerify` holds line and branch floors
+  as a ratchet against tests being deleted, and the merged percentage is published as the README's
+  coverage badge. Process entry points and generated serializers are excluded — the former only run
+  out of process, under the conformance self-test, where Kover cannot see them.
 
 ### Changed
 

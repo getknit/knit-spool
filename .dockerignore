@@ -1,6 +1,7 @@
 .git
 .gradle
 .gitlab-ci.yml
+.github
 .idea
 .kotlin
 .agents
