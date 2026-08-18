@@ -58,6 +58,13 @@ First implementation of the **v1** spool protocol. Nothing has been tagged yet; 
   pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) runs the same two test jobs and adds what needs a
   registry credential: a kaniko image build, advisory Trivy filesystem/image and markdownlint scans,
   and a tag-only release job.
+- **Releases** — a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
+  which is the default source of release images. It re-runs `check` and the conformance suite
+  against the tagged tree, then publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to GHCR
+  and Docker Hub with a signed build provenance attestation, and opens a draft GitHub Release
+  carrying the distribution archives and their `SHA256SUMS`. The image is built from
+  [`Dockerfile.dist`](Dockerfile.dist), which layers a natively compiled distribution onto the
+  multi-arch JRE base instead of compiling under emulation.
 - **Community and automation** — GitHub issue forms, a pull-request template, label-driven canned
   replies, keyword triage, and stale sweeps under [`.github/`](.github/).
 - **Coverage reporting** (Kover) — one merged report over all three modules

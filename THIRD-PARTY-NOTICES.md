@@ -60,8 +60,10 @@ time from upstream layers.
 - CI-only images referenced from [`.gitlab-ci.yml`](.gitlab-ci.yml), the maintainer's internal
   pipeline: kaniko (Apache-2.0), Trivy (Apache-2.0), `mdl` (MIT), and GitLab's release-cli (MIT).
 - CI-only GitHub Actions referenced from [`.github/workflows/`](.github/workflows/):
-  `actions/checkout`, `actions/setup-java`, `actions/upload-artifact`, `actions/github-script`,
-  `actions/stale`, and `gradle/actions` (all MIT), plus
+  `actions/checkout`, `actions/setup-java`, `actions/upload-artifact`, `actions/download-artifact`,
+  `actions/github-script`, `actions/stale`, `actions/attest-build-provenance`, and `gradle/actions`
+  (all MIT); `docker/setup-qemu-action`, `docker/setup-buildx-action`, `docker/login-action`, and
+  `docker/build-push-action` (all Apache-2.0); plus
   [`dessant/label-actions`](https://github.com/dessant/label-actions) (MIT) and
   [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action) (MIT).
 

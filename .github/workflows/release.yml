@@ -1,0 +1,353 @@
+name: Release
+
+# Cuts a release for a v* tag: a multi-arch container image pushed to GHCR and Docker Hub, the
+# standalone distribution archives, and a DRAFT GitHub Release holding both.
+#
+# This workflow is the default source of knit-spool release images. The internal GitLab pipeline
+# still builds an image per default-branch commit with kaniko, but that one is a development
+# artifact — what an operator pulls comes from here.
+#
+# IMPORTANT: for tag pushes GitHub runs the copy of this file that exists AT THE TAG. Editing this
+# workflow only affects tags cut afterwards; to apply a change to an existing unpushed tag, move the
+# tag.
+#
+# Three jobs:
+#
+#   preflight  cheap invariants (tag shape, changelog section) before spending a build on a bad tag
+#   build      gate on `check`, build the dist once, layer it into an amd64+arm64 image, push, attest
+#   publish    checksum the archives and open a draft Release — the one irreversible step is manual
+#
+# Why the image is built from Dockerfile.dist rather than Dockerfile: knit-spool is pure JVM, so the
+# installDist output is architecture-independent. Compiling once natively and layering the result
+# onto the multi-arch temurin JRE base makes arm64 nearly free; building ./Dockerfile for
+# linux/arm64 would run the whole Kotlin compile under QEMU instead.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never abandon a half-finished release
+
+jobs:
+  preflight:
+    name: Preflight (tag & changelog)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both of these only fail at publish time otherwise — once the tag is public and the fix costs
+      # a re-tag. They cost seconds here.
+      - id: check
+        name: Tag must be v<semver> and CHANGELOG must have its section
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, pathlib, re, sys
+
+          tag = os.environ["TAG"]
+          errs = []
+
+          m = re.fullmatch(r"v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)", tag)
+          if not m:
+              print(f"::error::tag {tag!r} is not v<semver> (e.g. v0.1.0 or v1.0.0-rc.1)", file=sys.stderr)
+              sys.exit(1)
+          version = m.group(1)
+
+          # A SNAPSHOT is by definition not a release. The version itself is passed in on the command
+          # line (-PspoolVersion), so this only catches a tag that spells it out.
+          if "SNAPSHOT" in version:
+              errs.append(f"{version} is a SNAPSHOT; tag a real version")
+
+          # Keep a Changelog: cutting a release means renaming `## Unreleased` to `## <version>`.
+          # Refusing here is what stops a release shipping with no notes at all.
+          changelog = pathlib.Path("CHANGELOG.md").read_text()
+          heading = re.compile(rf"^##\s+\[?{re.escape(version)}\]?\b", re.M)
+          if not heading.search(changelog):
+              errs.append(
+                  f"CHANGELOG.md has no `## {version}` section — rename `## Unreleased` to "
+                  f"`## {version}` (optionally with the date) and re-tag"
+              )
+
+          if errs:
+              for e in errs:
+                  print(f"::error::{e}", file=sys.stderr)
+              sys.exit(1)
+
+          # A prerelease never moves `latest`, and the GitHub Release is marked as one.
+          prerelease = "true" if "-" in version else "false"
+          print(f"version={version}")
+          print(f"prerelease={prerelease}")
+          print(f"OK: {tag} -> {version} (prerelease={prerelease})", file=sys.stderr)
+          PY
+
+  build:
+    name: Build, push image & attest
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # sigstore signing for the provenance attestation
+      attestations: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}
+      DOCKERHUB_IMAGE: docker.io/${{ github.repository }}
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # A tag can point at any commit, including one CI never saw green. Re-running the gate is a
+      # few minutes against publishing a broken image under a version number that is forever.
+      - name: check (compile, ktlint, spec vectors, both stores, integration)
+        run: ./gradlew check -PspoolVersion="$VERSION" --console=plain --stacktrace
+
+      # The wire contract, against the daemon this tag actually produces. Same suite an independent
+      # spool implementation would be held to.
+      - name: Conformance self-test
+        env:
+          SPOOL_POW_BITS: '8'
+          SPOOL_RATE_NEW_SCOPES: '10000'
+          SPOOL_PORT: '9470'
+        run: |
+          ./gradlew :daemon:installDist :conformance:installDist \
+            -PspoolVersion="$VERSION" --console=plain
+          mkdir -p "$GITHUB_WORKSPACE/.spool-data"
+          SPOOL_DATA_DIR="$GITHUB_WORKSPACE/.spool-data" \
+            daemon/build/install/knit-spool/bin/knit-spool > spool-daemon.log 2>&1 &
+          echo $! > .spool.pid
+          healthy=false
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$SPOOL_PORT/healthz" >/dev/null 2>&1; then
+              healthy=true; break
+            fi
+            if ! kill -0 "$(cat .spool.pid)" 2>/dev/null; then
+              echo "::error::daemon exited before becoming healthy"; cat spool-daemon.log; exit 1
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != true ]; then
+            echo "::error::daemon never became healthy"; cat spool-daemon.log; exit 1
+          fi
+          set -o pipefail
+          conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
+            "ws://127.0.0.1:$SPOOL_PORT/spool/v1" --destructive 2>&1 | tee conformance.tap
+          kill "$(cat .spool.pid)" 2>/dev/null || true
+
+      - name: Build distribution archives
+        run: |
+          ./gradlew :daemon:distTar :daemon:distZip :conformance:distTar \
+            -PspoolVersion="$VERSION" --console=plain
+
+      # The image build context: nothing but the installDist tree, so the layer is exactly the
+      # daemon and its jars. Rebuilt from the tree `check` just validated.
+      - name: Assemble image context
+        run: |
+          mkdir -p ctx
+          cp -a daemon/build/install/knit-spool ctx/dist
+
+      # Needed only so the `chmod`/`mkdir` RUN in Dockerfile.dist can execute in the arm64 stage.
+      # No compilation happens under emulation — that is the whole point of Dockerfile.dist.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub is optional so a fork can cut a release with no secrets configured at all. When
+      # the secret is absent the push still goes to GHCR and this is a loud warning, not a failure.
+      - id: hub
+        name: Is Docker Hub configured?
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          if [ -n "${HUB_USER:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME is unset — publishing to GHCR only."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # `latest` moves only for a real release. A prerelease that grabbed it would be handed to
+      # every operator running `SPOOL_IMAGE` unpinned.
+      - id: tags
+        name: Compose tag list
+        run: |
+          prerelease='${{ needs.preflight.outputs.prerelease }}'
+          {
+            echo 'list<<EOF'
+            echo "$GHCR_IMAGE:$VERSION"
+            if [ "$prerelease" = 'false' ]; then echo "$GHCR_IMAGE:latest"; fi
+            if [ '${{ steps.hub.outputs.enabled }}' = 'true' ]; then
+              echo "$DOCKERHUB_IMAGE:$VERSION"
+              if [ "$prerelease" = 'false' ]; then echo "$DOCKERHUB_IMAGE:latest"; fi
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      # provenance/sbom are off here and handled by actions/attest-build-provenance below instead.
+      # BuildKit's own attestations add `unknown/unknown` entries to the manifest list, which several
+      # registry UIs and older pull paths mis-render; the signed GitHub attestation is the one an
+      # operator can actually verify with `gh attestation verify`.
+      - id: push
+        name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ctx
+          file: ./Dockerfile.dist
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.title=knit-spool
+            org.opencontainers.image.description=Scoped, blinded store-and-forward relay for Knit's Internet plane
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      # Lets anyone verify the image was built by this workflow from this commit:
+      #   gh attestation verify oci://ghcr.io/getknit/knit-spool:<version> --repo getknit/knit-spool
+      # GHCR only: Docker Hub's support for the OCI referrers API that carries the attestation is
+      # inconsistent, and a failed push here would fail a release whose image is already live.
+      - name: Attest build provenance (GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload distribution archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: |
+            daemon/build/distributions/
+            conformance/build/distributions/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload conformance output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-conformance
+          path: |
+            conformance.tap
+            spool-daemon.log
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish draft Release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the Release and upload assets
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      DIGEST: ${{ needs.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+      - name: Collect assets and checksums
+        run: |
+          mkdir -p out
+          find dist -type f \( -name '*.tar' -o -name '*.zip' \) -exec cp {} out/ \;
+          cd out
+          sha256sum ./*.tar ./*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      # Notes are the CHANGELOG section preflight already proved exists, plus how to actually get
+      # the thing. The pull line uses the digest, not the tag: a tag is mutable and a release note
+      # that says `:1.2.3` cannot prove which bytes were reviewed.
+      - name: Compose release notes
+        run: |
+          python3 - <<'PY' > out/notes.md
+          import os, pathlib, re
+
+          version, digest = os.environ["VERSION"], os.environ["DIGEST"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          text = pathlib.Path("CHANGELOG.md").read_text()
+
+          start = re.search(rf"^##\s+\[?{re.escape(version)}\]?\b.*$", text, re.M)
+          rest = text[start.end():]
+          end = re.search(r"^##\s+", rest, re.M)
+          print((rest[: end.start()] if end else rest).strip())
+
+          print(f"""
+          ---
+
+          ### Container image
+
+          Published to GHCR and Docker Hub for `linux/amd64` and `linux/arm64`:
+
+          ```sh
+          docker pull ghcr.io/{repo}@{digest}
+          docker pull docker.io/{repo}@{digest}
+          ```
+
+          Pin the digest in `SPOOL_IMAGE` rather than a tag — see `deploy/.env.example`. The GHCR
+          image carries a signed build provenance attestation:
+
+          ```sh
+          gh attestation verify oci://ghcr.io/{repo}:{version} --repo {repo}
+          ```
+
+          ### Standalone archives
+
+          For running the daemon without Docker. `SHA256SUMS` covers every archive attached here.
+          Both need a JDK 21 runtime on the host; unpack and run `bin/knit-spool`.
+
+          Upgrading a live spool? `HOSTING.md` covers the operational side, and `CHANGELOG.md` calls
+          out anything that moves the wire, the on-disk store, or a configuration default.
+          """)
+          PY
+          cat out/notes.md
+
+      # Draft on purpose: everything above is verified, so this is a one-click confirmation that the
+      # notes read right. The image is already live at this point — the draft gates the announcement,
+      # not the artifact. Drop `--draft` if you'd rather it go straight out.
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+        run: |
+          cd out
+          args=(--draft --title "knit-spool $VERSION" --notes-file notes.md)
+          if [ "$PRERELEASE" = 'true' ]; then args+=(--prerelease); fi
+          gh release create "$TAG" "${args[@]}" ./*.tar ./*.zip SHA256SUMS
+          echo "::notice::Draft release created for $TAG — review and publish it."

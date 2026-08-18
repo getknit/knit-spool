@@ -1,0 +1,33 @@
+# Release image — the one .github/workflows/release.yml publishes for a v* tag.
+#
+# The difference from ./Dockerfile is where the bytes come from. Dockerfile compiles the daemon
+# inside a JDK build stage, which is right for `docker build .` on a checkout but wrong for a
+# multi-arch release: it would run a full Kotlin compile under QEMU for every non-native platform.
+#
+# knit-spool is pure JVM, so the installDist output is architecture-independent — the same class
+# files run everywhere. The release workflow therefore compiles ONCE on the native runner and this
+# file only layers that output onto `eclipse-temurin:21-jre`, which is already multi-arch. An arm64
+# image costs a base-layer pull rather than an emulated build.
+#
+# Build context: a directory holding the installDist tree at ./dist (bin/, lib/).
+# Everything below the COPY is kept byte-identical to ./Dockerfile on purpose — an operator must not
+# be able to tell the published image from a locally built one by its runtime behavior.
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY dist/ /app/
+# chmod rather than trusting the incoming mode: installDist marks the start script executable, but
+# the bit does not survive every way a build context can be assembled (actions/upload-artifact drops
+# file modes, and so do some archive round-trips). Setting it here makes the image correct whatever
+# the context went through to get here.
+RUN chmod +x /app/bin/knit-spool \
+    && mkdir -p /data \
+    && chown 65532:65532 /data
+ENV SPOOL_DATA_DIR=/data
+VOLUME /data
+EXPOSE 9470
+USER 65532:65532
+# temurin-jre has bash but no curl; /dev/tcp keeps the healthcheck dependency-free.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+  CMD ["/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9470 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ' 200 ' <&3"]
+ENTRYPOINT ["/app/bin/knit-spool"]

@@ -123,8 +123,24 @@ include. Keep each pull request focused on a single change with a clear descript
 
 CI on a pull request runs the tests with coverage, `koverVerify`, and the conformance self-test
 against a freshly built daemon; ktlint rides along inside `check`. The maintainer also runs an
-internal GitLab pipeline that adds the container-image build and advisory Trivy and markdownlint
-scans — those never gate a contribution.
+internal GitLab pipeline that adds advisory Trivy and markdownlint scans and a per-commit image
+build — those never gate a contribution.
+
+## Releases
+
+Maintainer-only, and worth knowing about because two things in the tree exist for it. A `v*` tag
+runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which re-runs `check` and the
+conformance suite against the tagged commit, publishes a multi-arch image to GHCR and Docker Hub,
+and opens a **draft** GitHub Release with the distribution archives.
+
+- The version is not stored in the tree. `build.gradle.kts` defaults to `0.1.0-SNAPSHOT` and the
+  release passes `-PspoolVersion=<version>` from the tag, so nothing needs bumping to cut one.
+- `CHANGELOG.md` does. The workflow refuses a tag with no `## <version>` section — cutting a release
+  means renaming `## Unreleased` to the version being released. That refusal is the whole reason a
+  release cannot ship without notes.
+- [`Dockerfile.dist`](Dockerfile.dist) is the release image and [`Dockerfile`](Dockerfile) is the
+  from-source one. They share a byte-identical runtime stage; keep it that way, or an operator's
+  published image and their locally built one stop behaving the same.
 
 ## Security
 

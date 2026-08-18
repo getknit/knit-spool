@@ -145,10 +145,12 @@ yourself buys less privacy here than it would for nearly anything else you'd run
 
 ## Architecture
 
-The published image is amd64. On ARM — Oracle's Ampere, Graviton, a Raspberry Pi — build the image
-yourself; the `eclipse-temurin` base images are multi-arch and the build needs no changes. The
-Gradle build stage wants more memory than a 1 GB box has, so build on a machine with room and move
-the result over. The README covers how.
+Published images are multi-arch — `linux/amd64` and `linux/arm64` — so Oracle's Ampere, Graviton,
+and a 64-bit Raspberry Pi pull and run without building anything. knit-spool is pure JVM, so both
+architectures carry the same bytecode over the matching `eclipse-temurin` JRE base.
+
+If you build from source instead, the Gradle build stage wants more memory than a 1 GB box has:
+build on a machine with room and move the result over. The README covers how.
 
 ## Before you commit
 

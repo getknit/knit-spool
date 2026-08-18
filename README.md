@@ -195,13 +195,31 @@ network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 
 ## 🐳 Docker
 
+Release images are published to GHCR and Docker Hub for `linux/amd64` and `linux/arm64`:
+
+```sh
+docker pull ghcr.io/getknit/knit-spool:latest   # or docker.io/getknit/knit-spool:latest
+docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 ghcr.io/getknit/knit-spool
+```
+
+Or build one from a checkout:
+
 ```sh
 docker build -t knit-spool .
 docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 knit-spool
 ```
 
-The image persists to the `/data` volume by default, runs as uid 65532, and carries a `/healthz`
-HEALTHCHECK.
+Either way the image persists to the `/data` volume by default, runs as uid 65532, and carries a
+`/healthz` HEALTHCHECK. [`Dockerfile`](Dockerfile) compiles from source;
+[`Dockerfile.dist`](Dockerfile.dist) is what [the release workflow](.github/workflows/release.yml)
+publishes — an identical runtime stage over a prebuilt distribution, which is why the arm64 image
+costs no emulated compile. The GHCR image carries a signed build provenance attestation:
+
+```sh
+gh attestation verify oci://ghcr.io/getknit/knit-spool:latest --repo getknit/knit-spool
+```
+
+Pin a version tag or a `@sha256:` digest in production — `latest` moves under you.
 
 ## 📊 Operating
 

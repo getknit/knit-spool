@@ -2,6 +2,7 @@
 .gradle
 .gitlab-ci.yml
 .github
+Dockerfile.dist
 .idea
 .kotlin
 .agents

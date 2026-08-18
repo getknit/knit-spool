@@ -12,7 +12,11 @@ plugins {
 
 allprojects {
     group = "app.getknit.spool"
-    version = "0.1.0-SNAPSHOT"
+    // Overridable from the command line so a tagged release stamps the tag into the distribution
+    // archive names and the image labels: `./gradlew -PspoolVersion=1.2.3 :daemon:distTar`.
+    // Everything else — local builds, CI on a branch — stays a SNAPSHOT, which is the honest label
+    // for a build that is not a release.
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.1.0-SNAPSHOT"
 }
 
 // ---- coverage ----

@@ -296,8 +296,10 @@ verify:markdown:
     - git ls-files '*.md' | xargs -r mdl
 
 # ---------------- release ----------------
-# Tag-only. The image and tarballs already exist by this stage; this just records them as a
-# GitLab release so `:tag` is discoverable next to its artifacts.
+# Tag-only, and INTERNAL. The images an operator pulls come from .github/workflows/release.yml —
+# that one is multi-arch, attested, and pushed to GHCR and Docker Hub. This job only records the
+# artifacts this pipeline already produced as a GitLab release, so `:tag` is discoverable next to
+# them on the internal instance.
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
