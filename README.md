@@ -68,6 +68,7 @@ one conversation member.
 - [Build and test](#-build-and-test)
 - [Contributing](#-contributing)
 - [Security](#-security)
+- [Support](#-support)
 - [License](#-license)
 
 ## How it works
@@ -320,6 +321,18 @@ To report a vulnerability, see [`SECURITY.md`](SECURITY.md) — please **do not*
 for security problems. That file also documents what a spool is trusted with, and which properties
 are intentional trade-offs (visible traffic metadata, TLS terminating at a proxy, PoW off by
 default) rather than findings.
+
+## 💛 Support
+
+knit-spool is free and open source, with no ads, no tracking, and nothing to sell you — it's funded
+entirely by tips. If you run a spool and it's been useful, you can leave a one-off tip on Ko-fi or set
+up a recurring one on Liberapay:
+
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-leave%20a%20tip-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/zaventh)
+[![Support on Liberapay](https://img.shields.io/badge/Liberapay-give%20recurring-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/zaventh/)
+
+Tips are optional and buy no special treatment — knit-spool is AGPLv3 and stays that way. Reporting
+bugs, running a public spool, and telling people it exists help just as much.
 
 ## 📄 License
 
