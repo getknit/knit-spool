@@ -195,31 +195,50 @@ network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 
 ## 🐳 Docker
 
-Release images are published to GHCR and Docker Hub for `linux/amd64` and `linux/arm64`:
+Release images go to two registries, and they are the same bytes: the release workflow builds one
+multi-arch manifest and pushes that manifest to both.
+
+| Registry | Image | Notes |
+|---|---|---|
+| GHCR | `ghcr.io/getknit/knit-spool` | Carries the build provenance attestation. No anonymous pull limit. |
+| Docker Hub | `docker.io/getknit/knit-spool` | Shorter to type. Anonymous pulls are rate-limited. |
+
+Neither is populated yet; the first `v*` tag creates them. Until then, build from a checkout.
+
+Both are `linux/amd64` and `linux/arm64`, so an Ampere or Graviton box, or a 64-bit Raspberry Pi,
+pulls the same way an x86 VPS does.
 
 ```sh
-docker pull ghcr.io/getknit/knit-spool:latest   # or docker.io/getknit/knit-spool:latest
-docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 ghcr.io/getknit/knit-spool
+docker pull ghcr.io/getknit/knit-spool:0.1.0
+docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 ghcr.io/getknit/knit-spool:0.1.0
 ```
 
-Or build one from a checkout:
+Every release is tagged with its version, and a release that is not a prerelease also moves
+`latest`. Pin the version in production, or a `@sha256:` digest for the strict form. `latest` moves
+under you, and a restart on a moved tag brings back a daemon you never tested.
+
+The GHCR copy traces back to the workflow run and the commit that built it:
+
+```sh
+gh attestation verify oci://ghcr.io/getknit/knit-spool:0.1.0 --repo getknit/knit-spool
+```
+
+There is no equivalent command for the Docker Hub copy. The attestation travels over the OCI
+referrers API, which Docker Hub supports unevenly, so it is pushed to GHCR alone. Verifying there
+covers the Docker Hub image as well, since both names resolve to the same digest.
+
+Building your own is the other route, and the one to take if you have modified the daemon:
 
 ```sh
 docker build -t knit-spool .
 docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 knit-spool
 ```
 
-Either way the image persists to the `/data` volume by default, runs as uid 65532, and carries a
+However the image arrives, it persists to the `/data` volume, runs as uid 65532, and carries a
 `/healthz` HEALTHCHECK. [`Dockerfile`](Dockerfile) compiles from source;
 [`Dockerfile.dist`](Dockerfile.dist) is what [the release workflow](.github/workflows/release.yml)
-publishes — an identical runtime stage over a prebuilt distribution, which is why the arm64 image
-costs no emulated compile. The GHCR image carries a signed build provenance attestation:
-
-```sh
-gh attestation verify oci://ghcr.io/getknit/knit-spool:latest --repo getknit/knit-spool
-```
-
-Pin a version tag or a `@sha256:` digest in production — `latest` moves under you.
+publishes: the same runtime stage over a distribution built ahead of time, which is how the arm64
+image avoids an emulated compile.
 
 ## 📊 Operating
 
