@@ -73,23 +73,23 @@ class SqliteScopeStore private constructor(
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
-                  key   TEXT PRIMARY KEY,
-                  value TEXT NOT NULL
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 )
                 """.trimIndent(),
             )
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS scopes (
-                  scope_id      BLOB PRIMARY KEY,
-                  max_frames    INTEGER NOT NULL,
-                  ttl_ms        INTEGER NOT NULL,
-                  max_blob      INTEGER NOT NULL,
-                  digest        INTEGER NOT NULL DEFAULT 0,
-                  live_count    INTEGER NOT NULL DEFAULT 0,
-                  live_bytes    INTEGER NOT NULL DEFAULT 0,
-                  attach_bytes  INTEGER NOT NULL DEFAULT 0,
-                  last_activity INTEGER NOT NULL
+                    scope_id      BLOB PRIMARY KEY,
+                    max_frames    INTEGER NOT NULL,
+                    ttl_ms        INTEGER NOT NULL,
+                    max_blob      INTEGER NOT NULL,
+                    digest        INTEGER NOT NULL DEFAULT 0,
+                    live_count    INTEGER NOT NULL DEFAULT 0,
+                    live_bytes    INTEGER NOT NULL DEFAULT 0,
+                    attach_bytes  INTEGER NOT NULL DEFAULT 0,
+                    last_activity INTEGER NOT NULL
                 ) WITHOUT ROWID
                 """.trimIndent(),
             )
@@ -97,11 +97,11 @@ class SqliteScopeStore private constructor(
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS blobs (
-                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
-                  blob_id    BLOB NOT NULL,
-                  data       BLOB NOT NULL,
-                  arrived_at INTEGER NOT NULL,
-                  PRIMARY KEY (scope_id, blob_id)
+                    scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                    blob_id    BLOB NOT NULL,
+                    data       BLOB NOT NULL,
+                    arrived_at INTEGER NOT NULL,
+                    PRIMARY KEY (scope_id, blob_id)
                 )
                 """.trimIndent(),
             )
@@ -109,10 +109,10 @@ class SqliteScopeStore private constructor(
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS tombstones (
-                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
-                  blob_id    BLOB NOT NULL,
-                  expires_at INTEGER NOT NULL,
-                  PRIMARY KEY (scope_id, blob_id)
+                    scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                    blob_id    BLOB NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    PRIMARY KEY (scope_id, blob_id)
                 ) WITHOUT ROWID
                 """.trimIndent(),
             )
@@ -122,11 +122,11 @@ class SqliteScopeStore private constructor(
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS attachments (
-                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
-                  aid        BLOB NOT NULL,
-                  total      INTEGER NOT NULL,
-                  arrived_at INTEGER NOT NULL,
-                  PRIMARY KEY (scope_id, aid)
+                    scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                    aid        BLOB NOT NULL,
+                    total      INTEGER NOT NULL,
+                    arrived_at INTEGER NOT NULL,
+                    PRIMARY KEY (scope_id, aid)
                 ) WITHOUT ROWID
                 """.trimIndent(),
             )
@@ -134,22 +134,22 @@ class SqliteScopeStore private constructor(
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS attachment_chunks (
-                  scope_id BLOB NOT NULL,
-                  aid      BLOB NOT NULL,
-                  idx      INTEGER NOT NULL,
-                  cid      BLOB NOT NULL,
-                  data     BLOB NOT NULL,
-                  PRIMARY KEY (scope_id, aid, idx)
+                    scope_id BLOB NOT NULL,
+                    aid      BLOB NOT NULL,
+                    idx      INTEGER NOT NULL,
+                    cid      BLOB NOT NULL,
+                    data     BLOB NOT NULL,
+                    PRIMARY KEY (scope_id, aid, idx)
                 )
                 """.trimIndent(),
             )
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS attachment_tombstones (
-                  scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
-                  aid        BLOB NOT NULL,
-                  expires_at INTEGER NOT NULL,
-                  PRIMARY KEY (scope_id, aid)
+                    scope_id   BLOB NOT NULL REFERENCES scopes(scope_id) ON DELETE CASCADE,
+                    aid        BLOB NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    PRIMARY KEY (scope_id, aid)
                 ) WITHOUT ROWID
                 """.trimIndent(),
             )

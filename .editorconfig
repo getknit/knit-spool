@@ -13,3 +13,31 @@ ktlint_code_style = ktlint_official
 
 [*.{yml,yaml,toml,json}]
 indent_size = 2
+
+# `.yamllint` is YAML without the extension, so spell it out.
+[.yamllint]
+indent_size = 2
+
+[*.sh]
+indent_size = 2
+
+[*.xml]
+indent_size = 2
+
+# Continuation lines under a directive (HEALTHCHECK, RUN) are conventionally two spaces.
+[Dockerfile*]
+indent_size = 2
+
+# Caddy's own formatter (`caddy fmt`) emits tabs; matching it keeps diffs clean.
+[Caddyfile*]
+indent_style = tab
+indent_size = unset
+
+# Markdown indentation is semantic, not stylistic: a continuation line's width follows its list
+# marker (2 under `-`, 3 under `1.`), so no single width is correct. `mdl` owns Markdown here.
+[*.{md,markdown}]
+indent_size = unset
+
+# Verbatim upstream license text — reproduced exactly, never reformatted.
+[LICENSE]
+indent_size = unset

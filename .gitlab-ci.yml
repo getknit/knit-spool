@@ -129,8 +129,8 @@ conformance-selftest:
       # HEALTHCHECK uses. Bail the moment the daemon dies instead of polling a corpse for 60s.
       for _ in $(seq 1 60); do
         if exec 3<>"/dev/tcp/127.0.0.1/$SPOOL_PORT" \
-           && printf 'GET /healthz HTTP/1.0\r\n\r\n' >&3 \
-           && grep -q ' 200 ' <&3; then
+            && printf 'GET /healthz HTTP/1.0\r\n\r\n' >&3 \
+            && grep -q ' 200 ' <&3; then
           echo "daemon healthy"; break
         fi
         if ! kill -0 "$(cat .spool.pid)" 2>/dev/null; then
@@ -192,10 +192,10 @@ docker:
       # Built as a positional-parameter list so each conditional destination is one readable line.
       # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
       set -- --context "$CI_PROJECT_DIR" \
-             --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-             --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
-             --digest-file /kaniko/digest \
-             --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
+        --digest-file /kaniko/digest \
+        --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi

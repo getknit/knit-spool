@@ -160,11 +160,13 @@ jobs:
           c = [e for e in root.findall('counter') if e.get('type') == 'LINE'][-1]
           covered, missed = int(c.get('covered')), int(c.get('missed'))
           pct = round(100 * covered / (covered + missed))
-          color = ('brightgreen' if pct >= 90 else 'green' if pct >= 80 else
-                   'yellowgreen' if pct >= 70 else 'yellow' if pct >= 60 else
-                   'orange' if pct >= 50 else 'red')
-          json.dump({'schemaVersion': 1, 'label': 'coverage',
-                     'message': f'{pct}%', 'color': color}, open('coverage.json', 'w'))
+          color = (
+            'brightgreen' if pct >= 90 else 'green' if pct >= 80 else
+            'yellowgreen' if pct >= 70 else 'yellow' if pct >= 60 else
+            'orange' if pct >= 50 else 'red'
+          )
+          badge = {'schemaVersion': 1, 'label': 'coverage', 'message': f'{pct}%', 'color': color}
+          json.dump(badge, open('coverage.json', 'w'))
           print(f'{pct}% ({covered}/{covered + missed} lines)')
           PY
 
