@@ -1,25 +1,32 @@
+---
+changelog: "0.1"
+product:
+  name: knit-spool
+  vendor: Knit
+  homepage: https://github.com/getknit/knit-spool
+  id: knit-spool
+  description: Scoped, blinded store-and-forward relay for Knit's Internet plane.
+  platforms: [linux]
+  versioning: semver
+  category: Developer Tools
+document:
+  updated: 2026-08-20T23:03:48Z
+  coverage: complete
+  canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
+  locale: en
+---
+
 # knit-spool changelog
-
-All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-**Wire compatibility is versioned separately from this daemon.** The spool protocol's own version is
-negotiated in the handshake and specified in
-[`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md); a major
-version of this daemon does not imply a new protocol version, and a protocol change never arrives
-here first. Entries that move the wire, the on-disk store, or a configuration default are called out
-as such — those are the ones operators have to read.
 
 ## Unreleased
 
 Nothing yet.
 
-## 0.1.0 - 2026-08-17
+## [0.1.0](https://github.com/getknit/knit-spool/releases/tag/v0.1.0) — 2026-08-18T19:29:49Z
 
-First implementation of the **v1** spool protocol, and the first tagged release. Pre-1.0: every
-interface below is subject to change, and only the wire protocol's own compatibility rules — which
-are versioned separately, above — are stable.
+> First implementation of the v1 spool protocol, and the first tagged release. Pre-1.0 every
+> interface below is subject to change, and only the wire protocol's own compatibility rules, which
+> are versioned separately from this daemon, are stable.
 
 ### Added
 
@@ -57,21 +64,24 @@ are versioned separately, above — are stable.
   overlay for 1 GB boxes that side-loads or pulls the image instead of building it, caps every
   container, bounds the log driver, and re-sizes the limits for a metered link.
 - **CI** — two pipelines over the same gating checks. GitHub Actions
-  ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `check` with merged coverage,
-  `koverVerify`, and the conformance suite against the freshly built daemon on every pull request,
-  and publishes the coverage badge on a default-branch push. The maintainer's internal GitLab
-  pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) runs the same two test jobs and adds what needs a
-  registry credential: a kaniko image build, advisory Trivy filesystem/image and markdownlint scans,
-  and a tag-only release job.
-- **Releases** — a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
+  ([`.github/workflows/ci.yml`](https://github.com/getknit/knit-spool/blob/main/.github/workflows/ci.yml))
+  runs `check` with merged coverage, `koverVerify`, and the conformance suite against the freshly
+  built daemon on every pull request, and publishes the coverage badge on a default-branch push. The
+  maintainer's internal GitLab pipeline
+  ([`.gitlab-ci.yml`](https://github.com/getknit/knit-spool/blob/main/.gitlab-ci.yml)) runs the same
+  two test jobs and adds what needs a registry credential: a kaniko image build, advisory Trivy
+  filesystem/image and markdownlint scans, and a tag-only release job.
+- **Releases** — a `v*` tag runs
+  [`.github/workflows/release.yml`](https://github.com/getknit/knit-spool/blob/main/.github/workflows/release.yml),
   which is the default source of release images. It re-runs `check` and the conformance suite
   against the tagged tree, then publishes a multi-arch (`linux/amd64`, `linux/arm64`) image to GHCR
   and Docker Hub with a signed build provenance attestation, and opens a draft GitHub Release
   carrying the distribution archives and their `SHA256SUMS`. The image is built from
-  [`Dockerfile.dist`](Dockerfile.dist), which layers a natively compiled distribution onto the
-  multi-arch JRE base instead of compiling under emulation.
+  [`Dockerfile.dist`](https://github.com/getknit/knit-spool/blob/main/Dockerfile.dist), which layers
+  a natively compiled distribution onto the multi-arch JRE base instead of compiling under emulation.
 - **Community and automation** — GitHub issue forms, a pull-request template, label-driven canned
-  replies, keyword triage, and stale sweeps under [`.github/`](.github/).
+  replies, keyword triage, and stale sweeps under
+  [`.github/`](https://github.com/getknit/knit-spool/tree/main/.github).
 - **Coverage reporting** (Kover) — one merged report over all three modules
   (`./gradlew koverHtmlReport`), plus per-module reports. `koverVerify` holds line and branch floors
   as a ratchet against tests being deleted, and the merged percentage is published as the README's
@@ -91,3 +101,18 @@ are versioned separately, above — are stable.
 - The container build no longer races the Kotlin compile daemon's `/tmp` lock file under kaniko
   (compilation runs in-process), and `mkdir -p /data` tolerates kaniko creating the `VOLUME` path
   during stage setup.
+
+## About this file
+
+**Wire compatibility is versioned separately from this daemon.** The spool protocol's own version is
+negotiated in the handshake and specified in
+[`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md); a major
+version of this daemon does not imply a new protocol version, and a protocol change never arrives
+here first. Entries that move the wire, the on-disk store, or a configuration default are called out
+as such — those are the ones operators have to read.
+
+This changelog follows the provisional changelog standard drafted at
+[whatsnew.fyi](https://whatsnew.fyi/spec) — YAML frontmatter, one `##` heading per release newest
+first, and [Keep a Changelog](https://keepachangelog.com)'s six categories, with versions following
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). This heading and `## Unreleased` carry no
+date, so neither is a release-heading candidate and consumers skip both.

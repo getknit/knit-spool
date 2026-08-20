@@ -16,6 +16,7 @@ It holds sealed frames for scope ids it cannot map to anyone, and forgets everyt
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fgetknit%2Fknit-spool%2Fbadges%2Fcoverage.json)](https://github.com/getknit/knit-spool/actions/workflows/ci.yml)
 ![Footprint](https://img.shields.io/badge/RSS-~128%E2%80%93256%20MB-00BCD4)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
+[![knit-spool changelog on whatsnew.fyi](https://whatsnew.fyi/product/knit-spool/badge.svg)](https://whatsnew.fyi/product/knit-spool)
 
 </div>
 
