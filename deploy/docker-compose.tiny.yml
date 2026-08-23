@@ -14,40 +14,73 @@
 #
 # (docker save/load, not export/import — the latter flattens a container and drops the
 # ENTRYPOINT, ENV, USER, VOLUME, and HEALTHCHECK this image relies on.)
+#
+# ---------------------------------------------------------------------------------------
+# Sizing. Every figure below was measured, not guessed: one connection costs 41 KB of JVM
+# heap in the daemon and ~110 KB in Caddy while a burst of them is arriving (~41 KB once
+# settled — the rest is Go's GC headroom). A 1 GB box has ~640 MB to give two containers
+# after the OS, so:
+#
+#   640 MB - 165 MB fixed (JVM non-heap + Caddy idle) = 475 MB / 196 KB per client
+#
+# lands at ~2,400 concurrent clients before one of the two containers is OOM-killed. The
+# limits here target **2,000**, ~80% of that, which is what the split below was validated
+# at: 2,000 TLS WebSockets through Caddy left it at 223 MB of 288 MB and the daemon at
+# 284 MB RSS with the old generation 68% full.
+#
+# The ceiling is memory, and it is Caddy's before it is the daemon's. Nothing else is
+# close: the store thread sustains ~4,000 pushes/s on this tier, and 1 TB/month of
+# transfer is ~14 GB at 2,000 clients' worth of sealed text.
+# ---------------------------------------------------------------------------------------
 
 services:
   spool:
     image: "${SPOOL_IMAGE:-knit-spool:latest}"
     build: !reset null
-    # The JVM is pinned to -Xmx256m; ~450 MB RSS with metaspace, threads, and CIO's
-    # direct buffers. 512 MB leaves the heap room to spike without taking the box down.
-    mem_limit: 512m
-    # Sizing for this tier. The daemon's own defaults track the spec's §12 constants and are
-    # deliberately left alone; these are deployment policy for a 1 GB box on a metered link.
-    #
-    # A $5-tier box's binding constraint is not CPU — the store thread sustains order-1000
-    # pushes/s here, while 1 TB/month of transfer works out to ~386 KB/s sustained outbound.
-    # Every push is amplified by (subscribers - 1) on fan-out, so blob size sets the bill.
+    # 192 MB heap + ~145 MB of metaspace, code cache, threads, and JNI SQLite = ~340 MB.
+    # 352 MB leaves the spike room. The heap is the connection ceiling: SerialGC (which is
+    # what a 1-vCPU box gets) puts 2/3 of -Xmx in the old generation, and 2,000 clients'
+    # 41 KB each is 82 MB of it — 62% full, which is the right side of the cliff. At 95%
+    # the daemon does not OOM, it just full-GCs every 700 ms for 190 ms at a time.
+    mem_limit: 352m
     environment:
-      # 16 KiB, a quarter of the 64 KiB default: every frame is amplified by (subscribers - 1)
-      # on fan-out, so this is the knob that sets the monthly transfer bill. It has to stay
-      # at least 512 bytes under SPOOL_MAX_RECORD (131072 by default) to leave room for the
-      # CBOR envelope — the daemon refuses to start otherwise.
-      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-16384}"
-      # 1 MiB per scope, down from the 16 MiB default. Attachments are the largest single
-      # thing this spool will ever move, so on a metered link the default is a poor fit for
-      # the tier. Note this budget is *per scope*, not spool-wide — but attachment bytes do
-      # count toward SPOOL_MAX_BYTES, so the global watermark still bounds total disk and
-      # sheds oldest-scope-first. 0 switches attachments off entirely, and the daemon then
-      # omits all three attachment limits from HELLO (spec §7.3).
-      SPOOL_MAX_ATTACH_BYTES: "${SPOOL_MAX_ATTACH_BYTES:-1048576}"
-      # 64 scopes is the first ceiling any real deployment hits, and it is nowhere near a
-      # hardware limit — a scope is a row plus a subscriber set. SPOOL_MAX_BYTES still bounds
-      # total payload. Past ~1000, raise SPOOL_SWEEP_MS with it: the sweeper walks every scope
-      # on the single store thread each tick.
-      SPOOL_MAX_SCOPES: "${SPOOL_MAX_SCOPES:-512}"
-      # 16 is low wherever carrier-grade NAT puts many mobile clients behind one address.
-      SPOOL_MAX_CONNS_PER_IP: "${SPOOL_MAX_CONNS_PER_IP:-64}"
+      # The image's start script appends JAVA_OPTS after the built-in -Xmx256m, and the
+      # last -Xmx wins, so this re-pins the heap without rebuilding anything.
+      JAVA_OPTS: "-Xmx192m"
+      # 32 KiB, half the 64 KiB default: every frame is amplified by (subscribers - 1) on
+      # fan-out, so this is the knob that sets the monthly transfer bill. With attachments
+      # off it is also the only way a client can move an image, which is why it is not
+      # smaller. It has to stay at least 512 bytes under SPOOL_MAX_RECORD (131072 by
+      # default) to leave room for the CBOR envelope — the daemon refuses to start
+      # otherwise.
+      SPOOL_MAX_BLOB: "${SPOOL_MAX_BLOB:-32768}"
+      # 4 MiB per scope, a quarter of the 16 MiB default. Attachments are the one limit
+      # here whose binding resource is the link rather than the box: 1 TB/month is ~386
+      # KB/s sustained outbound, and a group that shares 1 MB photos all day reaches it
+      # long before the disk notices. 0 switches attachments off entirely, and the daemon
+      # then omits all three attachment limits from HELLO (spec §7.3).
+      SPOOL_MAX_ATTACH_BYTES: "${SPOOL_MAX_ATTACH_BYTES:-4194304}"
+      # 4096 scopes: 2,000 clients' worth of conversations with 2x headroom for scopes
+      # whose members are all offline. A scope is a 160-byte SQLite row and a subscriber
+      # set, so RAM is not what bounds this — the sweeper is. It walks every scope on the
+      # single store thread each tick at ~26 us per scope on this tier, so 4096 scopes is
+      # a ~110 ms stall, which is why SPOOL_SWEEP_MS goes up with it.
+      SPOOL_MAX_SCOPES: "${SPOOL_MAX_SCOPES:-4096}"
+      # 5 minutes rather than 60 s. Nothing the sweeper does is urgent — TTL expiry, PoW
+      # cache pruning, the storage watermark — and a ~110 ms store-thread stall is much
+      # better spent once per five minutes than once per minute.
+      SPOOL_SWEEP_MS: "${SPOOL_SWEEP_MS:-300000}"
+      # 8 GiB of payload, up from 256 MB. SQLite costs ~1.2x the payload on disk, so the
+      # worst case is ~10 GB of the 18 GB a fresh Nanode has free — the rest is headroom
+      # for logs, images, and the upgrade that would otherwise fill the disk. This is also
+      # 4096 scopes each holding its full 1000 frames of ordinary sealed text.
+      SPOOL_MAX_BYTES: "${SPOOL_MAX_BYTES:-8589934592}"
+      # 256, which is ~12% of the box's total. Enough that carrier-grade NAT does not cut
+      # off a whole mobile network, small enough that one address cannot take the spool.
+      SPOOL_MAX_CONNS_PER_IP: "${SPOOL_MAX_CONNS_PER_IP:-256}"
+      # 30 new scopes/min per IP, up from 6. A client joining a backlog of conversations
+      # is not abuse, and 20-bit PoW already prices the unknown-scope path.
+      SPOOL_RATE_NEW_SCOPES: "${SPOOL_RATE_NEW_SCOPES:-30}"
     logging:
       driver: json-file
       options:
@@ -55,7 +88,18 @@ services:
         max-file: "3"
 
   caddy:
-    mem_limit: 128m
+    # Caddy, not the daemon, is what runs out of memory first: it holds two 32 KB copy
+    # buffers plus TLS state per proxied WebSocket, and Go's collector lets the garbage
+    # from a connect burst pile up on top of that. At the old 128 MB it was OOM-killed at
+    # ~1,100 connections — and `restart: unless-stopped` then reconnects everyone into the
+    # same wall. 288 MB holds 2,000 with room for the reconnect storm after a restart.
+    mem_limit: 288m
+    environment:
+      # Go ignores the cgroup limit unless it is told. With this it collects instead of
+      # growing, which cut steady-state usage from 313 MB to 117 MB at 2,500 connections.
+      # Keep it under mem_limit: it is a soft target, and a fast enough burst still
+      # outruns the collector.
+      GOMEMLIMIT: "256MiB"
     logging:
       driver: json-file
       options:

@@ -20,7 +20,19 @@ document:
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+
+- **`deploy/docker-compose.tiny.yml` is sized against measurements** rather than caution. A 1 GB
+  box holds ~2,400 concurrent clients before a container is OOM-killed — 41 KB of JVM heap and
+  ~110 KB of Caddy per connection — so the overlay now targets ~2,000 of them: 4096 scopes (was
+  512), 8 GiB of payload (was 256 MB), 32 KiB blobs (was 16 KiB), 4 MiB of attachments per scope
+  (was 1 MiB), 256 connections per IP (was 64), 30 new scopes/min per IP (was 6), and a 5-minute
+  sweep interval to keep the sweeper's now-longer store-thread stall rare.
+- **The 1 GB overlay splits memory the other way.** Caddy, not the daemon, is what runs out first:
+  at its old 128 MB ceiling it was OOM-killed at ~1,100 connections, taking every subscriber with
+  it. It now gets 288 MB and a `GOMEMLIMIT`, and the daemon 352 MB with a 192 MB heap.
+- **`HOSTING.md` documents what the tier actually holds**, with the per-connection, sweeper, store
+  thread, transfer, and disk figures behind the numbers above.
 
 ## [0.1.0](https://github.com/getknit/knit-spool/releases/tag/v0.1.0) — 2026-08-18T19:29:49Z
 

@@ -189,10 +189,14 @@ network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 >
 > It pulls or side-loads the image instead of building it (Gradle wants more memory than the whole
 > box has), caps each container so an overrun is a restart rather than the kernel's OOM killer
-> taking sshd, bounds the json log driver, and re-sizes the limits for a metered link — 32 KiB
-> blobs, 1 MiB of attachments per scope, 512 scopes, 64 connections per IP. Side-load with
-> `docker save knit-spool:latest | gzip | ssh root@host 'gunzip | docker load'` — `save`/`load`,
-> not `export`/`import`, which flattens the image and drops its ENTRYPOINT and HEALTHCHECK.
+> taking sshd, bounds the json log driver, and sizes every limit against what the tier actually
+> holds — 32 KiB blobs, 4 MiB of attachments per scope, 4096 scopes, 8 GiB of payload, 256
+> connections per IP, and a 192 MB heap in a 352 MB container with 288 MB left for Caddy. That
+> split targets **~2,000 concurrent clients**, roughly 80% of where the first container is
+> OOM-killed; [`HOSTING.md`](HOSTING.md#what-a-1-gb-box-actually-holds) shows the measurements.
+> Side-load with `docker save knit-spool:latest | gzip | ssh root@host 'gunzip | docker load'` —
+> `save`/`load`, not `export`/`import`, which flattens the image and drops its ENTRYPOINT and
+> HEALTHCHECK.
 
 ## 🐳 Docker
 

@@ -13,6 +13,7 @@ somewhere else, not a bigger box.
 ## Contents
 
 - [What a spool needs from a host](#what-a-spool-needs-from-a-host)
+- [What a 1 GB box actually holds](#what-a-1-gb-box-actually-holds)
 - [What your bill depends on](#what-your-bill-depends-on)
 - [Providers](#providers)
 - [Linode, where the canonical instance runs](#linode-where-the-canonical-instance-runs)
@@ -36,11 +37,43 @@ somewhere else, not a bigger box.
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
 caveats [below](#home-and-self-hosted).
 
+## What a 1 GB box actually holds
+
+**About 2,400 concurrent clients, and the thing that runs out is memory in the reverse proxy.**
+These are measurements off a JVM pinned to one core with `-XX:ActiveProcessorCount=1` and a real
+`caddy:2-alpine` terminating TLS in front, scaled to the tier by the ~1.8× single-core gap between
+the test machine and a Nanode:
+
+| Per client | Cost | Notes |
+|---|---|---|
+| Daemon | 41 KB of JVM heap | An idle WebSocket: two Ktor CIO byte channels, the frame channels, and the `Conn` bookkeeping. Off-heap is noise — NMT puts direct buffers under 1 MB in total. |
+| Caddy | ~110 KB while connections are arriving, ~41 KB settled | Two 32 KB copy buffers plus TLS state per proxied socket, and Go lets the burst's garbage pile on top unless `GOMEMLIMIT` says otherwise. |
+
+Everything else has an order of magnitude in hand at that number:
+
+| Resource | Measured | Where 2,000 clients land |
+|---|---|---|
+| Store thread | ~4,000 pushes/s | 2,000 clients at a message a minute is 33/s |
+| Sweeper | ~26 µs per scope, on the store thread | 4096 scopes is a ~110 ms stall every 5 min |
+| Transfer | 1 TB/month = 386 KB/s | ~14 GB/month of sealed text; ~230 GB even at 16 KiB a frame |
+| Disk | ~1.2× payload, ~160 B per scope row | 8 GiB of payload is ~10 GB of the 18 GB free |
+
+Two failure modes are worth knowing before you meet them. Caddy at the old 128 MB ceiling was
+OOM-killed at ~1,100 connections, and `restart: unless-stopped` then walks every client back into
+the same wall. And the daemon does not OOM when its heap fills — it full-GCs every 700 ms for 190 ms
+at a time, which looks like a network problem and is not one. Both are why
+[`deploy/docker-compose.tiny.yml`](deploy/docker-compose.tiny.yml) splits the box's ~640 MB of
+container budget 352/288 and targets ~2,000 rather than the ~2,400 the hardware will technically do.
+
+Reach for a second spool before a bigger box. Two $5 boxes in different regions are worth more to
+the people using them than one box with twice the RAM, because the failure they protect against is
+the box being gone, not the box being full.
+
 ## What your bill depends on
 
 Egress. Every push fans out to (subscribers − 1) copies, so what leaves the box is a multiple of
 what arrives, and the multiplier is the size of the conversation. Metered transfer binds long before
-CPU or memory does on every tier worth buying.
+CPU does, and — once attachments are in play — before memory does too.
 
 The arithmetic is easy: 1 TB/month is about 386 KB/s sustained outbound. That's an enormous number
 of sealed text frames and a very ordinary number of attachments, which is why the blob and
