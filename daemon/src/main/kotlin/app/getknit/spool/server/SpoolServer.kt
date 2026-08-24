@@ -33,13 +33,18 @@ import app.getknit.spool.store.PushResult
 import app.getknit.spool.store.ScopeStore
 import app.getknit.spool.store.SubscribeResult
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.forwardedheaders.XForwardedHeaders
 import io.ktor.server.plugins.origin
+import io.ktor.server.request.path
+import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -84,6 +89,17 @@ private const val RATE_STRIKE_WINDOW_MS = 10_000L
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
 private const val IP_IDLE_MS = 600_000L
 
+/**
+ * `Retry-After` on a capacity refusal. Long enough that a rejected client spends the interval on
+ * its other spools rather than re-dialing this one, short enough that a spool which empties out is
+ * usable again quickly. Clients are expected to jitter around it; a whole population returning on
+ * the same second is the reconnect storm this limit exists to prevent.
+ */
+private const val RETRY_AFTER_SECONDS = 30
+
+/** The one WebSocket route (spec §7.1); also what the capacity gate matches on. */
+private const val SPOOL_PATH = "/spool/v1"
+
 private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
 /**
@@ -114,6 +130,12 @@ class SpoolServer(
         /** Cadence of the periodic status log line; 0 switches it off. */
         val statusMs: Long = 300_000L,
         val trustProxy: Boolean = false,
+        /**
+         * Total live connections the spool will hold; 0 is unlimited. Unlike every other limit
+         * here this one is not in the spec — it is a property of the box, not the protocol — so
+         * it refuses at the transport (503 on the upgrade) rather than inventing a close code.
+         */
+        val maxConns: Int = 0,
         val maxConnsPerIp: Int = 16,
         val rateRecords: Int = 50,
         val ratePushes: Int = 10,
@@ -135,6 +157,7 @@ class SpoolServer(
             metrics = metrics,
             maxScopes = config.hardLimits.maxScopes,
             maxBytes = config.maxBytes,
+            maxConns = config.maxConns,
             startedAtMs = clock(),
         )
 
@@ -205,8 +228,28 @@ class SpoolServer(
                         }
                     }
                 }
+                // Capacity is refused before the upgrade, not after it. A spool that is full is
+                // not a protocol failure — §7.1 has four close codes and none of them means "come
+                // back later", and 4003 abuse would teach a client it misbehaved. 503 +
+                // Retry-After is the transport saying "not now", which a multi-homing client
+                // already handles: an unreachable spool is the case the design is built around.
+                // It is also the cheapest possible no, costing neither a WebSocket session nor a
+                // HELLO.
+                //
+                // Matched on the path here rather than scoped to the route below, because a
+                // route-scoped `intercept` on an ApplicationCallPipeline phase installs on the
+                // shared pipeline and would answer /healthz and /metrics with 503 as well — which
+                // would fail the image's HEALTHCHECK and restart the spool at its busiest moment.
+                intercept(ApplicationCallPipeline.Plugins) {
+                    if (call.request.path() == SPOOL_PATH && atCapacity()) {
+                        metrics.connsRefusedTotal.increment()
+                        call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS.toString())
+                        call.respondText("at capacity", status = HttpStatusCode.ServiceUnavailable)
+                        finish()
+                    }
+                }
                 routing {
-                    webSocket("/spool/v1") {
+                    webSocket(SPOOL_PATH) {
                         acceptConnection(this)
                     }
                     get("/healthz") {
@@ -227,7 +270,10 @@ class SpoolServer(
                             return@get
                         }
                         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
-                        call.respondText(metrics.render(scopeCount, liveBytes), ContentType.Text.Plain)
+                        call.respondText(
+                            metrics.render(scopeCount, liveBytes, config.maxConns),
+                            ContentType.Text.Plain,
+                        )
                     }
                 }
             }
@@ -251,6 +297,16 @@ class SpoolServer(
         server.stop(gracePeriodMillis = 2_000, timeoutMillis = 5_000)
         runCatching { store.close() }.onFailure { log.warn("store close failed", it) }
     }
+
+    /**
+     * Whether the spool is holding all the connections it was configured for.
+     *
+     * Reads the live gauge rather than reserving a slot, so upgrades already in flight can carry
+     * the count a little past [Config.maxConns] — bounded by how many arrive between this check
+     * and their increment, and never leaking a slot the way a reservation released on the wrong
+     * path would. The cap is a budget for a box sized with headroom above it, not a hard fence.
+     */
+    private fun atCapacity(): Boolean = config.maxConns > 0 && metrics.connectionsCurrent.get() >= config.maxConns
 
     private suspend fun acceptConnection(session: DefaultWebSocketServerSession) {
         val ip = session.call.request.origin.remoteHost

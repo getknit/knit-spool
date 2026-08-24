@@ -75,6 +75,12 @@ services:
       # for logs, images, and the upgrade that would otherwise fill the disk. This is also
       # 4096 scopes each holding its full 1000 frames of ordinary sealed text.
       SPOOL_MAX_BYTES: "${SPOOL_MAX_BYTES:-8589934592}"
+      # The whole point of the split above, made enforceable. Without this the daemon has no
+      # global connection limit at all: it accepts until the heap thrashes, and clients see
+      # 190 ms GC pauses and ping timeouts instead of an answer. At the cap the upgrade is
+      # refused 503 + Retry-After, which a multi-homing client reads as "this spool is busy,
+      # use the others" — a clean no, a whole class better than a slow yes.
+      SPOOL_MAX_CONNS: "${SPOOL_MAX_CONNS:-2000}"
       # 256, which is ~12% of the box's total. Enough that carrier-grade NAT does not cut
       # off a whole mobile network, small enough that one address cannot take the spool.
       SPOOL_MAX_CONNS_PER_IP: "${SPOOL_MAX_CONNS_PER_IP:-256}"

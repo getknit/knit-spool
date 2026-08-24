@@ -10,8 +10,13 @@ import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
 import app.getknit.spool.store.HardLimits
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** Per-connection/per-IP rate limits and the global storage watermark (spec §6.4). */
@@ -48,6 +53,52 @@ class RateAndWatermarkTest {
                 helloHandshake()
                 connect {
                     awaitClose(CloseCode.ABUSE)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun globalConnectionCapRefusesTheUpgradeWith503() {
+        withServer(testConfig(maxConns = 1)) {
+            connect {
+                helloHandshake()
+                val response = http.get("http://127.0.0.1:$port/spool/v1")
+                assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+                // Retry-After is the whole point: a client told "later" goes to its other spools
+                // instead of re-dialing this one immediately.
+                assertNotNull(response.headers[HttpHeaders.RetryAfter])
+                assertEquals(1L, spool.metrics.connsRefusedTotal.sum())
+            }
+            // The slot is released when the holder leaves, so the next client is served.
+            connect { helloHandshake() }
+        }
+    }
+
+    @Test
+    fun capacityRefusalLeavesHealthzAndMetricsAnswering() {
+        withServer(testConfig(maxConns = 1)) {
+            connect {
+                helloHandshake()
+                // The ops surface must survive a full spool: /healthz is what the image's
+                // HEALTHCHECK polls, and 503 there would restart the container at its busiest
+                // moment — turning a spool that is merely full into a spool that is gone.
+                assertEquals(HttpStatusCode.OK, http.get("http://127.0.0.1:$port/healthz").status)
+                val metrics = http.get("http://127.0.0.1:$port/metrics")
+                assertEquals(HttpStatusCode.OK, metrics.status)
+                assertTrue(metrics.bodyAsText().contains("knit_spool_max_conns 1"))
+            }
+        }
+    }
+
+    @Test
+    fun connectionCapOfZeroIsUnlimited() {
+        withServer(testConfig(maxConns = 0)) {
+            connect {
+                helloHandshake()
+                connect {
+                    helloHandshake()
+                    assertEquals(0L, spool.metrics.connsRefusedTotal.sum())
                 }
             }
         }

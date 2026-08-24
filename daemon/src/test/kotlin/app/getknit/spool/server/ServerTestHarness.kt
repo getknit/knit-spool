@@ -45,6 +45,7 @@ fun testConfig(
     hardLimits: HardLimits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 4),
     maxBytes: Long = 0L,
     statusMs: Long = 0L,
+    maxConns: Int = 0,
     maxConnsPerIp: Int = 16,
     rateRecords: Int = 1_000,
     ratePushes: Int = 1_000,
@@ -63,6 +64,7 @@ fun testConfig(
         // Off by default — StatusLineTest drives statusTick() itself.
         statusMs = statusMs,
         trustProxy = false,
+        maxConns = maxConns,
         maxConnsPerIp = maxConnsPerIp,
         rateRecords = rateRecords,
         ratePushes = ratePushes,

@@ -18,6 +18,14 @@ class Metrics {
     val eventsTotal = LongAdder()
     val powVerifiedTotal = LongAdder()
     val rateLimitedTotal = LongAdder()
+
+    /**
+     * Upgrades refused because the spool was already holding `SPOOL_MAX_CONNS` connections. Rising
+     * here means clients are being turned away while the box still looks healthy in every other
+     * counter — the cap doing its job, and the cue that this spool wants a sibling rather than a
+     * bigger number.
+     */
+    val connsRefusedTotal = LongAdder()
     val shedsTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
 
@@ -46,6 +54,7 @@ class Metrics {
     fun render(
         scopesCurrent: Int,
         liveBytes: Long,
+        maxConns: Int = 0,
     ): String =
         buildString {
             line("knit_spool_connections_current", "gauge", connectionsCurrent.get().toLong())
@@ -55,6 +64,10 @@ class Metrics {
             line("knit_spool_events_total", "counter", eventsTotal.sum())
             line("knit_spool_pow_verified_total", "counter", powVerifiedTotal.sum())
             line("knit_spool_rate_limited_total", "counter", rateLimitedTotal.sum())
+            line("knit_spool_conns_refused_total", "counter", connsRefusedTotal.sum())
+            // Emitted even when unset (0 = unlimited) so an alert expression can divide by it
+            // without the series appearing and disappearing with the configuration.
+            line("knit_spool_max_conns", "gauge", maxConns.toLong())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())

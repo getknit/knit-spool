@@ -27,6 +27,7 @@ class StatusLine(
     private val metrics: Metrics,
     private val maxScopes: Int,
     private val maxBytes: Long,
+    private val maxConns: Int = 0,
     private val startedAtMs: Long,
     private val heap: () -> HeapUse = ::runtimeHeap,
 ) {
@@ -44,6 +45,8 @@ class StatusLine(
         return buildString {
             append("up=").append(uptime(now - startedAtMs))
             append(" conns=").append(metrics.connectionsCurrent.get())
+            // Same idiom as scopes: the ceiling is only printed when there is one to hit.
+            if (maxConns > 0) append('/').append(maxConns)
             append(" accepted=+").append(delta.connections)
             append(" scopes=").append(scopes).append('/').append(maxScopes)
             append(" live=").append(bytes(liveBytes))
@@ -55,6 +58,7 @@ class StatusLine(
             append(" events=+").append(delta.events)
             append(" egress=+").append(bytes(delta.egressBytes))
             append(" limited=+").append(delta.rateLimited)
+            append(" refused=+").append(delta.connsRefused)
             append(" sheds=+").append(delta.sheds)
             append(" errs=+").append(delta.errs.values.sum())
             appendErrCodes(delta.errs)
@@ -84,6 +88,7 @@ class StatusLine(
             events = metrics.eventsTotal.sum(),
             egressBytes = metrics.egressBytesTotal.sum(),
             rateLimited = metrics.rateLimitedTotal.sum(),
+            connsRefused = metrics.connsRefusedTotal.sum(),
             sheds = metrics.shedsTotal.sum(),
             errs = metrics.errsByCode(),
         )
@@ -95,6 +100,7 @@ class StatusLine(
         val events: Long,
         val egressBytes: Long,
         val rateLimited: Long,
+        val connsRefused: Long,
         val sheds: Long,
         val errs: Map<String, Long>,
     ) {
@@ -106,6 +112,7 @@ class StatusLine(
                 events = events - older.events,
                 egressBytes = egressBytes - older.egressBytes,
                 rateLimited = rateLimited - older.rateLimited,
+                connsRefused = connsRefused - older.connsRefused,
                 sheds = sheds - older.sheds,
                 // A code absent from the older snapshot is entirely new, so its whole count is the
                 // delta; a code whose count did not move is dropped rather than printed as zero.

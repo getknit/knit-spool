@@ -35,6 +35,7 @@ private val KNOWN_VARS =
         "SPOOL_SWEEP_MS",
         "SPOOL_STATUS_MS",
         "SPOOL_TRUST_PROXY",
+        "SPOOL_MAX_CONNS",
         "SPOOL_MAX_CONNS_PER_IP",
         "SPOOL_RATE_RECORDS",
         "SPOOL_RATE_PUSHES",
@@ -83,6 +84,16 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     // it exists to make readable.
     val statusMs = longVar(env, "SPOOL_STATUS_MS", default = 300_000L, min = 0L)
     require(statusMs == 0L || statusMs >= 1_000L) { "SPOOL_STATUS_MS must be 0 (off) or >= 1000, got $statusMs" }
+    val maxConns = intVar(env, "SPOOL_MAX_CONNS", default = 0, min = 0)
+    val maxConnsPerIp = intVar(env, "SPOOL_MAX_CONNS_PER_IP", default = 16, min = 1)
+    // Legal but almost never meant: one address could fill the spool on its own, which is the
+    // shape the per-IP cap exists to prevent. Warned, not refused — a one-connection test spool is
+    // a real thing to want.
+    if (maxConns in 1..<maxConnsPerIp) {
+        log.warn(
+            "SPOOL_MAX_CONNS_PER_IP ($maxConnsPerIp) is above SPOOL_MAX_CONNS ($maxConns): one client address can take the whole spool",
+        )
+    }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
         token = env("SPOOL_TOKEN")?.takeIf { it.isNotEmpty() },
@@ -105,7 +116,8 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         sweepMs = longVar(env, "SPOOL_SWEEP_MS", default = 60_000L, min = 1_000L),
         statusMs = statusMs,
         trustProxy = boolVar(env, "SPOOL_TRUST_PROXY", default = false),
-        maxConnsPerIp = intVar(env, "SPOOL_MAX_CONNS_PER_IP", default = 16, min = 1),
+        maxConns = maxConns,
+        maxConnsPerIp = maxConnsPerIp,
         rateRecords = intVar(env, "SPOOL_RATE_RECORDS", default = 50, min = 1),
         ratePushes = intVar(env, "SPOOL_RATE_PUSHES", default = 10, min = 1),
         rateNewScopesPerMin = intVar(env, "SPOOL_RATE_NEW_SCOPES", default = 6, min = 1),

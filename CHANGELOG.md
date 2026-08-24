@@ -20,14 +20,26 @@ document:
 
 ## Unreleased
 
+### Added
+
+- **`SPOOL_MAX_CONNS`, a total-connection cap** (default `0`, unlimited — the daemon had no global
+  connection limit before this, only per-IP). At the cap the WebSocket upgrade is refused `503`
+  with a `Retry-After` rather than accepted into a box that has no room for it. Deliberately not a
+  close code: §7.1 defines four, none of them means "come back later", and `4003 abuse` would tell
+  a client it misbehaved when it did not. A full spool is a property of the hardware, so it is
+  answered at the transport, where a multi-homing client already handles it as one more unreachable
+  spool. Counted by `knit_spool_conns_refused_total` and `refused=+N` in the status line; the
+  configured ceiling is exported as `knit_spool_max_conns` and shown as `conns=N/max`.
+
 ### Changed
 
 - **`deploy/docker-compose.tiny.yml` is sized against measurements** rather than caution. A 1 GB
   box holds ~2,400 concurrent clients before a container is OOM-killed — 41 KB of JVM heap and
   ~110 KB of Caddy per connection — so the overlay now targets ~2,000 of them: 4096 scopes (was
   512), 8 GiB of payload (was 256 MB), 32 KiB blobs (was 16 KiB), 4 MiB of attachments per scope
-  (was 1 MiB), 256 connections per IP (was 64), 30 new scopes/min per IP (was 6), and a 5-minute
-  sweep interval to keep the sweeper's now-longer store-thread stall rare.
+  (was 1 MiB), 256 connections per IP (was 64), 30 new scopes/min per IP (was 6), a 5-minute sweep
+  interval to keep the sweeper's now-longer store-thread stall rare, and `SPOOL_MAX_CONNS=2000` so
+  the ceiling is enforced rather than discovered.
 - **The 1 GB overlay splits memory the other way.** Caddy, not the daemon, is what runs out first:
   at its old 128 MB ceiling it was OOM-killed at ~1,100 connections, taking every subscriber with
   it. It now gets 288 MB and a `GOMEMLIMIT`, and the daemon 352 MB with a 192 MB heap.

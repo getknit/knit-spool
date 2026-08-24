@@ -65,6 +65,14 @@ at a time, which looks like a network problem and is not one. Both are why
 [`deploy/docker-compose.tiny.yml`](deploy/docker-compose.tiny.yml) splits the box's ~640 MB of
 container budget 352/288 and targets ~2,000 rather than the ~2,400 the hardware will technically do.
 
+Neither failure announces itself, which is what `SPOOL_MAX_CONNS` is for. Set it and the spool
+stops accepting at the number you chose: the WebSocket upgrade is refused `503` with a
+`Retry-After` instead of becoming the connection that tips the box over. That is a limit on the
+box, not in the protocol — §7.1 has four close codes and none of them means "later" — so it lands
+at the transport, where a client that multi-homes already knows what to do with it. `refused=+N` in
+the status line and `knit_spool_conns_refused_total` are how you find out it is happening; the
+overlay sets it to 2000.
+
 Reach for a second spool before a bigger box. Two $5 boxes in different regions are worth more to
 the people using them than one box with twice the RAM, because the failure they protect against is
 the box being gone, not the box being full.
