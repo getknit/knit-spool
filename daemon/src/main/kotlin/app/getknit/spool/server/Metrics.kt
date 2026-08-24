@@ -30,6 +30,16 @@ class Metrics {
     val attachChunksStoredTotal = LongAdder()
 
     /**
+     * Commons traffic, split out from the spool-wide counters because a shared room and a private
+     * conversation fail differently: `commons_rate_limited_total` rising is the room at its
+     * spool-wide budget, which costs every member at once and is the cue to raise
+     * `SPOOL_COMMONS_RATE_PUSHES` — nothing in [rateLimitedTotal] distinguishes that from one noisy
+     * client being throttled on its own connection.
+     */
+    val commonsPushesTotal = LongAdder()
+    val commonsRateLimitedTotal = LongAdder()
+
+    /**
      * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
      * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
      * a multiple of ingest that [eventsTotal] alone cannot tell you the size of.
@@ -55,6 +65,7 @@ class Metrics {
         scopesCurrent: Int,
         liveBytes: Long,
         maxConns: Int = 0,
+        commonsSubscribers: Int? = null,
     ): String =
         buildString {
             line("knit_spool_connections_current", "gauge", connectionsCurrent.get().toLong())
@@ -73,6 +84,13 @@ class Metrics {
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())
             line("knit_spool_live_bytes", "gauge", liveBytes)
+            // Absent entirely on a spool with no commons, rather than three flat zeroes that read
+            // as a room nobody is using.
+            if (commonsSubscribers != null) {
+                line("knit_spool_commons_subscribers", "gauge", commonsSubscribers.toLong())
+                line("knit_spool_commons_pushes_total", "counter", commonsPushesTotal.sum())
+                line("knit_spool_commons_rate_limited_total", "counter", commonsRateLimitedTotal.sum())
+            }
             append("# TYPE knit_spool_errs_total counter\n")
             errsTotal.entries.sortedBy { it.key }.forEach { (code, adder) ->
                 append("knit_spool_errs_total{code=\"")

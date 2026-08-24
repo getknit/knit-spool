@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.conformance
 
+import app.getknit.spool.protocol.Commons
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
@@ -14,7 +15,8 @@ import kotlin.system.exitProcess
 
 private const val USAGE =
     "usage: knit-spool-conformance <ws(s)://host[:port]/spool/v1> " +
-        "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive]"
+        "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive] " +
+        "[--commons-invite knit-commons:v1:...]"
 
 /**
  * The conformance CLI: validates ANY spool implementation over a live WebSocket against
@@ -46,6 +48,8 @@ private class Options(
     val timeoutMs: Long,
     val powLimit: Int,
     val destructive: Boolean,
+    /** The commons secret, when the operator supplied one; null leaves those checks skipped. */
+    val commonsSecret: ByteArray?,
 )
 
 private fun parseArgs(args: Array<String>): Options {
@@ -55,6 +59,7 @@ private fun parseArgs(args: Array<String>): Options {
     var timeoutMs = 10_000L
     var powLimit = 24
     var destructive = false
+    var commonsInvite: String? = null
     var i = 0
     while (i < args.size) {
         when (val arg = args[i]) {
@@ -76,6 +81,10 @@ private fun parseArgs(args: Array<String>): Options {
 
             "--destructive" -> {
                 destructive = true
+            }
+
+            "--commons-invite" -> {
+                commonsInvite = args.getOrNull(++i) ?: usageExit()
             }
 
             else -> {
@@ -104,6 +113,15 @@ private fun parseArgs(args: Array<String>): Options {
         timeoutMs = timeoutMs,
         powLimit = powLimit,
         destructive = destructive,
+        // A malformed invite is an argument error, not a failed spool: without the secret the
+        // commons checks would silently skip and the run would look clean.
+        commonsSecret =
+            commonsInvite?.let {
+                Commons.decodeInvite(it) ?: run {
+                    System.err.println("--commons-invite must be a knit-commons:v1: invite")
+                    exitProcess(2)
+                }
+            },
     )
 }
 
@@ -166,6 +184,7 @@ private suspend fun runSuite(
             timeoutMs = options.timeoutMs,
             powLimit = options.powLimit,
             hasToken = options.hasToken,
+            commonsSecret = options.commonsSecret,
         )
     val checks = allChecks()
     val report = Report(checks.size)

@@ -37,6 +37,8 @@ class StatusLine(
         now: Long,
         scopes: Int,
         liveBytes: Long,
+        commonsSubscribers: Int? = null,
+        commonsFrames: Int = 0,
     ): String {
         val current = snapshot()
         val delta = current - prev
@@ -49,6 +51,15 @@ class StatusLine(
             if (maxConns > 0) append('/').append(maxConns)
             append(" accepted=+").append(delta.connections)
             append(" scopes=").append(scopes).append('/').append(maxScopes)
+            // Members in the room and frames it holds. Omitted when there is no commons; the frame
+            // ceiling is static and already in the startup line, so it is not repeated here.
+            if (commonsSubscribers != null) {
+                append(" commons=")
+                    .append(commonsSubscribers)
+                    .append("sub/")
+                    .append(commonsFrames)
+                    .append('f')
+            }
             append(" live=").append(bytes(liveBytes))
             // 0 is "unlimited" for the watermark, and "4.2MiB/0B" would read as a spool at its cap.
             if (maxBytes > 0) append('/').append(bytes(maxBytes))

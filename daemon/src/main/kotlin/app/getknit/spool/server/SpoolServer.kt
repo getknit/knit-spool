@@ -8,6 +8,7 @@ import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.CloseCode
+import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
@@ -140,6 +141,29 @@ class SpoolServer(
         val rateRecords: Int = 50,
         val ratePushes: Int = 10,
         val rateNewScopesPerMin: Int = 6,
+        /** The commons (spec §7.4), or null when this spool does not run one. */
+        val commons: CommonsConfig? = null,
+    )
+
+    /**
+     * One operator-declared scope shared by everyone on the spool who holds the invite.
+     *
+     * [scopeId] is `SHA-256("knit/spool/v1/commons" ‖ secret)`. The secret never reaches the spool,
+     * so this daemon relays a room it structurally cannot read — it holds a hash of the invite and
+     * the sealed frames, and no code path here turns one into the other.
+     *
+     * [bounds] are *pinned*, not declared. The store applies whatever the most recent subscriber
+     * asked for, which is right for a conversation whose members negotiate among themselves and
+     * wrong for a room shared with strangers: one member subscribing with `maxFrames = 1` would
+     * evict everyone else's history. So the commons ignores what a client declares and answers with
+     * the truth in the `digest` it returns.
+     */
+    class CommonsConfig(
+        val scopeId: ByteArray,
+        val name: String?,
+        val bounds: ScopeBounds,
+        val attach: Boolean,
+        val ratePushes: Int,
     )
 
     private val log = LoggerFactory.getLogger(SpoolServer::class.java)
@@ -177,6 +201,21 @@ class SpoolServer(
     /** Per-client-IP limiter state; idle entries pruned by the sweeper. */
     private val ips = ConcurrentHashMap<String, IpState>()
 
+    /**
+     * The commons is a shared write surface, which the per-connection push bucket does not bound:
+     * 200 members at 10/s each is 2,000 pushes/s into one scope, churning a 500-frame room four
+     * times a second and amplifying through fan-out to 400k frames/s. This bucket is spool-wide, so
+     * the room has a total budget no number of members can exceed.
+     */
+    private val commonsPushBucket =
+        config.commons?.let { TokenBucket(it.ratePushes.toDouble(), 4.0 * it.ratePushes, clock) }
+
+    /** Latches the "over watermark, nothing left to shed" warning so it logs on entry, not per sweep. */
+    private var watermarkStuck = false
+
+    /** The commons' key into [subscribers], hoisted out of the ops paths that read it. */
+    private val commonsHex = config.commons?.let { hex(it.scopeId) }
+
     private val activeSessions = ConcurrentHashMap.newKeySet<DefaultWebSocketServerSession>()
 
     private var engine: EmbeddedServer<*, *>? = null
@@ -199,6 +238,7 @@ class SpoolServer(
     }
 
     fun start(wait: Boolean = true): EmbeddedServer<*, *> {
+        createCommons()
         val server =
             embeddedServer(CIO, port = config.port) {
                 appScope = this
@@ -271,7 +311,7 @@ class SpoolServer(
                         }
                         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
                         call.respondText(
-                            metrics.render(scopeCount, liveBytes, config.maxConns),
+                            metrics.render(scopeCount, liveBytes, config.maxConns, commonsSubscribers()),
                             ContentType.Text.Plain,
                         )
                     }
@@ -307,6 +347,36 @@ class SpoolServer(
      * path would. The cap is a budget for a box sized with headroom above it, not a hard fence.
      */
     private fun atCapacity(): Boolean = config.maxConns > 0 && metrics.connectionsCurrent.get() >= config.maxConns
+
+    /** True for the one scope [Config.commons] declares. A 32-byte compare, cheaper than hex. */
+    private fun isCommons(scope: ByteArray): Boolean = config.commons?.scopeId?.contentEquals(scope) == true
+
+    /**
+     * Creates the commons scope before the first client can connect.
+     *
+     * Everything else about the commons follows from its already existing: `isUnknownScope` is
+     * false forever, so neither the PoW gate nor the per-IP new-scope bucket ever fires for it and
+     * members join with a plain `sub` even on a spool mining at 20 bits (§6.4).
+     */
+    private fun createCommons() {
+        val commons = config.commons ?: return
+        val result = runBlocking { withStore { store.subscribe(commons.scopeId, commons.bounds, clock()) } }
+        if (result is SubscribeResult.QuotaExceeded) {
+            // Reachable on a persistent store that already holds maxScopes scopes from before the
+            // commons was configured (or under a previous SPOOL_COMMONS_ID). Refuse to start: a
+            // spool silently up without the room it advertises is the worse outcome.
+            throw IllegalStateException(
+                "commons scope cannot be created: the store already holds SPOOL_MAX_SCOPES " +
+                    "(${config.hardLimits.maxScopes}) scopes. Raise SPOOL_MAX_SCOPES, or clear SPOOL_DATA_DIR.",
+            )
+        }
+        log.info(
+            "commons enabled: {} frames, ttl {} ms, attachments {}",
+            commons.bounds.maxFrames,
+            commons.bounds.ttlMs,
+            if (commons.attach) "on" else "off",
+        )
+    }
 
     private suspend fun acceptConnection(session: DefaultWebSocketServerSession) {
         val ip = session.call.request.origin.remoteHost
@@ -465,9 +535,14 @@ class SpoolServer(
             if (scopeHex !in conn.subscriptions && withStore { store.isUnknownScope(scopeSub.scope) }) {
                 if (!newScopeGates(conn, scopeSub.scope, scopeSub.pow?.d, scopeSub.pow?.n, sub.q, now)) continue
             }
-            when (val result = withStore { store.subscribe(scopeSub.scope, scopeSub.bounds, now) }) {
+            // The commons declares its own bounds. Substituted rather than refused — the `digest`
+            // reply already carries the applied bounds, so the client learns the truth in the
+            // answer it was going to read anyway. Same shape as a truncated `pull` (§7.2).
+            val declared = config.commons?.bounds?.takeIf { isCommons(scopeSub.scope) } ?: scopeSub.bounds
+            when (val result = withStore { store.subscribe(scopeSub.scope, declared, now) }) {
                 is SubscribeResult.Subscribed -> {
-                    conn.subscriptions[scopeHex] = scopeSub.bounds
+                    // The *applied* bounds, so the push-recreate path below re-subscribes with them.
+                    conn.subscriptions[scopeHex] = declared
                     subscribers.computeIfAbsent(scopeHex) { ConcurrentHashMap.newKeySet() }.add(conn)
                     conn.out.send(binary(RecordCodec.encode(digestRecord(scopeSub.scope, result.digest))))
                 }
@@ -573,6 +648,7 @@ class SpoolServer(
             rateLimited(conn, q = aput.q, scope = aput.scope, retryMs = retryMs)
             return
         }
+        if (!commonsBudget(conn, aput.scope, aput.q)) return
         val now = clock()
         // An aput can recreate a shed scope exactly as a push can (§6.2/§6.4), so it passes the same
         // creation gates and re-subscribes the connection's remembered bounds before storing.
@@ -633,7 +709,11 @@ class SpoolServer(
         q: Long,
         scope: ByteArray,
     ): Boolean {
-        if (config.hardLimits.attachments) return true
+        // A public room is where a 16 MiB upload costs the operator the most and is worth the
+        // least, so the commons carries its own switch and defaults off. Advertised in `hello`
+        // alongside the bounds, so a conforming client never gets here.
+        val allowed = config.hardLimits.attachments && (!isCommons(scope) || config.commons?.attach == true)
+        if (allowed) return true
         sendErr(conn, ErrCode.MALFORMED, q = q, scope = scope)
         return false
     }
@@ -648,6 +728,7 @@ class SpoolServer(
             rateLimited(conn, q = push.q, scope = push.scope, retryMs = retryMs)
             return
         }
+        if (!commonsBudget(conn, push.scope, push.q)) return
         metrics.pushesTotal.increment()
         val now = clock()
         if (withStore { store.isUnknownScope(push.scope) }) {
@@ -719,19 +800,47 @@ class SpoolServer(
         return true
     }
 
-    /** Sends `err rate` and strikes the abuse window; true means the connection was closed 4003. */
+    /**
+     * Sends `err rate` and strikes the abuse window; true means the connection was closed 4003.
+     *
+     * [strike] is false for the commons' spool-wide bucket. That limit is congestion on a shared
+     * room, not evidence this client is ignoring backpressure — striking it would close well-behaved
+     * members 4003 for the crime of talking while others were talking.
+     */
     private suspend fun rateLimited(
         conn: Conn,
         q: Long?,
         scope: ByteArray?,
         retryMs: Long,
+        strike: Boolean = true,
     ): Boolean {
         metrics.rateLimitedTotal.increment()
         sendErr(conn, ErrCode.RATE, q = q, scope = scope, retryMs = retryMs)
+        if (!strike) return false
         if (conn.strikes.strike(clock())) {
             conn.session.close(CloseReason(CloseCode.ABUSE.toShort(), "rate abuse"))
             return true
         }
+        return false
+    }
+
+    /**
+     * Takes from the spool-wide commons budget. Returns false when the room is saturated and the
+     * caller must drop the record; ordinary scopes always pass.
+     */
+    private suspend fun commonsBudget(
+        conn: Conn,
+        scope: ByteArray,
+        q: Long,
+    ): Boolean {
+        val bucket = commonsPushBucket?.takeIf { isCommons(scope) } ?: return true
+        val retryMs = bucket.take()
+        if (retryMs == 0L) {
+            metrics.commonsPushesTotal.increment()
+            return true
+        }
+        metrics.commonsRateLimitedTotal.increment()
+        rateLimited(conn, q = q, scope = scope, retryMs = retryMs, strike = false)
         return false
     }
 
@@ -773,7 +882,19 @@ class SpoolServer(
         if (withStore { store.totalBytes() } <= config.maxBytes) return
         val lowWater = config.maxBytes / 10 * 9
         while (withStore { store.totalBytes() } > lowWater) {
-            val shed = withStore { store.shedOldestScope() } ?: break
+            val shed =
+                withStore { store.shedOldestScope(config.commons?.scopeId) } ?: run {
+                    // Only reachable when the commons alone is over the watermark, which
+                    // configFromEnv refuses at boot — so this means the arithmetic there and the
+                    // bytes here have drifted apart, and the operator needs to know rather than
+                    // watch the watermark quietly stop working.
+                    if (!watermarkStuck) {
+                        watermarkStuck = true
+                        log.warn("watermark: over SPOOL_MAX_BYTES with only the pinned commons left to shed")
+                    }
+                    return
+                }
+            watermarkStuck = false
             metrics.shedsTotal.increment()
             log.warn("watermark: shed scope {} ({} bytes freed)", hex(shed.scopeId), shed.freedBytes)
             // Re-anchor still-connected subscribers on the now-empty scope so they refill it (§9.1).
@@ -794,9 +915,19 @@ class SpoolServer(
 
     /** One status line: gauges read from the store, counters diffed since the last line. */
     internal suspend fun statusTick() {
+        val now = clock()
         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
-        statusLog.info(statusLine.render(clock(), scopeCount, liveBytes))
+        val commonsFrames = config.commons?.let { withStore { store.digest(it.scopeId, now)?.count } } ?: 0
+        statusLog.info(statusLine.render(now, scopeCount, liveBytes, commonsSubscribers(), commonsFrames))
     }
+
+    /**
+     * Live commons members, or null on a spool with no commons.
+     *
+     * An aggregate for the operator, who can already count connections — not a roster, and never
+     * offered to clients: who is in the room is a delivery fact the spool does not deal in (§1).
+     */
+    private fun commonsSubscribers(): Int? = commonsHex?.let { subscribers[it]?.size ?: 0 }
 
     private suspend fun <T> withStore(block: () -> T): T = withContext(storeDispatcher) { block() }
 
@@ -847,6 +978,19 @@ class SpoolServer(
                     maxAget = config.maxAget.takeIf { config.hardLimits.attachments },
                 ),
             powBits = config.powBits,
+            // Bounds and a label — never `scopeId`. The id comes from the invite, and a spool that
+            // published it would turn a room only invite holders can find into one that anybody
+            // who connects can subscribe to and flood.
+            commons =
+                config.commons?.let {
+                    CommonsInfo(
+                        name = it.name,
+                        maxFrames = it.bounds.maxFrames,
+                        ttlMs = it.bounds.ttlMs,
+                        maxBlob = it.bounds.maxBlob,
+                        attach = it.attach,
+                    )
+                },
         )
 
     private fun digestRecord(

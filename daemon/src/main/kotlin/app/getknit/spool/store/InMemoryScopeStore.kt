@@ -149,8 +149,12 @@ class InMemoryScopeStore(
         }
 
     @Synchronized
-    override fun shedOldestScope(): ShedScope? {
-        val oldest = scopes.entries.minByOrNull { it.value.lastActivity } ?: return null
+    override fun shedOldestScope(pinned: ByteArray?): ShedScope? {
+        val pinnedHex = pinned?.let(::hex)
+        val oldest =
+            scopes.entries
+                .filter { it.key != pinnedHex }
+                .minByOrNull { it.value.lastActivity } ?: return null
         scopes.remove(oldest.key)
         val freed = oldest.value.liveBytes + oldest.value.attachBytes
         bytesTotal -= freed

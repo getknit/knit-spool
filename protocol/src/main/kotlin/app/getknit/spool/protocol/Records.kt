@@ -107,6 +107,25 @@ class ScopeSub(
     val pow: PowStamp? = null,
 )
 
+/**
+ * The commons advertisement (spec §7.4): this spool runs one shared, operator-declared scope that
+ * any invite holder can join. Present iff the spool has a commons — the same present-or-absent
+ * capability signal as the attachment triad in [Limits].
+ *
+ * Deliberately carries no scope id. The id is `SHA-256("knit/spool/v1/commons" ‖ secret)` and comes
+ * from the invite, out of band; a spool that published it would turn a room only invite holders can
+ * find into one anybody who connects can flood. What is advertised is only what a client needs to
+ * decide whether to join and how to size itself: the bounds it will actually get.
+ */
+@Serializable
+class CommonsInfo(
+    val name: String? = null,
+    val maxFrames: Int,
+    val ttlMs: Long,
+    val maxBlob: Int,
+    val attach: Boolean = false,
+)
+
 @Serializable
 class Hello(
     val t: String,
@@ -114,6 +133,7 @@ class Hello(
     val min: Int? = null,
     val limits: Limits? = null,
     val powBits: Int? = null,
+    val commons: CommonsInfo? = null,
 )
 
 @Serializable

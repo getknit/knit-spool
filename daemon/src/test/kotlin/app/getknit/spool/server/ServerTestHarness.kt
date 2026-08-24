@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Hello
 import app.getknit.spool.protocol.PowStamp
@@ -50,6 +51,7 @@ fun testConfig(
     rateRecords: Int = 1_000,
     ratePushes: Int = 1_000,
     rateNewScopesPerMin: Int = 10_000,
+    commons: SpoolServer.CommonsConfig? = null,
 ): SpoolServer.Config =
     SpoolServer.Config(
         port = 0,
@@ -69,6 +71,28 @@ fun testConfig(
         rateRecords = rateRecords,
         ratePushes = ratePushes,
         rateNewScopesPerMin = rateNewScopesPerMin,
+        commons = commons,
+    )
+
+/** A fixed invite, so a test can derive the same commons scope id the server was configured with. */
+val TEST_COMMONS_SECRET = ByteArray(Commons.SECRET_BYTES) { (it + 1).toByte() }
+
+fun commonsScope(): ByteArray = Commons.scopeId(TEST_COMMONS_SECRET)
+
+fun testCommons(
+    name: String? = "test commons",
+    maxFrames: Int = 5,
+    ttlMs: Long = 60_000L,
+    maxBlob: Int = 1_024,
+    attach: Boolean = false,
+    ratePushes: Int = 1_000,
+): SpoolServer.CommonsConfig =
+    SpoolServer.CommonsConfig(
+        scopeId = commonsScope(),
+        name = name,
+        bounds = ScopeBounds(maxFrames = maxFrames, ttlMs = ttlMs, maxBlob = maxBlob),
+        attach = attach,
+        ratePushes = ratePushes,
     )
 
 class TestServer(

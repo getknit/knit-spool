@@ -171,6 +171,26 @@ abstract class ScopeStoreContractTest {
     }
 
     @Test
+    fun shedOldestScopeNeverPicksThePinnedScope() {
+        createStore().use { store ->
+            val pinned = ByteArray(32) { 2 }
+            val ordinary = ByteArray(32) { 3 }
+            store.subscribed(pinned, now = 0L)
+            store.subscribed(ordinary, now = 0L)
+            val (id, data) = blob(1)
+            store.push(pinned, id, data, now = 0L)
+            store.push(ordinary, id, data, now = 100L) // pinned is the least recently active
+
+            val shed = store.shedOldestScope(pinned)!!
+            assertTrue(shed.scopeId.contentEquals(ordinary), "the pinned scope was shed")
+            assertTrue(store.isUnknownScope(ordinary))
+            // Nothing left that is allowed to go — the pinned scope survives an exhausted watermark.
+            assertNull(store.shedOldestScope(pinned))
+            assertEquals(40L, store.totalBytes())
+        }
+    }
+
+    @Test
     fun shedOldestScopeDropsTheLeastRecentlyActive() {
         createStore().use { store ->
             val old = ByteArray(32) { 2 }

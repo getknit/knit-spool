@@ -174,8 +174,13 @@ interface ScopeStore : AutoCloseable {
      */
     fun sweep(now: Long): List<SweepChange>
 
-    /** Drops the least-recently-active scope entirely (watermark policy), or null when empty. */
-    fun shedOldestScope(): ShedScope?
+    /**
+     * Drops the least-recently-active scope entirely (watermark policy), or null when there is
+     * nothing left to drop. [pinned] is never chosen: a commons is operator-declared and shared by
+     * everyone on the spool, so shedding it to make room for one client's conversation would be the
+     * watermark defeating the point of the feature.
+     */
+    fun shedOldestScope(pinned: ByteArray? = null): ShedScope?
 
     // --- Attachments (spec §6.5/§7.3). Only reachable when [HardLimits.attachments] is on. ---
 

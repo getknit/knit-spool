@@ -393,13 +393,22 @@ class SqliteScopeStore private constructor(
         }
 
     @Synchronized
-    override fun shedOldestScope(): ShedScope? =
+    override fun shedOldestScope(pinned: ByteArray?): ShedScope? =
         tx {
+            // Two statements rather than one with a nullable bind: `scope_id != NULL` is NULL, not
+            // true, in SQL, so the pinned form would silently shed nothing when no scope is pinned.
             val select =
-                prep(
-                    "SELECT scope_id, max_frames, ttl_ms, max_blob, live_bytes + attach_bytes FROM scopes " +
-                        "ORDER BY last_activity ASC LIMIT 1",
-                )
+                if (pinned == null) {
+                    prep(
+                        "SELECT scope_id, max_frames, ttl_ms, max_blob, live_bytes + attach_bytes FROM scopes " +
+                            "ORDER BY last_activity ASC LIMIT 1",
+                    )
+                } else {
+                    prep(
+                        "SELECT scope_id, max_frames, ttl_ms, max_blob, live_bytes + attach_bytes FROM scopes " +
+                            "WHERE scope_id != ? ORDER BY last_activity ASC LIMIT 1",
+                    ).also { it.setBytes(1, pinned) }
+                }
             val shed =
                 select.executeQuery().use { rows ->
                     if (!rows.next()) return@tx null

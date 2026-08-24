@@ -8,6 +8,8 @@ import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.CloseCode
+import app.getknit.spool.protocol.Commons
+import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
@@ -80,6 +82,8 @@ class Ctx(
     val timeoutMs: Long,
     val powLimit: Int,
     val hasToken: Boolean,
+    /** The commons invite secret from `--commons-invite`, or null — the commons checks skip then. */
+    val commonsSecret: ByteArray? = null,
 ) {
     /** Mined stamps by scope hex — a stamp is reusable across connections (the spool caches too). */
     private val stamps = HashMap<String, PowStamp>()
@@ -160,9 +164,125 @@ fun allChecks(): List<Check> =
         attachmentGetTruncated(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
+        commonsAdvertisement(),
+        commonsBoundsPinned(),
+        commonsFanout(),
         rateLimit(),
         quotaScopes(),
     )
+
+/**
+ * §7.4: whatever a spool says about its commons must be self-consistent and inside its own limits.
+ *
+ * Runs with or without an invite, because it needs no scope id — which is the point being checked.
+ * A spool that leaked the id into `hello` would be advertising a room anybody who connects could
+ * flood, and there is nothing in [CommonsInfo] for it to leak into.
+ */
+private fun commonsAdvertisement(): Check =
+    Check(name = "commons-advertisement", must = false) { ctx ->
+        val commons = ctx.serverHello.commons ?: throw SkipCheck("spool advertises no commons (§7.4)")
+        val limits = ctx.limits()
+        ensure(commons.maxFrames in 1..limits.maxFramesCap) {
+            "commons maxFrames ${commons.maxFrames} outside the advertised 1..${limits.maxFramesCap}"
+        }
+        ensure(commons.ttlMs in 1..limits.maxTtlMs) {
+            "commons ttlMs ${commons.ttlMs} outside the advertised 1..${limits.maxTtlMs}"
+        }
+        ensure(commons.maxBlob in 1..limits.maxBlob) {
+            "commons maxBlob ${commons.maxBlob} outside the advertised 1..${limits.maxBlob}"
+        }
+        ensure(!commons.attach || limits.attachments) {
+            "commons advertises attachments on a spool that advertises no attachment limits"
+        }
+    }
+
+/**
+ * §7.4: the commons applies the operator's bounds, not the subscriber's.
+ *
+ * The load-bearing one. A spool that honored a member's declaration would let any member subscribe
+ * with `maxFrames = 1` and evict the whole room's history on the way in.
+ */
+private fun commonsBoundsPinned(): Check =
+    Check(name = "commons-bounds-pinned", must = false) { ctx ->
+        val commons = ctx.commonsRoom()
+        ctx.client.connect {
+            hello()
+            send(
+                Sub(
+                    t = RecordType.SUB,
+                    q = nextQ(),
+                    // Deliberately hostile, and deliberately legal: every field is inside the
+                    // spool's caps, so a clamp would let it through.
+                    subs = listOf(ScopeSub(scope = commons.scope, bounds = ScopeBounds(1, 1L, 1), pow = null)),
+                ),
+            )
+            val digest = expectDigestFor(commons.scope)
+            ensure(digest.bounds.maxFrames == commons.info.maxFrames) {
+                "expected the advertised commons maxFrames ${commons.info.maxFrames}, got ${digest.bounds.maxFrames}"
+            }
+            ensure(digest.bounds.ttlMs == commons.info.ttlMs) {
+                "expected the advertised commons ttlMs ${commons.info.ttlMs}, got ${digest.bounds.ttlMs}"
+            }
+        }
+    }
+
+/** §7.4: the commons relays like any other scope — one member's push reaches the others. */
+private fun commonsFanout(): Check =
+    Check(name = "commons-fanout", must = false) { ctx ->
+        val commons = ctx.commonsRoom()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            a.subscribeCommons(commons.scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                b.subscribeCommons(commons.scope)
+                val (blobId, data) = ctx.randomBlob()
+                a.send(Push(t = RecordType.PUSH, q = a.nextQ(), scope = commons.scope, blobId = blobId, data = data))
+                while (true) {
+                    when (val t = RecordCodec.peekType(a.receiveBytes())) {
+                        RecordType.OK -> break
+                        RecordType.EVENT, RecordType.DIGEST -> Unit
+                        else -> throw CheckFailure("expected ok after a commons push, got '$t'")
+                    }
+                }
+                // The room may be busy with other members, so match on the blob rather than
+                // assuming the next event is ours.
+                var seen = false
+                while (!seen) {
+                    val bytes = b.receiveBytes()
+                    if (RecordCodec.peekType(bytes) != RecordType.EVENT) continue
+                    val event = RecordCodec.decode<Event>(bytes) ?: continue
+                    seen = event.scope.contentEquals(commons.scope) && event.blobId.contentEquals(blobId)
+                }
+            }
+        }
+    }
+
+/** The commons as a check sees it: what `hello` advertised, plus the id derived from the invite. */
+private class CommonsRoom(
+    val info: CommonsInfo,
+    val scope: ByteArray,
+)
+
+private fun Ctx.commonsRoom(): CommonsRoom {
+    val info = serverHello.commons ?: throw SkipCheck("spool advertises no commons (§7.4)")
+    val secret = commonsSecret ?: throw SkipCheck("no --commons-invite; the scope id cannot be derived")
+    return CommonsRoom(info, Commons.scopeId(secret))
+}
+
+/** No stamp: the commons exists from boot, so it is never an unknown scope and never gated (§6.4). */
+private suspend fun Session.subscribeCommons(scope: ByteArray): Digest {
+    send(
+        Sub(
+            t = RecordType.SUB,
+            q = nextQ(),
+            subs = listOf(ScopeSub(scope = scope, bounds = ScopeBounds(maxFrames = 4, ttlMs = 120_000, maxBlob = 1024))),
+        ),
+    )
+    return expectDigestFor(scope)
+}
 
 /**
  * Skips every attachment check on a spool that did not advertise the §7.3 limits. Attachment support

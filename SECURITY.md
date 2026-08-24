@@ -49,6 +49,29 @@ ciphertext and traffic patterns — never message content. No spool talks to ano
 multi-home across several and union the results, so a spool that vanishes, lies by omission, or is
 seized takes nothing with it that another member cannot re-push.
 
+### The commons
+
+A spool running a commons (`SPOOL_COMMONS_ID`) holds the same shape of secret it always did. The
+invite is a 32-byte secret that splits in two: the scope id, `SHA-256("knit/spool/v1/commons" ‖
+secret)`, which is what the operator configures, and the content key, which members derive and the
+spool is never given. This repo implements the first derivation and deliberately not the second, so
+"the spool cannot read its own commons" is a property of the code rather than a promise about it.
+
+Two things a commons does move:
+
+- **The operator can count the room.** `knit_spool_commons_subscribers` is how many connections are
+  subscribed — an aggregate on an endpoint that is token-gated on private spools and 404'd by both
+  shipped proxy configs, next to a connection count the operator already had. It is not a roster,
+  and no such count is ever offered to clients: who is in the room stays a delivery fact the spool
+  does not deal in.
+- **The scope id is a weaker secret than the invite.** A member can hand out the id without the
+  secret, and the holder could then subscribe and collect ciphertext they cannot read. That is
+  traffic analysis, not disclosure, and it is the same exposure every scope id already carries.
+
+Removing a member means rotating the room: mint a new invite, set the new `SPOOL_COMMONS_ID`, and
+restart. The old scope is no longer pinned, so it ages out on its TTL or under the watermark. The
+operator cannot moderate individual messages — that would need the key they do not have.
+
 ## Scope and known limitations
 
 knit-spool is experimental. Several properties are **intentional design trade-offs, not
@@ -75,6 +98,10 @@ vulnerabilities** — they are documented and out of scope for reports:
   re-push, not a promise from the spool.
 - **A spool can withhold, delay, or forget.** Availability from any single spool is explicitly not
   guaranteed; that is why no spool is load-bearing.
+- **A commons is only as private as its invite, and every member shares one key.** Anyone the secret
+  reaches can read and write the room, and there is no per-member identity, ban list, or revocation
+  short of rotating the invite. Whether a member can forge another's display name is a property of
+  the sealed frame, which this daemon never opens — it belongs to the client and the spec, not here.
 
 Novel issues **beyond** these documented trade-offs are in scope and welcome, in particular:
 

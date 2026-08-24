@@ -193,6 +193,29 @@ architectures carry the same bytecode over the matching `eclipse-temurin` JRE ba
 If you build from source instead, the Gradle build stage wants more memory than a 1 GB box has:
 build on a machine with room and move the result over. The README covers how.
 
+## What a commons costs
+
+A commons (`SPOOL_COMMONS_ID`, see the README) changes a spool's load shape more than any other
+single setting, because it is the one scope everybody is subscribed to at once.
+
+Fan-out is the whole story. An ordinary conversation scope has two to eight subscribers, so a push
+leaves as a handful of copies. A commons with *N* members sends *N − 1*. At 500 members that is 499
+copies of every message: a 4 KB frame pushed once leaves as ~2 MB. Egress is what a metered link
+bills for, so size the room against your transfer allowance and not against your RAM —
+`knit_spool_egress_bytes_total` is the counter that tells you where you actually are.
+
+That is what `SPOOL_COMMONS_RATE_PUSHES` is sizing. It is the room's *total* budget, not a
+per-client one, precisely because the per-connection limit multiplies by however many people showed
+up. The default 20/s against 500 members is roughly 10,000 outbound frames/s at peak — fine for a
+box that can already hold 500 connections, and the knob to lower if your link cannot. Raising it
+raises peak egress by the same multiple.
+
+The two costs a commons does *not* add: it holds one scope's worth of bytes
+(`SPOOL_COMMONS_MAX_FRAMES × SPOOL_COMMONS_MAX_BLOB`, checked against `SPOOL_MAX_BYTES` at startup),
+and the fan-out itself is non-blocking sends on the pushing connection's coroutine — microseconds,
+not a stall. A member who never drains is disconnected as a slow consumer rather than being allowed
+to back everyone else up.
+
 ## Before you commit
 
 - [ ] 1 GB of RAM or more, on a plan that isn't oversubscribed into uselessness.

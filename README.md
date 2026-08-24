@@ -62,6 +62,7 @@ one conversation member.
 - [Status](#-status)
 - [Run](#-run)
 - [Configuration](#-configuration)
+- [The commons](#-the-commons)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -121,6 +122,9 @@ Implements the full **v1** protocol:
 - **Abuse control** — stateless PoW (SUB *and* the shed-scope PUSH-recreate path) with the
   per-`(scope, day)` cache, per-connection and per-IP rate limits (`rate` + `retryMs`, escalating
   to close 4003), a global storage watermark with oldest-scope shedding.
+- **Commons** (§7.4) — one optional shared scope per spool, off unless `SPOOL_COMMONS_ID` is set.
+  Ordinary records on the data path; what is added is the policy a *shared* scope needs. See
+  [the commons](#-the-commons).
 - **Capacity** — an optional total-connection cap that refuses the upgrade with `503` and a
   `Retry-After` rather than letting the box degrade into GC thrash. Not a protocol limit: a full
   spool is a property of the hardware, and a multi-homing client treats it as one more unreachable
@@ -165,7 +169,62 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×) |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×) |
+| `SPOOL_COMMONS_ID` | unset | the commons scope id, 64 hex chars from `knit-spool commons-invite`; **unset = no commons** |
+| `SPOOL_COMMONS_NAME` | unset | display label advertised in `hello` |
+| `SPOOL_COMMONS_MAX_FRAMES` | `500` | commons frame cap — pinned, not client-declared |
+| `SPOOL_COMMONS_TTL_MS` | `86400000` | commons frame TTL (24 h) |
+| `SPOOL_COMMONS_MAX_BLOB` | `SPOOL_MAX_BLOB` | commons per-blob cap |
+| `SPOOL_COMMONS_ATTACH` | `false` | allow attachments in the commons |
+| `SPOOL_COMMONS_RATE_PUSHES` | `20` | **spool-wide** pushes/s into the commons (burst 4×) |
+
+The commons bounds must fit the spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
+and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
+fit is refused at startup rather than discovered at 3am.
 | `SPOOL_LOG_LEVEL` | `INFO` | root log level |
+
+## 🏛 The commons
+
+A spool is normally pure infrastructure: it relays between clients that already paired out of band
+and never introduces anybody. Set `SPOOL_COMMONS_ID` and it also runs **one shared scope** — a room
+where everyone on that spool who holds the invite can talk to everyone else, still sealed end to
+end.
+
+Mint an invite, which never touches disk or the log:
+
+```sh
+$ knit-spool commons-invite
+invite (give this to members):  knit-commons:v1:il03LpV71kiksIRvNBKlNln1t8k7NOBVJZtHW-QRr44
+spool config (put in env):      SPOOL_COMMONS_ID=bf92a00e…cf4df842
+```
+
+The two halves go to different places. The **invite** goes to your members; the **id**, which is
+`SHA-256("knit/spool/v1/commons" ‖ secret)`, goes in the spool's environment. The spool is never
+given the secret, so it relays a room it cannot read — and this repo implements no content-key
+derivation at all, which makes that structural rather than a promise.
+
+On the wire a commons is an ordinary scope: `sub`, `push`, `event`, `digest`, `list`, `pull` all
+behave exactly as they do for a private conversation, and no new record types or error codes exist.
+What the spool adds is the policy a *shared* scope needs:
+
+| | |
+|---|---|
+| **Bounds are pinned** | The store applies whatever the most recent subscriber declared. In a room shared with strangers that would let one member subscribe with `maxFrames = 1` and evict everyone's history, so a commons `sub` ignores what the client declares and answers with the truth in its `digest`. |
+| **No PoW to join** | The scope is created at boot, so it is never an unknown scope and the §6.4 creation gates never fire — members join with a plain `sub` even at 20 bits. |
+| **Never shed** | The storage watermark may not take the room away to make space for one client's conversation. |
+| **A spool-wide push budget** | `SPOOL_COMMONS_RATE_PUSHES` bounds the room as a whole; 200 members at the per-connection 10/s would be 2,000 pushes/s into one scope. It throttles with `err rate` + `retryMs` but never strikes the connection — congestion on a shared room is not evidence any one member misbehaved. |
+| **Attachments off by default** | A public room is where a 16 MiB upload costs the operator most and is worth least. `SPOOL_COMMONS_ATTACH=true` if you want them. |
+
+`hello` carries the room's bounds, an optional name, and whether attachments are on — but **never
+the scope id**. The id comes from the invite; a spool that published it would turn a room only
+invite holders can find into one anybody who connects could subscribe to and flood. A client with no
+invite learns only that the spool has a commons.
+
+> [!NOTE]
+> Every member shares one key, so a commons is exactly as private as its invite, and there is no
+> per-member identity or ban list. Removing someone means rotating the room: mint a new invite, set
+> the new id, restart. The old scope is no longer pinned and ages out on its TTL or under the
+> watermark. The operator cannot moderate individual messages — that would need the key they do not
+> have. See [`SECURITY.md`](SECURITY.md#the-commons).
 
 ## 🌐 Deploy
 

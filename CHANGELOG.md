@@ -22,6 +22,33 @@ document:
 
 ### Added
 
+- **A commons: one shared scope per spool** (spec §7.4), off unless `SPOOL_COMMONS_ID` is set. It
+  turns a spool from pure infrastructure into a place — everyone on it who holds the invite can talk
+  to everyone else, sealed end to end like any other scope.
+
+  The operator mints an invite with `knit-spool commons-invite` and configures only
+  `SHA-256("knit/spool/v1/commons" ‖ secret)`. The secret goes to members, so **the spool relays a
+  room it cannot read**, and this repo deliberately implements no content-key derivation at all —
+  the property is structural, not a promise.
+
+  On the data path a commons is an ordinary scope: no new record types, no new error codes. What is
+  new is the policy that makes a *shared* scope survivable. Its bounds are operator-pinned, because
+  the store applies whatever the most recent subscriber declared and one member asking for
+  `maxFrames = 1` would otherwise evict the whole room's history. It is created at boot, so it is
+  never an unknown scope and the §6.4 PoW and new-scope gates never fire for a member joining. It is
+  pinned against the storage watermark, which may never shed it. And it carries a spool-wide push
+  budget (`SPOOL_COMMONS_RATE_PUSHES`, default 20/s) that the per-connection limit cannot bound —
+  200 members at 10/s each is 2,000 pushes/s into one scope — which throttles *without* striking the
+  connection, since congestion on a shared room is not evidence any one member misbehaved.
+
+  `hello` advertises the room's bounds and an optional name but **never its scope id**: the id comes
+  from the invite, and a spool that published it would turn a room only invite holders can find into
+  one anybody who connects could subscribe to and flood. Observability is
+  `knit_spool_commons_subscribers`, `knit_spool_commons_pushes_total`,
+  `knit_spool_commons_rate_limited_total`, and `commons=Nsub/Nf` in the status line — all absent
+  entirely on a spool with no commons. The conformance suite gains `commons-advertisement`,
+  `commons-bounds-pinned`, and `commons-fanout`; the latter two need `--commons-invite` and skip
+  without it.
 - **`SPOOL_MAX_CONNS`, a total-connection cap** (default `0`, unlimited — the daemon had no global
   connection limit before this, only per-IP). At the cap the WebSocket upgrade is refused `503`
   with a `Retry-After` rather than accepted into a box that has no room for it. Deliberately not a
