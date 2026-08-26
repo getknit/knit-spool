@@ -30,6 +30,14 @@ class Metrics(
      * bigger number.
      */
     val connsRefusedTotal = LongAdder()
+
+    /**
+     * Upgrades refused because the spool is draining. Apart from [connsRefusedTotal] on purpose: a
+     * planned drain and a box out of room are the same `503` to a client and completely different
+     * news to an operator, and only one of them is a reason to buy hardware.
+     */
+    val drainRefusedTotal = LongAdder()
+
     val shedsTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
 
@@ -94,6 +102,7 @@ class Metrics(
             // Emitted even when unset (0 = unlimited) so an alert expression can divide by it
             // without the series appearing and disappearing with the configuration.
             line("knit_spool_max_conns", "gauge", maxConns.toLong())
+            line("knit_spool_drain_refused_total", "counter", drainRefusedTotal.sum())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())

@@ -216,6 +216,14 @@ and the fan-out itself is non-blocking sends on the pushing connection's corouti
 not a stall. A member who never drains is disconnected as a slow consumer rather than being allowed
 to back everyone else up.
 
+## Upgrading without a reconnect storm
+
+Stopping a spool closes every session at once, and a few thousand clients then redial together.
+`docker kill --signal=USR1 <container>` puts it in drain instead: new upgrades are refused `503`
+with a `Retry-After`, live connections keep being served, and a multi-homing client quietly uses
+its other spools. Drain, watch `knit_spool_connections_current` fall, then stop and upgrade.
+Sending the signal again lifts the drain if you change your mind.
+
 ## Before you commit
 
 - [ ] 1 GB of RAM or more, on a plan that isn't oversubscribed into uselessness.

@@ -289,6 +289,16 @@ class SpoolServer(
             """"source":"${jsonString(config.sourceUrl)}",""" +
             """"license":"AGPL-3.0-or-later"}"""
 
+    /**
+     * Whether new connections are being refused while the live ones are left to finish.
+     *
+     * A rolling upgrade needs somewhere to stand between "serving" and "stopped": [stop] closes
+     * every session at once, which on a hosted spool is every customer's device reconnecting on
+     * the same second. Draining lets traffic be shifted first.
+     */
+    @Volatile
+    private var draining = false
+
     private val activeSessions = ConcurrentHashMap.newKeySet<DefaultWebSocketServerSession>()
 
     private var engine: EmbeddedServer<*, *>? = null
@@ -354,8 +364,8 @@ class SpoolServer(
                 // shared pipeline and would answer /healthz and /metrics with 503 as well — which
                 // would fail the image's HEALTHCHECK and restart the spool at its busiest moment.
                 intercept(ApplicationCallPipeline.Plugins) {
-                    if (call.request.path() == SPOOL_PATH && atCapacity()) {
-                        metrics.connsRefusedTotal.increment()
+                    if (call.request.path() == SPOOL_PATH && refuseUpgrade()) {
+                        if (draining) metrics.drainRefusedTotal.increment() else metrics.connsRefusedTotal.increment()
                         call.response.header(HttpHeaders.RetryAfter, RETRY_AFTER_SECONDS.toString())
                         call.respondText("at capacity", status = HttpStatusCode.ServiceUnavailable)
                         finish()
@@ -432,6 +442,37 @@ class SpoolServer(
      * path would. The cap is a budget for a box sized with headroom above it, not a hard fence.
      */
     private fun atCapacity(): Boolean = config.maxConns > 0 && metrics.connectionsCurrent.get() >= config.maxConns
+
+    /**
+     * Whether to turn a new connection away — draining or full.
+     *
+     * Both answer at the transport with `503` and a `Retry-After`, which a multi-homing client
+     * already treats as one more unreachable spool. They are counted apart because a planned drain
+     * and a box out of room look identical otherwise, and only one of them is a reason to buy
+     * hardware.
+     */
+    private fun refuseUpgrade(): Boolean = draining || atCapacity()
+
+    /**
+     * Starts or stops draining. Live connections are untouched — this only closes the door.
+     *
+     * Deliberately does not touch `/healthz`: the container HEALTHCHECK, both CI pipelines and the
+     * compose `service_healthy` gate all probe it, so a drain that failed it would restart the
+     * container mid-drain and take the proxy's dependency with it. Readiness is a separate signal
+     * and not one this daemon offers yet.
+     */
+    internal fun setDraining(on: Boolean) {
+        if (draining == on) return
+        draining = on
+        if (on) {
+            log.info("draining: refusing new connections; {} live", metrics.connectionsCurrent.get())
+        } else {
+            log.info("drain lifted: accepting connections again")
+        }
+    }
+
+    /** Flips [setDraining]; what the SIGUSR1 handler calls, so one signal both starts and stops. */
+    fun toggleDrain() = setDraining(!draining)
 
     /** True for the one scope [Config.commons] declares. A 32-byte compare, cheaper than hex. */
     private fun isCommons(scope: ByteArray): Boolean = config.commons?.scopeId?.contentEquals(scope) == true
@@ -1004,7 +1045,7 @@ class SpoolServer(
         val now = clock()
         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
         val commonsFrames = config.commons?.let { withStore { store.digest(it.scopeId, now)?.count } } ?: 0
-        statusLog.info(statusLine.render(now, scopeCount, liveBytes, commonsSubscribers(), commonsFrames))
+        statusLog.info(statusLine.render(now, scopeCount, liveBytes, commonsSubscribers(), commonsFrames, draining))
     }
 
     /**

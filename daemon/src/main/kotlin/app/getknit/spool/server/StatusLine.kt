@@ -39,12 +39,16 @@ class StatusLine(
         liveBytes: Long,
         commonsSubscribers: Int? = null,
         commonsFrames: Int = 0,
+        draining: Boolean = false,
     ): String {
         val current = snapshot()
         val delta = current - prev
         prev = current
         val heapUse = heap()
         return buildString {
+            // First, and only while it is true: a drained spool that reads as an ordinary idle one
+            // is the trap this exists to close.
+            if (draining) append("draining=yes ")
             append("up=").append(uptime(now - startedAtMs))
             append(" conns=").append(metrics.connectionsCurrent.get())
             // Same idiom as scopes: the ceiling is only printed when there is one to hit.

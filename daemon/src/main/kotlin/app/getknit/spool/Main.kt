@@ -8,6 +8,7 @@ import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.SqliteScopeStore
 import org.slf4j.LoggerFactory
+import sun.misc.Signal
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
@@ -158,6 +159,22 @@ internal fun checkConfig(environment: Map<String, String>): Int {
     return 0
 }
 
+/**
+ * SIGUSR1 toggles draining: `docker kill --signal=USR1 <container>` closes the door to new
+ * connections and leaves the live ones alone, and sending it again re-opens.
+ *
+ * SIGUSR1 rather than a second SIGTERM, which is what `docker stop` sends before it SIGKILLs — a
+ * two-phase TERM would drain and then be killed mid-drain by the ordinary stop path.
+ *
+ * `sun.misc.Signal` is the only handle the JDK offers (module `jdk.unsupported`, no flags needed
+ * on 21). A platform without SIGUSR1 loses the feature and keeps the daemon: refusing to start a
+ * spool over a signal it will never receive would be the worse trade.
+ */
+private fun installDrainSignal(server: SpoolServer) {
+    runCatching { Signal.handle(Signal("USR1")) { server.toggleDrain() } }
+        .onFailure { log.warn("SIGUSR1 unavailable — drain mode cannot be toggled: {}", it.message) }
+}
+
 private fun serve() {
     val environment = System.getenv()
     unknownVars(environment).forEach { log.warn("unrecognized environment variable {} — typo?", it) }
@@ -183,6 +200,7 @@ private fun serve() {
         }
     val server = SpoolServer(config, store)
     Runtime.getRuntime().addShutdownHook(Thread(server::stop, "spool-shutdown"))
+    installDrainSignal(server)
     try {
         server.start(wait = true)
     } catch (e: IllegalStateException) {

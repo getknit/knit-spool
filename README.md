@@ -337,7 +337,7 @@ access logs; do the same in any proxy of your own.
 Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying version and commit —
 `count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
 (current + total), records, pushes, events, PoW verifications, rate-limit
-hits, sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by
+hits, upgrades refused for capacity and for draining (counted apart), sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by
 code.
 
 > [!NOTE]
@@ -346,6 +346,24 @@ code.
 > cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds
 > long before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS
 > framing, so it runs a few percent under the figure your provider bills.
+
+### Draining
+
+`SIGUSR1` closes the door to new connections and leaves the live ones alone — what a rolling
+upgrade needs between "serving" and "stopped", since a plain stop closes every session at once
+and sends every client back on the same second:
+
+```sh
+docker kill --signal=USR1 spool   # drain: new upgrades get 503 + Retry-After, live conns served
+docker kill --signal=USR1 spool   # again to lift it
+```
+
+Shift traffic to a sibling spool, wait for the connection count to fall, then stop. `/healthz`
+deliberately keeps answering `200` throughout — the container HEALTHCHECK and compose's
+`service_healthy` gate both probe it, and a drain that failed it would restart the container in
+the middle of the drain. Watch `knit_spool_drain_refused_total`, which is counted apart from
+`knit_spool_conns_refused_total` so a planned drain never looks like a box out of room, and
+`draining=yes` on the status line.
 
 ### The status line
 

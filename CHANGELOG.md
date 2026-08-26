@@ -22,6 +22,21 @@ document:
 
 ### Added
 
+- **Drain mode, toggled by `SIGUSR1`** — new connections refused `503` with a `Retry-After` while
+  the live ones keep being served. There was nowhere to stand between "serving" and "stopped":
+  shutdown closes every session at once, so on a busy spool an upgrade sent every client back on
+  the same second. Now you drain, watch the connection count fall, and then stop.
+
+  `SIGUSR1` rather than a second `SIGTERM`, which is what `docker stop` sends before it `SIGKILL`s
+  — a two-phase TERM would drain and then be killed mid-drain by the ordinary stop path. It reuses
+  the same transport refusal `SPOOL_MAX_CONNS` already uses, and for the same reason: §7.1 has no
+  close code that means "come back later".
+
+  `/healthz` deliberately keeps answering `200` — the container HEALTHCHECK, both CI pipelines and
+  compose's `service_healthy` gate all probe it, and a drain that failed it would restart the
+  container mid-drain. Counted by `knit_spool_drain_refused_total`, kept apart from
+  `knit_spool_conns_refused_total` so a planned drain never reads as a box out of room, and shown
+  as `draining=yes` on the status line.
 - **`knit-spool check`**, which validates the environment, prints every resolved value, and exits
   `0` valid or `1` invalid — without binding a port, opening a store, or creating a directory.
   Confirming a configuration previously meant starting a daemon and reading its logs, which is a
