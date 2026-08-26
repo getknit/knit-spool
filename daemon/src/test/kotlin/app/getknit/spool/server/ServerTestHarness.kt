@@ -14,6 +14,10 @@ import app.getknit.spool.protocol.Sub
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.ScopeStore
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
@@ -25,6 +29,7 @@ import io.ktor.websocket.readBytes
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -204,4 +209,30 @@ fun testBlob(seed: Int): Pair<ByteArray, ByteArray> {
     data[0] = (seed ushr 8).toByte()
     data[1] = seed.toByte()
     return MessageDigest.getInstance("SHA-256").digest(data) to data
+}
+
+/**
+ * Runs [block] with a [ListAppender] attached to [loggerName] and returns what it logged.
+ *
+ * [level] temporarily re-levels that one logger, which is the only way to reach a line guarded by
+ * `isDebugEnabled` — the daemon ships at INFO and the full-id lines are deliberately below it.
+ * Both the level and the appender are restored, so tests stay order-independent.
+ */
+fun withLogCapture(
+    loggerName: String,
+    level: Level? = null,
+    block: () -> Unit,
+): List<ILoggingEvent> {
+    val logger = LoggerFactory.getLogger(loggerName) as Logger
+    val appender = ListAppender<ILoggingEvent>().apply { start() }
+    val original = logger.level
+    logger.addAppender(appender)
+    if (level != null) logger.level = level
+    try {
+        block()
+    } finally {
+        logger.level = original
+        logger.detachAppender(appender)
+    }
+    return appender.list.toList()
 }

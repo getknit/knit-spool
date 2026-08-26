@@ -5,10 +5,6 @@ import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
-import ch.qos.logback.classic.Logger
-import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.read.ListAppender
-import org.slf4j.LoggerFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -137,30 +133,26 @@ class StatusLineTest {
     /** End to end: the server's tick reads the live store and logs one line under its own logger. */
     @Test
     fun serverTickLogsOneLineWithLiveStoreState() {
-        val logger = LoggerFactory.getLogger("app.getknit.spool.Status") as Logger
-        val appender = ListAppender<ILoggingEvent>().apply { start() }
-        logger.addAppender(appender)
-        try {
-            withServer {
-                connect {
-                    helloHandshake()
-                    subscribe(testScope(1))
-                    val (id, data) = testBlob(1)
-                    sendRecord(Push(t = RecordType.PUSH, q = 1L, scope = testScope(1), blobId = id, data = data))
-                    expectRecord<Ok>(RecordType.OK)
+        val logged =
+            withLogCapture("app.getknit.spool.Status") {
+                withServer {
+                    connect {
+                        helloHandshake()
+                        subscribe(testScope(1))
+                        val (id, data) = testBlob(1)
+                        sendRecord(Push(t = RecordType.PUSH, q = 1L, scope = testScope(1), blobId = id, data = data))
+                        expectRecord<Ok>(RecordType.OK)
+                    }
+                    spool.statusTick()
                 }
-                spool.statusTick()
             }
-            assertEquals(1, appender.list.size, "one tick, one line")
-            val line = appender.list.single().formattedMessage
-            assertFalse(line.contains('\n'), "the status line must stay a single line: $line")
-            val fields = fields(line)
-            assertEquals("1/4", fields["scopes"], line)
-            assertEquals("40B", fields["live"], line)
-            assertEquals("+1", fields["pushes"], line)
-            assertEquals("+1", fields["accepted"], line)
-        } finally {
-            logger.detachAppender(appender)
-        }
+        assertEquals(1, logged.size, "one tick, one line")
+        val line = logged.single().formattedMessage
+        assertFalse(line.contains('\n'), "the status line must stay a single line: $line")
+        val fields = fields(line)
+        assertEquals("1/4", fields["scopes"], line)
+        assertEquals("40B", fields["live"], line)
+        assertEquals("+1", fields["pushes"], line)
+        assertEquals("+1", fields["accepted"], line)
     }
 }

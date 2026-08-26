@@ -60,6 +60,15 @@ document:
 
 ### Changed
 
+- **Scope ids are truncated in the log.** The watermark's shed warning carried a full 64-character
+  scope id; it now carries the first eight, and the whole id moved to `DEBUG`. A blinded spool
+  ships its lines to an aggregator that is not blinded — it retains them, indexes them, and
+  outlives the scope — so a full id at `WARN` was the one identifier this daemon holds that
+  survived contact with the outside world. Eight hex characters still follow one scope across a
+  single log stream. The store's self-heal line already truncated, to twelve; both now go through
+  one helper so there is one convention rather than two. A malformed `SPOOL_COMMONS_ID` is no
+  longer echoed back in full either: one mistyped character in a real id would otherwise have put
+  a near-real scope id in an `ERROR` line.
 - **`deploy/docker-compose.tiny.yml` is sized against measurements** rather than caution. A 1 GB
   box holds ~2,400 concurrent clients before a container is OOM-killed — 41 KB of JVM heap and
   ~110 KB of Caddy per connection — so the overlay now targets ~2,000 of them: 4096 scopes (was

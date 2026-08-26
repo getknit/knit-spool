@@ -9,13 +9,16 @@ import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.shortHex
 import app.getknit.spool.store.HardLimits
+import ch.qos.logback.classic.Level
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -153,6 +156,48 @@ class RateAndWatermarkTest {
                 assertTrue(store.isUnknownScope(testScope(1)))
                 assertEquals(40L, store.totalBytes())
             }
+        }
+    }
+
+    /**
+     * A spool is blinded by design and the log aggregator these lines are shipped to is not, so the
+     * shed warning carries a prefix and the full id stays behind DEBUG.
+     */
+    @Test
+    fun theShedWarningTruncatesTheScopeIdAndKeepsTheFullOneAtDebug() {
+        val shed = testScope(1)
+        val full = shed.joinToString("") { "%02x".format(it) }
+        listOf(null to false, Level.DEBUG to true).forEach { (level, debugExpected) ->
+            val logged =
+                withLogCapture("app.getknit.spool.server.SpoolServer", level) {
+                    withServer(testConfig(maxBytes = 100L)) {
+                        connect {
+                            helloHandshake()
+                            subscribe(shed)
+                            (1..2).forEach { seed ->
+                                val (id, data) = testBlob(seed)
+                                sendRecord(Push(t = RecordType.PUSH, q = seed.toLong(), scope = shed, blobId = id, data = data))
+                                expectRecord<Ok>(RecordType.OK)
+                            }
+                            clock.advance(1_000)
+                            connect {
+                                helloHandshake()
+                                subscribe(testScope(2))
+                                val (id, data) = testBlob(3)
+                                sendRecord(Push(t = RecordType.PUSH, q = 3L, scope = testScope(2), blobId = id, data = data))
+                                expectRecord<Ok>(RecordType.OK) // 120 bytes total > 100: scope 1 is shed
+                            }
+                        }
+                    }
+                }
+            val warning = logged.single { it.level == Level.WARN }.formattedMessage
+            assertTrue(warning.contains(shortHex(shed)), warning)
+            assertFalse(warning.contains(full), "the full scope id must not reach a WARN line: $warning")
+            assertEquals(
+                debugExpected,
+                logged.any { it.level == Level.DEBUG && it.formattedMessage.contains(full) },
+                "full id at DEBUG should be $debugExpected",
+            )
         }
     }
 }

@@ -26,6 +26,7 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.shortHex
 import app.getknit.spool.store.AputResult
 import app.getknit.spool.store.DigestInfo
 import app.getknit.spool.store.HardLimits
@@ -896,7 +897,8 @@ class SpoolServer(
                 }
             watermarkStuck = false
             metrics.shedsTotal.increment()
-            log.warn("watermark: shed scope {} ({} bytes freed)", hex(shed.scopeId), shed.freedBytes)
+            log.warn("watermark: shed scope {} ({} bytes freed)", shortHex(shed.scopeId), shed.freedBytes)
+            if (log.isDebugEnabled) log.debug("watermark: shed scope {} in full", hex(shed.scopeId))
             // Re-anchor still-connected subscribers on the now-empty scope so they refill it (§9.1).
             broadcastDigest(shed.scopeId, DigestInfo(digest = 0L, count = 0, full = false, bounds = shed.bounds))
         }

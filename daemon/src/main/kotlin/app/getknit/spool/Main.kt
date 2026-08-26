@@ -202,7 +202,12 @@ internal fun commonsFromEnv(
     maxBytes: Long,
 ): SpoolServer.CommonsConfig? {
     val raw = env("SPOOL_COMMONS_ID")?.takeIf { it.isNotEmpty() } ?: return null
-    require(HEX_64.matches(raw)) { "SPOOL_COMMONS_ID must be 64 hex characters (a 32-byte scope id), got \"$raw\"" }
+    // Never echoed in full: Main.serve logs this message at ERROR, and one mistyped character in
+    // a real id would put a near-real scope id in the log the rest of this daemon keeps out.
+    require(HEX_64.matches(raw)) {
+        "SPOOL_COMMONS_ID must be 64 hex characters (a 32-byte scope id), got ${raw.length} " +
+            "characters starting \"${raw.take(8)}\""
+    }
     val maxFrames = intVar(env, "SPOOL_COMMONS_MAX_FRAMES", default = 500, min = 1)
     val ttlMs = longVar(env, "SPOOL_COMMONS_TTL_MS", default = 86_400_000L, min = 1L)
     val commonsMaxBlob = intVar(env, "SPOOL_COMMONS_MAX_BLOB", default = hardLimits.maxBlob, min = 1)

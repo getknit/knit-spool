@@ -3,6 +3,7 @@ package app.getknit.spool.store
 
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
+import app.getknit.spool.shortHex
 import org.slf4j.LoggerFactory
 import java.nio.file.Files
 import java.nio.file.Path
@@ -191,7 +192,7 @@ class SqliteScopeStore private constructor(
                         }
                     }
                     if (digest != storedDigest || count != storedCounts.first || bytes != storedCounts.second) {
-                        log.warn("scope columns drifted from blob rows — healed (scope {}…)", hex(scopeId).take(12))
+                        log.warn("scope columns drifted from blob rows — healed (scope {})", shortHex(scopeId))
                         val update = prep("UPDATE scopes SET digest = ?, live_count = ?, live_bytes = ? WHERE scope_id = ?")
                         update.setLong(1, digest)
                         update.setInt(2, count)
