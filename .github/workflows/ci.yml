@@ -87,6 +87,16 @@ jobs:
       - name: Build daemon and conformance runner
         run: ./gradlew :daemon:installDist :conformance:installDist --console=plain
 
+      # `check` is what provisioning runs before starting a container, so its exit codes are a
+      # contract. Cheap to assert here and expensive to discover from a container that will not boot.
+      - name: knit-spool check
+        run: |
+          daemon/build/install/knit-spool/bin/knit-spool check
+          if SPOOL_MAX_BLOB=999999 daemon/build/install/knit-spool/bin/knit-spool check; then
+            echo "check accepted an invalid SPOOL_MAX_BLOB" >&2
+            exit 1
+          fi
+
       # Health-polled rather than slept at — a fixed sleep either wastes seconds or, on a loaded
       # runner, races the bind and reports a bogus failure. Bail the moment the daemon dies instead
       # of polling a corpse.

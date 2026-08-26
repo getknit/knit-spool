@@ -8,6 +8,7 @@ import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.SqliteScopeStore
 import org.slf4j.LoggerFactory
+import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
 import kotlin.system.exitProcess
@@ -85,8 +86,12 @@ fun main(args: Array<String>) {
             printCommonsInvite()
         }
 
+        "check" -> {
+            exitProcess(checkConfig(System.getenv()))
+        }
+
         else -> {
-            System.err.println("unknown command \"$command\"; usage: knit-spool [commons-invite]")
+            System.err.println("unknown command \"$command\"; usage: knit-spool [commons-invite|check]")
             exitProcess(2)
         }
     }
@@ -106,11 +111,56 @@ private fun printCommonsInvite() {
     println("spool config (put in env):      SPOOL_COMMONS_ID=${hex(Commons.scopeId(secret))}")
 }
 
+/** `SPOOL_*` names nothing reads — almost always a typo, and silence about them is worse. */
+private fun unknownVars(environment: Map<String, String>): List<String> =
+    environment.keys.filter { it.startsWith("SPOOL_") && it !in KNOWN_VARS }.sorted()
+
+/**
+ * Validates the environment and prints what it resolved to, then exits: 0 valid, 1 not.
+ *
+ * For provisioning, which wants to know a customer's configuration is good *before* a container
+ * starts, and for testing a tier template in CI without launching a daemon and reading its logs.
+ * Side-effect free by contract — it binds no port, opens no store, and creates no directory.
+ *
+ * What it therefore cannot tell you: whether the commons will actually be created. That fails at
+ * boot only when a persistent store already holds `SPOOL_MAX_SCOPES` scopes, which needs the store
+ * open to see. This checks configuration, not store state.
+ *
+ * The resolved config goes to stdout and everything else to stderr, so a caller can parse one
+ * without filtering the other.
+ */
+internal fun checkConfig(environment: Map<String, String>): Int {
+    unknownVars(environment).forEach { System.err.println("warning: unrecognized environment variable $it — typo?") }
+    val config =
+        try {
+            configFromEnv(environment::get)
+        } catch (e: IllegalArgumentException) {
+            System.err.println("invalid configuration: ${e.message}")
+            return 1
+        }
+    val dataDir = environment["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
+    val store =
+        if (dataDir == null) {
+            "memory"
+        } else {
+            val path = Path.of(dataDir)
+            // Reported, never created: `check` must be safe to run against a customer's environment
+            // without leaving anything behind. The daemon creates it at boot; this only answers
+            // whether it will be able to.
+            val target = if (Files.isDirectory(path)) path else path.parent
+            if (target == null || !Files.isDirectory(target) || !Files.isWritable(target)) {
+                System.err.println("invalid configuration: SPOOL_DATA_DIR ($dataDir) is not in a writable directory")
+                return 1
+            }
+            "sqlite:$dataDir"
+        }
+    println("${config.describe()} store=$store")
+    return 0
+}
+
 private fun serve() {
     val environment = System.getenv()
-    environment.keys
-        .filter { it.startsWith("SPOOL_") && it !in KNOWN_VARS }
-        .forEach { log.warn("unrecognized environment variable {} — typo?", it) }
+    unknownVars(environment).forEach { log.warn("unrecognized environment variable {} — typo?", it) }
     val config =
         try {
             configFromEnv(environment::get)

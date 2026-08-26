@@ -119,6 +119,14 @@ conformance-selftest:
   stage: test
   script:
     - ./gradlew --no-daemon :daemon:installDist :conformance:installDist --console=plain
+    # `check` is what provisioning runs before starting a container, so its exit codes are a
+    # contract. Cheap here, expensive to discover from a container that will not boot.
+    - daemon/build/install/knit-spool/bin/knit-spool check
+    - |
+      if SPOOL_MAX_BLOB=999999 daemon/build/install/knit-spool/bin/knit-spool check; then
+        echo "check accepted an invalid SPOOL_MAX_BLOB" >&2
+        exit 1
+      fi
     - mkdir -p "$CI_PROJECT_DIR/.spool-data"
     - |
       SPOOL_DATA_DIR="$CI_PROJECT_DIR/.spool-data" \

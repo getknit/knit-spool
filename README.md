@@ -141,6 +141,21 @@ Implements the full **v1** protocol:
 SPOOL_TOKEN=s3cret ./gradlew :daemon:run   # private spool: wss://host/spool/v1?k=s3cret
 ```
 
+`knit-spool check` validates the environment and prints what it resolved to, without binding a port,
+opening a store, or creating a directory — for confirming a configuration before a container starts:
+
+```sh
+$ knit-spool check
+port=9470 token=unset metricsToken=unset pow=0 maxRecord=131072 … store=memory
+$ echo $?
+0
+```
+
+Exit **0** valid, **1** invalid (with the reason on stderr), **2** unknown command. The resolved
+config goes to stdout and warnings to stderr, so one can be parsed without filtering the other. It
+checks *configuration*, not store state: the one boot failure it cannot predict is a commons that
+will not fit because a persistent store already holds `SPOOL_MAX_SCOPES` scopes.
+
 ## 🔧 Configuration
 
 Environment variables only; invalid values refuse to start, and an unrecognized `SPOOL_*` name is

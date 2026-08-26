@@ -22,6 +22,14 @@ document:
 
 ### Added
 
+- **`knit-spool check`**, which validates the environment, prints every resolved value, and exits
+  `0` valid or `1` invalid — without binding a port, opening a store, or creating a directory.
+  Confirming a configuration previously meant starting a daemon and reading its logs, which is a
+  poor fit for provisioning that wants to know a config is good *before* a container starts, and
+  for testing a tier template in CI. Resolved config on stdout, warnings and errors on stderr, so
+  one can be parsed without filtering the other; `SPOOL_DATA_DIR` is checked for a writable parent
+  and deliberately not created. It checks configuration, not store state — a commons that will not
+  fit because the store already holds `SPOOL_MAX_SCOPES` scopes still fails at boot.
 - **The effective configuration is logged at boot**, one `k=v` line carrying every resolved value —
   defaults included, because the value an operator misremembers is always the one they never set,
   and across a fleet that is a support call rather than a shrug. `configFromEnv` validated all of
