@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.BuildInfo
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Hello
@@ -57,6 +58,7 @@ fun testConfig(
     rateRecords: Int = 1_000,
     ratePushes: Int = 1_000,
     rateNewScopesPerMin: Int = 10_000,
+    sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
     commons: SpoolServer.CommonsConfig? = null,
 ): SpoolServer.Config =
     SpoolServer.Config(
@@ -78,6 +80,7 @@ fun testConfig(
         rateRecords = rateRecords,
         ratePushes = ratePushes,
         rateNewScopesPerMin = rateNewScopesPerMin,
+        sourceUrl = sourceUrl,
         commons = commons,
     )
 

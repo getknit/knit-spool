@@ -191,12 +191,16 @@ docker:
     - |
       # Built as a positional-parameter list so each conditional destination is one readable line.
       # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
+      # The full sha, not $CI_COMMIT_SHORT_SHA, so the stamp matches what the GitHub release
+      # workflow bakes in and `count by (commit) (knit_spool_build_info)` sees one deployment.
       set -- --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --build-arg "SPOOL_COMMIT=$CI_COMMIT_SHA" \
         --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
         --digest-file /kaniko/digest \
         --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
+        set -- "$@" --build-arg "SPOOL_VERSION=${CI_COMMIT_TAG#v}"
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then

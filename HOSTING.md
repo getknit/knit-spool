@@ -231,5 +231,6 @@ to back everyone else up.
 
 knit-spool is AGPL-3.0-or-later. Running it unmodified imposes nothing on you. Running a modified
 version that other people's clients connect to obliges you to offer those users the source of your
-version, so publish the fork and say where it is. The [license section](README.md#-license) has the
-reasoning.
+version, so publish the fork and point `SPOOL_SOURCE_URL` at it — `GET /source` then offers your
+source instead of upstream's, and the offer stays correct without you having to remember it. The
+[license section](README.md#-license) has the reasoning.

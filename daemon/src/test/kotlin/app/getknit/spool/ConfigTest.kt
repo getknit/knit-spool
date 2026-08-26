@@ -23,6 +23,21 @@ class ConfigTest {
     private fun withCommons(vararg extra: Pair<String, String>) = config(mapOf("SPOOL_COMMONS_ID" to commonsId) + extra.toMap())
 
     @Test
+    fun sourceUrlDefaultsToUpstreamAndRefusesAnythingThatIsNotAnHttpUrl() {
+        assertEquals(BuildInfo.UPSTREAM_SOURCE_URL, config(emptyMap()).sourceUrl)
+        assertEquals(BuildInfo.UPSTREAM_SOURCE_URL, config(mapOf("SPOOL_SOURCE_URL" to "")).sourceUrl)
+        assertEquals(
+            "https://example.invalid/fork",
+            config(mapOf("SPOOL_SOURCE_URL" to "https://example.invalid/fork")).sourceUrl,
+        )
+        // It is rendered into a JSON string and a Prometheus label; a quote in either is corruption.
+        listOf("not-a-url", "ftp://example.invalid/x", "https://ex\"ample").forEach { bad ->
+            val failure = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_SOURCE_URL" to bad)) }
+            assertTrue(failure.message!!.contains("SPOOL_SOURCE_URL"), failure.message!!)
+        }
+    }
+
+    @Test
     fun metricsTokenIsUnsetByDefaultAndTreatsEmptyAsUnset() {
         assertNull(config(emptyMap()).metricsToken)
         // The SPOOL_TOKEN idiom: an empty value is unset, not a zero-length secret.

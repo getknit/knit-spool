@@ -20,6 +20,10 @@
 	# scrape http://spool:9470/metrics from inside the compose network instead.
 	respond /metrics 404
 
+	# /source is deliberately NOT sealed here. It is the AGPL §13 offer — the running version, its
+	# commit, and where to get the source — and it must be reachable by the people whose clients
+	# connect. It discloses nothing about traffic, scopes, or who is connected.
+
 	reverse_proxy spool:9470 {
 		# The daemon pings every 30 s and gives up at 60 s; leave the proxy's read side
 		# open past that so idle-but-healthy subscriber connections are not cut here.

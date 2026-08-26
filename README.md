@@ -51,7 +51,7 @@ one conversation member.
 | **Sees** | Scope ids, blob ids, ciphertext, sizes, timing |
 | **Never sees** | Node ids, plaintext, rosters, who read what, which spools a client also uses |
 | **Config** | Environment variables only; invalid values refuse to start |
-| **Ops** | `GET /healthz`, `GET /metrics` (Prometheus text) |
+| **Ops** | `GET /healthz`, `GET /source`, `GET /metrics` (Prometheus text) |
 | **Footprint** | Idles in ~128–256 MB on the cheapest VPS tier (`-Xmx256m` default) |
 | **License** | AGPL-3.0-or-later |
 
@@ -131,7 +131,8 @@ Implements the full **v1** protocol:
   spool.
 - **Persistence** — SQLite (WAL, self-healing boot recompute) or in-memory, behind one store
   contract, plus a periodic sweeper.
-- **Ops** — `/healthz`, `/metrics` (Prometheus text), a periodic status log line, graceful shutdown.
+- **Ops** — `/healthz`, `/source` (build stamp and the §13 source offer), `/metrics` (Prometheus
+  text), a periodic status log line, graceful shutdown.
 
 ## 🚀 Run
 
@@ -151,6 +152,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TOKEN` | unset | bearer token; unset = public spool |
 | `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
 | `SPOOL_DATA_DIR` | unset | unset = in-memory; set = SQLite at `$DIR/spool.db` |
+| `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
 | `SPOOL_POW_BITS` | `0` | PoW difficulty for unknown scopes (spec suggests 20; 0 = off) |
 | `SPOOL_MAX_BLOB` | `65536` | max sealed-blob bytes |
 | `SPOOL_MAX_SCOPES` | `64` | max scopes held |
@@ -317,7 +319,9 @@ spools — the shipped proxy configs seal it off from the internet, so scrape it
 network). The bearer token rides in the query string, so those configs also keep it out of proxy
 access logs; do the same in any proxy of your own.
 
-Exported: connections (current + total), records, pushes, events, PoW verifications, rate-limit
+Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying version and commit —
+`count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
+(current + total), records, pushes, events, PoW verifications, rate-limit
 hits, sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by
 code.
 
@@ -445,6 +449,12 @@ bugs, running a public spool, and telling people it exists help just as much.
 
 knit-spool is free software, licensed under the **GNU Affero General Public License v3.0 or later**
 ([`LICENSE`](LICENSE)).
+
+§13 obliges anyone running a modified version that other people's clients connect to to offer
+those users the source of *their* version. The daemon serves that offer itself, so it cannot go
+stale: `GET /source` returns the running version, its commit, and a source URL. Run a fork and you
+set [`SPOOL_SOURCE_URL`](#-configuration) to your own repository — the endpoint is unauthenticated
+on purpose, because an offer nobody can read is not an offer.
 
 ```
 Copyright (C) 2026 Jeffrey Walter Mixon

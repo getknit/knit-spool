@@ -127,7 +127,7 @@ jobs:
           SPOOL_PORT: '9470'
         run: |
           ./gradlew :daemon:installDist :conformance:installDist \
-            -PspoolVersion="$VERSION" --console=plain
+            -PspoolVersion="$VERSION" -PspoolCommit="$GITHUB_SHA" --console=plain
           mkdir -p "$GITHUB_WORKSPACE/.spool-data"
           SPOOL_DATA_DIR="$GITHUB_WORKSPACE/.spool-data" \
             daemon/build/install/knit-spool/bin/knit-spool > spool-daemon.log 2>&1 &
@@ -153,7 +153,7 @@ jobs:
       - name: Build distribution archives
         run: |
           ./gradlew :daemon:distTar :daemon:distZip :conformance:distTar \
-            -PspoolVersion="$VERSION" --console=plain
+            -PspoolVersion="$VERSION" -PspoolCommit="$GITHUB_SHA" --console=plain
 
       # The image build context: nothing but the installDist tree, so the layer is exactly the
       # daemon and its jars. Rebuilt from the tree `check` just validated.

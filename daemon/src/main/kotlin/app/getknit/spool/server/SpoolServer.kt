@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.BuildInfo
 import app.getknit.spool.protocol.Achunk
 import app.getknit.spool.protocol.Aget
 import app.getknit.spool.protocol.Ahas
@@ -147,6 +148,8 @@ class SpoolServer(
         val rateRecords: Int = 50,
         val ratePushes: Int = 10,
         val rateNewScopesPerMin: Int = 6,
+        /** The §13 corresponding-source URL served at `GET /source`; a fork overrides it. */
+        val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
         val commons: CommonsConfig? = null,
     )
@@ -232,6 +235,16 @@ class SpoolServer(
      * with no metrics token, and `/metrics` is open exactly as it was.
      */
     private val metricsGate = config.metricsToken ?: config.token
+
+    /**
+     * The §13 answer, assembled once: it cannot change while the process runs, and an
+     * unauthenticated route should not rebuild a fixed document per request.
+     */
+    private val sourceJson: String =
+        """{"name":"knit-spool","version":"${jsonString(BuildInfo.version)}",""" +
+            """"commit":"${jsonString(BuildInfo.commit)}",""" +
+            """"source":"${jsonString(config.sourceUrl)}",""" +
+            """"license":"AGPL-3.0-or-later"}"""
 
     private val activeSessions = ConcurrentHashMap.newKeySet<DefaultWebSocketServerSession>()
 
@@ -321,6 +334,16 @@ class SpoolServer(
                             )
                         }
                     }
+                    // AGPL §13: anyone whose client talks to this spool over a network is entitled
+                    // to the corresponding source of the version they are talking to. That is an
+                    // obligation to *users*, so unlike /metrics this route is deliberately not
+                    // behind SPOOL_TOKEN — a private spool's users are still its users, and an
+                    // offer nobody can read is not an offer. It discloses only what the operator
+                    // already published: no scope counts, no traffic shape, nothing about who is
+                    // connected.
+                    get("/source") {
+                        call.respondText(sourceJson, ContentType.Application.Json)
+                    }
                     get("/metrics") {
                         if (metricsGate != null && !constantTimeEquals(call.request.queryParameters["k"], metricsGate)) {
                             call.respondText("forbidden", status = HttpStatusCode.Forbidden)
@@ -335,6 +358,7 @@ class SpoolServer(
                 }
             }
         engine = server
+        log.info("knit-spool {} (commit {}) — source {}", BuildInfo.version, BuildInfo.commit, config.sourceUrl)
         log.info("knit-spool listening on :{} (pow={} bits, token={})", config.port, config.powBits, config.token != null)
         return server.start(wait = wait)
     }
@@ -1063,6 +1087,25 @@ class SpoolServer(
         }
         return String(out)
     }
+
+    /**
+     * Escapes a JSON string body. There is no JSON serializer on the HTTP side — /healthz is two
+     * literals and kotlinx here is CBOR, for the wire — and one is not worth adding for a single
+     * fixed document. Nothing in it is attacker-supplied, but `SPOOL_SOURCE_URL` is
+     * operator-supplied and the build stamp is whatever `-PspoolVersion` was handed, so neither is
+     * a literal. Deliberately not shared with the Prometheus label escaper in [Metrics]: the two
+     * formats escape different sets, and one helper would be wrong for one of them.
+     */
+    private fun jsonString(raw: String): String =
+        buildString(raw.length) {
+            raw.forEach { c ->
+                when {
+                    c == '"' || c == '\\' -> append('\\').append(c)
+                    c.code < 0x20 -> append("\\u").append("%04x".format(c.code))
+                    else -> append(c)
+                }
+            }
+        }
 
     private fun constantTimeEquals(
         a: String?,

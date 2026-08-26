@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.BuildInfo
 import app.getknit.spool.protocol.Event
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Push
@@ -105,6 +106,39 @@ class OpsTest {
             .first { it.startsWith("knit_spool_egress_bytes_total ") }
             .substringAfterLast(' ')
             .toLong()
+
+    @Test
+    fun sourceServesTheBuildStampAndTheCorrespondingSourceUrl() {
+        withServer {
+            val response = http.get("http://127.0.0.1:$port/source")
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+            assertTrue(body.contains(""""version":"${BuildInfo.version}""""), body)
+            assertTrue(body.contains(""""commit":"${BuildInfo.commit}""""), body)
+            assertTrue(body.contains(""""source":"${BuildInfo.UPSTREAM_SOURCE_URL}""""), body)
+            assertTrue(body.contains(""""license":"AGPL-3.0-or-later""""), body)
+        }
+    }
+
+    /**
+     * §13 is an obligation to *users*, and a private spool's users are still its users — an offer
+     * nobody can read is not an offer. This is the assertion that encodes that.
+     */
+    @Test
+    fun sourceIsNotTokenGated() {
+        withServer(testConfig(token = "s3cret")) {
+            assertEquals(HttpStatusCode.OK, http.get("http://127.0.0.1:$port/source").status)
+        }
+    }
+
+    /** A fork must be able to offer its own source rather than the code it diverged from. */
+    @Test
+    fun sourceUrlIsOverridable() {
+        withServer(testConfig(sourceUrl = "https://example.invalid/my/fork")) {
+            val body = http.get("http://127.0.0.1:$port/source").bodyAsText()
+            assertTrue(body.contains(""""source":"https://example.invalid/my/fork""""), body)
+        }
+    }
 
     @Test
     fun metricsAreTokenGatedOnPrivateSpools() {

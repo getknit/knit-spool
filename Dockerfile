@@ -2,11 +2,23 @@
 FROM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 COPY . .
+# The build stamp the daemon reports at runtime (startup log, GET /source, knit_spool_build_info).
+# Passed in, not discovered: .dockerignore excludes .git, so there is no repository in this context
+# to ask, and an image built without them honestly says "unknown".
+#   docker build --build-arg SPOOL_COMMIT="$(git rev-parse HEAD)" -t knit-spool .
+ARG SPOOL_VERSION=""
+ARG SPOOL_COMMIT=""
 # in-process compilation keeps the Kotlin compile off a forked daemon. That daemon writes lock
 # files under /tmp and deletes them on exit, which races kaniko's filesystem snapshot in CI
 # ("Failed to get file info for /tmp/kotlin-daemon.*.log.lck"). It is also leaner, which suits a
 # build stage that is thrown away.
-RUN ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :daemon:installDist
+#
+# A positional-parameter list so each optional -P is one line: an empty ARG has to vanish from the
+# command line entirely, not arrive as -PspoolVersion= and stamp a blank version.
+RUN set -- --no-daemon -Pkotlin.compiler.execution.strategy=in-process; \
+    if [ -n "$SPOOL_VERSION" ]; then set -- "$@" "-PspoolVersion=$SPOOL_VERSION"; fi; \
+    if [ -n "$SPOOL_COMMIT" ]; then set -- "$@" "-PspoolCommit=$SPOOL_COMMIT"; fi; \
+    ./gradlew "$@" :daemon:installDist
 
 # Runtime stage — JRE only; ciphertext-on-disk workloads want nothing fancier.
 FROM eclipse-temurin:21-jre

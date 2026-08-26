@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.BuildInfo
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.LongAdder
@@ -10,7 +11,10 @@ import java.util.concurrent.atomic.LongAdder
  * the format is `name value` lines and a Micrometer dependency would be the heaviest thing in the
  * process.
  */
-class Metrics {
+class Metrics(
+    private val version: String = BuildInfo.version,
+    private val commit: String = BuildInfo.commit,
+) {
     val connectionsCurrent = AtomicInteger()
     val connectionsTotal = LongAdder()
     val recordsTotal = LongAdder()
@@ -68,6 +72,17 @@ class Metrics {
         commonsSubscribers: Int? = null,
     ): String =
         buildString {
+            // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
+            // for build metadata. It exists so a fleet dashboard can join a spool's series against
+            // what it is running: `count by (version) (knit_spool_build_info)` answers "what is
+            // actually deployed", which no counter here can. Emitted first, and always, because it
+            // is the one series that is true before any traffic arrives.
+            append("# TYPE knit_spool_build_info gauge\n")
+            append("knit_spool_build_info{version=\"")
+                .append(labelValue(version))
+                .append("\",commit=\"")
+                .append(labelValue(commit))
+                .append("\"} 1\n")
             line("knit_spool_connections_current", "gauge", connectionsCurrent.get().toLong())
             line("knit_spool_connections_total", "counter", connectionsTotal.sum())
             line("knit_spool_records_total", "counter", recordsTotal.sum())
@@ -100,6 +115,15 @@ class Metrics {
                     .append('\n')
             }
         }
+
+    /**
+     * Prometheus escapes exactly three characters in a label value — backslash, double quote,
+     * newline — and takes the rest as literal UTF-8. [errsTotal]'s codes are a closed set from the
+     * protocol and need none of this; the build stamp is whatever `-PspoolVersion` was handed, and
+     * one stray quote there would corrupt not just its own line but the scrape's parse from that
+     * point on.
+     */
+    private fun labelValue(raw: String): String = raw.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 
     private fun StringBuilder.line(
         name: String,

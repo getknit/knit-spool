@@ -45,6 +45,7 @@ private val KNOWN_VARS =
         "SPOOL_RATE_PUSHES",
         "SPOOL_RATE_NEW_SCOPES",
         "SPOOL_LOG_LEVEL",
+        "SPOOL_SOURCE_URL",
         "SPOOL_DATA_DIR",
         "SPOOL_COMMONS_ID",
         "SPOOL_COMMONS_NAME",
@@ -65,6 +66,14 @@ private const val ID_RECORD_BYTES = 34
 private const val LIST_ENVELOPE = 512
 
 private val HEX_64 = Regex("[0-9a-fA-F]{64}")
+
+/**
+ * What a §13 source offer is allowed to look like: an http(s) URL with nothing in it that could
+ * break out of the JSON string or the Prometheus label it is rendered into. Both render sites
+ * escape anyway — this is the fail-fast half, because a source offer that does not resolve is a
+ * licence failure, and hearing about it from a user is worse than hearing about it at boot.
+ */
+private val SOURCE_URL = Regex("""https?://[^\s"'\\<>]+""")
 
 fun main(args: Array<String>) {
     when (val command = args.firstOrNull()) {
@@ -184,8 +193,23 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         rateRecords = intVar(env, "SPOOL_RATE_RECORDS", default = 50, min = 1),
         ratePushes = intVar(env, "SPOOL_RATE_PUSHES", default = 10, min = 1),
         rateNewScopesPerMin = intVar(env, "SPOOL_RATE_NEW_SCOPES", default = 6, min = 1),
+        sourceUrl = sourceUrlFromEnv(env),
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
     )
+}
+
+/**
+ * The corresponding-source URL served at `GET /source`.
+ *
+ * Defaults to upstream, which is truthful for an unmodified build and wrong for a fork: §13
+ * obliges an operator to offer the source of *their* version, not of the code it diverged from.
+ * A fork points this at its own repository and the offer becomes correct without touching a line
+ * of Kotlin — the same reason every other knob here is an environment variable.
+ */
+internal fun sourceUrlFromEnv(env: (String) -> String?): String {
+    val raw = env("SPOOL_SOURCE_URL")?.takeIf { it.isNotEmpty() } ?: return BuildInfo.UPSTREAM_SOURCE_URL
+    require(SOURCE_URL.matches(raw)) { "SPOOL_SOURCE_URL must be an http(s) URL, got \"$raw\"" }
+    return raw
 }
 
 /**

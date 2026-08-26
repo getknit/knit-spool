@@ -135,6 +135,9 @@ and opens a **draft** GitHub Release with the distribution archives.
 
 - The version is not stored in the tree. `build.gradle.kts` defaults to `0.1.0-SNAPSHOT` and the
   release passes `-PspoolVersion=<version>` from the tag, so nothing needs bumping to cut one.
+  `-PspoolCommit=<sha>` rides alongside it; both land in a generated resource the daemon reports
+  at `GET /source` and in `knit_spool_build_info`. A build told neither says `unknown`, which is
+  the honest answer for a local one.
 - `CHANGELOG.md` does. The workflow refuses a tag with no `## <version>` section — cutting a release
   means renaming `## Unreleased` to the version being released. That refusal is the whole reason a
   release cannot ship without notes.

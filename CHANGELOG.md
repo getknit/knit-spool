@@ -22,6 +22,21 @@ document:
 
 ### Added
 
+- **A build stamp the daemon can report about itself**, and `GET /source` to serve it: the running
+  version, the commit it was cut from, and a corresponding-source URL. Nothing in the running
+  process knew any of that before — the jar carried no manifest attributes, and a fleet had no way
+  to answer "what is actually deployed". `knit_spool_build_info{version,commit}` is the labelled
+  gauge a dashboard joins against, and one startup log line says the same thing.
+
+  `/source` is unauthenticated on purpose. AGPL §13 obliges anyone running a modified version to
+  offer its source to the users whose clients connect, so an offer behind `SPOOL_TOKEN` would not
+  be one; a fork sets **`SPOOL_SOURCE_URL`** and the offer points at their repository instead of
+  upstream's. Both shipped proxy configs pass it through, and both now say why. `/healthz` is
+  untouched.
+
+  Version and commit arrive as `-PspoolVersion` / `-PspoolCommit`, so neither is stored in the
+  tree and a build told neither honestly reports `unknown`. `Dockerfile` takes them as build args
+  — `.dockerignore` excludes `.git`, so there is no repository in the image context to ask.
 - **`SPOOL_METRICS_TOKEN`, a scrape credential separate from the connect credential** (default
   unset, which keeps today's behavior: `SPOOL_TOKEN` gates `/metrics` on a private spool). The two
   answer to different people. `/metrics` carries scope counts, live bytes and traffic shape — the
