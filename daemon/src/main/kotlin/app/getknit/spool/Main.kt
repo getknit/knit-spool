@@ -22,7 +22,7 @@ import kotlin.system.exitProcess
  */
 private val log = LoggerFactory.getLogger("app.getknit.spool.Main")
 
-private val KNOWN_VARS =
+internal val KNOWN_VARS =
     setOf(
         "SPOOL_PORT",
         "SPOOL_TOKEN",

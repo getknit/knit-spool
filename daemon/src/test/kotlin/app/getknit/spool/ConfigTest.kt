@@ -22,6 +22,35 @@ class ConfigTest {
 
     private fun withCommons(vararg extra: Pair<String, String>) = config(mapOf("SPOOL_COMMONS_ID" to commonsId) + extra.toMap())
 
+    /**
+     * `KNOWN_VARS` drives the "unrecognized environment variable — typo?" warning, and drifts in two
+     * directions that nothing else would catch: a variable the parser reads but the set omits is
+     * warned about on every boot of a *correct* configuration, and one the set carries but nothing
+     * reads is silently accepted while doing nothing at all.
+     *
+     * Pinned by recording what `configFromEnv` looks up rather than by reflection — the lookup is
+     * already a function parameter, so the seam is free.
+     */
+    @Test
+    fun knownVarsMatchesWhatTheParserActuallyReads() {
+        val read = mutableSetOf<String>()
+        // A commons id, so the commons half of the parser is reached rather than returning early.
+        configFromEnv { name ->
+            read += name
+            if (name == "SPOOL_COMMONS_ID") commonsId else null
+        }
+
+        val unlisted = read - KNOWN_VARS
+        assertTrue(unlisted.isEmpty(), "read by configFromEnv but missing from KNOWN_VARS: $unlisted")
+
+        // The two nothing in configFromEnv reads: SPOOL_DATA_DIR goes straight from the environment
+        // map in serve() and checkConfig(), and SPOOL_LOG_LEVEL is substituted by logback and never
+        // touched by Kotlin at all.
+        val readElsewhere = setOf("SPOOL_DATA_DIR", "SPOOL_LOG_LEVEL")
+        val unread = KNOWN_VARS - read - readElsewhere
+        assertTrue(unread.isEmpty(), "in KNOWN_VARS but nothing reads them: $unread")
+    }
+
     @Test
     fun sourceUrlDefaultsToUpstreamAndRefusesAnythingThatIsNotAnHttpUrl() {
         assertEquals(BuildInfo.UPSTREAM_SOURCE_URL, config(emptyMap()).sourceUrl)
