@@ -22,6 +22,15 @@ document:
 
 ### Added
 
+- **The effective configuration is logged at boot**, one `k=v` line carrying every resolved value —
+  defaults included, because the value an operator misremembers is always the one they never set,
+  and across a fleet that is a support call rather than a shrug. `configFromEnv` validated all of
+  it and then kept the answer to itself; the only startup line reported port, PoW bits, and whether
+  a token was set.
+
+  Tokens are reported as `set`/`unset` and never printed, and the commons appears as a truncated id
+  for the same reason `hello` never carries it at all — publishing it would turn a room only invite
+  holders can find into one anybody who connects could subscribe to.
 - **A build stamp the daemon can report about itself**, and `GET /source` to serve it: the running
   version, the commit it was cut from, and a corresponding-source URL. Nothing in the running
   process knew any of that before — the jar carried no manifest attributes, and a fleet had no way

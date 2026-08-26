@@ -152,7 +152,50 @@ class SpoolServer(
         val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
         val commons: CommonsConfig? = null,
-    )
+    ) {
+        /**
+         * Every resolved value on one line, `k=v`, for the boot log.
+         *
+         * Defaults included on purpose: the value an operator misremembers is always the one they
+         * never set, and a fleet makes that a support call rather than a shrug. One line and no
+         * spaces in any value, so it splits the same way the status line does.
+         *
+         * Secrets are reported as `set`/`unset` and never printed — `SECURITY.md` makes a token in
+         * this daemon's log a reportable vulnerability. The commons is reported as a truncated id
+         * for the same reason `hello` never carries it at all: publishing it would turn a room only
+         * invite holders can find into one anybody can subscribe to. Its bounds are already on the
+         * `commons enabled:` line, so they are not repeated here.
+         */
+        fun describe(): String =
+            listOf(
+                "port" to port,
+                "token" to secret(token),
+                "metricsToken" to secret(metricsToken),
+                "pow" to powBits,
+                "maxRecord" to maxRecord,
+                "maxBlob" to hardLimits.maxBlob,
+                "maxFrames" to hardLimits.maxFramesCap,
+                "maxTtlMs" to hardLimits.maxTtlMs,
+                "maxScopes" to hardLimits.maxScopes,
+                "maxPull" to maxPull,
+                "maxAget" to maxAget,
+                "attachBytes" to hardLimits.maxAttachBytes,
+                "maxAChunk" to hardLimits.maxAChunk,
+                "maxBytes" to maxBytes,
+                "sweepMs" to sweepMs,
+                "statusMs" to statusMs,
+                "trustProxy" to trustProxy,
+                "maxConns" to maxConns,
+                "maxConnsPerIp" to maxConnsPerIp,
+                "rateRecords" to rateRecords,
+                "ratePushes" to ratePushes,
+                "rateNewScopes" to rateNewScopesPerMin,
+                "commons" to (commons?.let { shortHex(it.scopeId) } ?: "off"),
+                "source" to sourceUrl,
+            ).joinToString(" ") { (key, value) -> "$key=$value" }
+
+        private fun secret(value: String?): String = if (value == null) "unset" else "set"
+    }
 
     /**
      * One operator-declared scope shared by everyone on the spool who holds the invite.
@@ -359,6 +402,7 @@ class SpoolServer(
             }
         engine = server
         log.info("knit-spool {} (commit {}) — source {}", BuildInfo.version, BuildInfo.commit, config.sourceUrl)
+        log.info("effective config: {}", config.describe())
         log.info("knit-spool listening on :{} (pow={} bits, token={})", config.port, config.powBits, config.token != null)
         return server.start(wait = wait)
     }
