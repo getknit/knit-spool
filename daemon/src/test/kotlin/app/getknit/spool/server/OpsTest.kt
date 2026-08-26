@@ -114,6 +114,30 @@ class OpsTest {
         }
     }
 
+    /**
+     * The scrape credential replaces the connect credential rather than joining it — the whole point
+     * of the split is that a client holding SPOOL_TOKEN cannot read the spool's traffic shape.
+     */
+    @Test
+    fun aMetricsTokenReplacesTheSpoolTokenOnMetrics() {
+        withServer(testConfig(token = "s3cret", metricsToken = "scrape")) {
+            assertEquals(HttpStatusCode.OK, http.get("http://127.0.0.1:$port/metrics?k=scrape").status)
+            assertEquals(HttpStatusCode.Forbidden, http.get("http://127.0.0.1:$port/metrics?k=s3cret").status)
+            assertEquals(HttpStatusCode.Forbidden, http.get("http://127.0.0.1:$port/metrics").status)
+        }
+    }
+
+    /** A public spool can gate its metrics without becoming private: the two are independent. */
+    @Test
+    fun aMetricsTokenGatesAnOtherwisePublicSpool() {
+        withServer(testConfig(metricsToken = "scrape")) {
+            assertEquals(HttpStatusCode.Forbidden, http.get("http://127.0.0.1:$port/metrics").status)
+            assertEquals(HttpStatusCode.OK, http.get("http://127.0.0.1:$port/metrics?k=scrape").status)
+            // Still public on the wire — the metrics token is not a bearer token for /spool/v1.
+            connect { helloHandshake() }
+        }
+    }
+
     @Test
     fun gracefulShutdownCloses1001() {
         withServer {

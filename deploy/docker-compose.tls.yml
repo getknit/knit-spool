@@ -24,6 +24,8 @@ services:
     environment:
       SPOOL_POW_BITS: "${SPOOL_POW_BITS:-20}" # spec §12 recommended difficulty
       SPOOL_TOKEN: "${SPOOL_TOKEN:-}" # empty = public spool
+      # Separate scrape credential for /metrics; empty = SPOOL_TOKEN gates it.
+      SPOOL_METRICS_TOKEN: "${SPOOL_METRICS_TOKEN:-}"
       SPOOL_TRUST_PROXY: "true" # Caddy appends X-Forwarded-For; per-IP limits need it
       SPOOL_MAX_BYTES: "${SPOOL_MAX_BYTES:-268435456}"
       SPOOL_LOG_LEVEL: "${SPOOL_LOG_LEVEL:-INFO}"

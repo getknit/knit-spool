@@ -23,6 +23,14 @@ class ConfigTest {
     private fun withCommons(vararg extra: Pair<String, String>) = config(mapOf("SPOOL_COMMONS_ID" to commonsId) + extra.toMap())
 
     @Test
+    fun metricsTokenIsUnsetByDefaultAndTreatsEmptyAsUnset() {
+        assertNull(config(emptyMap()).metricsToken)
+        // The SPOOL_TOKEN idiom: an empty value is unset, not a zero-length secret.
+        assertNull(config(mapOf("SPOOL_METRICS_TOKEN" to "")).metricsToken)
+        assertEquals("scrape", config(mapOf("SPOOL_METRICS_TOKEN" to "scrape")).metricsToken)
+    }
+
+    @Test
     fun commonsIsOffByDefault() {
         assertNull(config(emptyMap()).commons)
         // An empty value is unset, not a zero-length id — the same idiom as SPOOL_TOKEN.

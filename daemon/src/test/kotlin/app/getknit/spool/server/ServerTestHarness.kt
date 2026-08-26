@@ -45,6 +45,7 @@ class FakeClock(
 
 fun testConfig(
     token: String? = null,
+    metricsToken: String? = null,
     powBits: Int = 0,
     maxRecord: Int = 8_192,
     maxPull: Int = 4,
@@ -61,6 +62,7 @@ fun testConfig(
     SpoolServer.Config(
         port = 0,
         token = token,
+        metricsToken = metricsToken,
         powBits = powBits,
         maxRecord = maxRecord,
         maxPull = maxPull,

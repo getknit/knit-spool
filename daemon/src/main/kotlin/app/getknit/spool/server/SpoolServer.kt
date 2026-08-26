@@ -122,6 +122,11 @@ class SpoolServer(
     class Config(
         val port: Int,
         val token: String?,
+        /**
+         * The scrape credential, deliberately not the connect credential. Null falls back to
+         * [token], which is how every spool behaved before this existed.
+         */
+        val metricsToken: String? = null,
         val powBits: Int,
         val maxRecord: Int,
         val maxPull: Int,
@@ -217,6 +222,17 @@ class SpoolServer(
     /** The commons' key into [subscribers], hoisted out of the ops paths that read it. */
     private val commonsHex = config.commons?.let { hex(it.scopeId) }
 
+    /**
+     * What `/metrics` checks `?k=` against: [Config.metricsToken] if set, otherwise [Config.token].
+     *
+     * They are separate because the two credentials answer to different people. On a hosted spool
+     * the customer holds `SPOOL_TOKEN`, and `/metrics` carries scope counts and traffic shape that
+     * are the operator's business, not theirs — while a fleet-wide Prometheus should not need every
+     * customer's connect secret in its scrape config to read them. Null here means a public spool
+     * with no metrics token, and `/metrics` is open exactly as it was.
+     */
+    private val metricsGate = config.metricsToken ?: config.token
+
     private val activeSessions = ConcurrentHashMap.newKeySet<DefaultWebSocketServerSession>()
 
     private var engine: EmbeddedServer<*, *>? = null
@@ -306,7 +322,7 @@ class SpoolServer(
                         }
                     }
                     get("/metrics") {
-                        if (config.token != null && !constantTimeEquals(call.request.queryParameters["k"], config.token)) {
+                        if (metricsGate != null && !constantTimeEquals(call.request.queryParameters["k"], metricsGate)) {
                             call.respondText("forbidden", status = HttpStatusCode.Forbidden)
                             return@get
                         }

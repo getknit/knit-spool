@@ -22,6 +22,17 @@ document:
 
 ### Added
 
+- **`SPOOL_METRICS_TOKEN`, a scrape credential separate from the connect credential** (default
+  unset, which keeps today's behavior: `SPOOL_TOKEN` gates `/metrics` on a private spool). The two
+  answer to different people. `/metrics` carries scope counts, live bytes and traffic shape — the
+  operator's business, not the client's — and until now the only credential that opened it was the
+  one every client already holds. It also ran the other way: a Prometheus scraping a fleet needed
+  each spool's *connect* secret in its scrape config.
+
+  Setting it **replaces** `SPOOL_TOKEN` on `/metrics` rather than joining it, which is the point —
+  a client holding the connect token gets `403`. That does mean a scrape configured as
+  `?k=$SPOOL_TOKEN` stops working the moment the new variable is set; nothing changes until it is.
+  A public spool can set it on its own to gate metrics without becoming private.
 - **A commons: one shared scope per spool** (spec §7.4), off unless `SPOOL_COMMONS_ID` is set. It
   turns a spool from pure infrastructure into a place — everyone on it who holds the invite can talk
   to everyone else, sealed end to end like any other scope.

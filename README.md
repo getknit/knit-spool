@@ -149,6 +149,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 |---|---|---|
 | `SPOOL_PORT` | `9470` | listen port |
 | `SPOOL_TOKEN` | unset | bearer token; unset = public spool |
+| `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
 | `SPOOL_DATA_DIR` | unset | unset = in-memory; set = SQLite at `$DIR/spool.db` |
 | `SPOOL_POW_BITS` | `0` | PoW difficulty for unknown scopes (spec suggests 20; 0 = off) |
 | `SPOOL_MAX_BLOB` | `65536` | max sealed-blob bytes |

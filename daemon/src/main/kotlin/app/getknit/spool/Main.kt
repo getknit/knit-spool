@@ -24,6 +24,7 @@ private val KNOWN_VARS =
     setOf(
         "SPOOL_PORT",
         "SPOOL_TOKEN",
+        "SPOOL_METRICS_TOKEN",
         "SPOOL_POW_BITS",
         "SPOOL_MAX_BLOB",
         "SPOOL_MAX_SCOPES",
@@ -168,6 +169,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
         token = env("SPOOL_TOKEN")?.takeIf { it.isNotEmpty() },
+        metricsToken = env("SPOOL_METRICS_TOKEN")?.takeIf { it.isNotEmpty() },
         powBits = intVar(env, "SPOOL_POW_BITS", default = 0, min = 0, max = 30),
         maxRecord = maxRecord,
         maxPull = intVar(env, "SPOOL_MAX_PULL", default = 64, min = 1),
