@@ -116,6 +116,14 @@ document:
   spool. Counted by `knit_spool_conns_refused_total` and `refused=+N` in the status line; the
   configured ceiling is exported as `knit_spool_max_conns` and shown as `conns=N/max`.
 
+### Fixed
+
+- **The conformance runner's exit code `3` is documented.** `Report.summary()` has always returned
+  it for a run where no MUST check failed but one or more could not be judged — the transport broke,
+  or the tool itself hit a bug — and the README listed only `0`, `1` and `2`. A CI job written from
+  that list treats an inconclusive run as a passing one, which is the opposite of what the code
+  intends.
+
 ### Changed
 
 - **Scope ids are truncated in the log.** The watermark's shed warning carried a full 64-character

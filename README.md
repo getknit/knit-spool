@@ -181,6 +181,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_MAX_BYTES` | `268435456` | payload watermark; over it the least-active scope is shed; 0 = unlimited |
 | `SPOOL_SWEEP_MS` | `60000` | sweeper cadence (expiry, cache pruning, watermark) |
 | `SPOOL_STATUS_MS` | `300000` | status log line cadence (5 min); 0 = off |
+| `SPOOL_LOG_LEVEL` | `INFO` | root log level |
 | `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop for per-IP limits |
 | `SPOOL_MAX_CONNS` | `0` | total live connections; over it the upgrade is refused **503 + `Retry-After`**, never a close code. 0 = unlimited |
 | `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client IP |
@@ -198,7 +199,6 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 The commons bounds must fit the spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
 fit is refused at startup rather than discovered at 3am.
-| `SPOOL_LOG_LEVEL` | `INFO` | root log level |
 
 ## 🏛 The commons
 
@@ -401,7 +401,9 @@ conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
 
 TAP on stdout, a MUST tally on stderr. Exit **0** = every MUST check passed (skips and advisory
 shortfalls don't fail the run), **1** = a MUST check failed, **2** = bad arguments or no handshake
-at all. The attachment checks skip themselves against a spool that advertised no §7.3 limits —
+at all, **3** = nothing failed but something could not be judged, because the transport broke or
+this tool hit a bug. An inconclusive run is not a passing one, so treat **3** the way you treat
+**1** in CI. The attachment checks skip themselves against a spool that advertised no §7.3 limits —
 which is exactly the client behaviour the spec requires. `--destructive` enables the quota and
 rate-limit checks; they fill real capacity, so run them against spools you operate. CI runs the
 whole suite against the freshly built daemon on every pipeline (`conformance-selftest`).
