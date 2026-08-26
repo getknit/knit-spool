@@ -45,8 +45,11 @@ check that can only pass against this server does not belong in it.
   **AGPL-3.0-or-later**, the same as the project. (The Knit app is a separate GPL-3.0-or-later
   codebase; the two share a protocol spec and no code.)
 - **Sign your commits (DCO):** add a `Signed-off-by: Your Name <you@example.com>` trailer to each
-  commit (`git commit -s`), certifying the [Developer Certificate of Origin](https://developercertificate.org/).
-  Only submit code you have the right to license under the AGPL.
+  commit (`git commit -s`), certifying the [Developer Certificate of Origin](DCO) — the verbatim
+  1.1 text, also published at [developercertificate.org](https://developercertificate.org/). The
+  trailer's email must match the commit author's, and `git config core.hooksPath .githooks` opts
+  into a repo hook that adds it for you. Only submit code you have the right to license under the
+  AGPL.
 - **Third-party dependencies:** the shipped graph is small and deliberately so — Kotlin, Ktor,
   kotlinx, SLF4J/Logback, sqlite-jdbc, and nothing else. Do not add a dependency whose license is
   AGPL-incompatible or unverified, and update
@@ -122,9 +125,11 @@ issues and pull requests there; the issue and pull-request templates will guide 
 include. Keep each pull request focused on a single change with a clear description of what and why.
 
 CI on a pull request runs the tests with coverage, `koverVerify`, and the conformance self-test
-against a freshly built daemon; ktlint rides along inside `check`. The maintainer also runs an
-internal GitLab pipeline that adds advisory Trivy and markdownlint scans and a per-commit image
-build — those never gate a contribution.
+against a freshly built daemon; ktlint rides along inside `check`. A separate DCO job checks that
+every commit carries a sign-off; if it fails, `git rebase --signoff origin/main` and a force-push
+fix the whole branch at once. The maintainer also runs an internal GitLab pipeline that adds
+advisory Trivy and markdownlint scans and a per-commit image build — those never gate a
+contribution.
 
 ## Releases
 

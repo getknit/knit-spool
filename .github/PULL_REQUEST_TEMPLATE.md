@@ -19,7 +19,8 @@ and that every commit is signed off under the DCO (`git commit -s`).
 
 ### Checklist
 
-- [ ] Commits are signed off (DCO): `git commit -s` — see [CONTRIBUTING.md](CONTRIBUTING.md)
+- [ ] Commits are signed off (DCO): `git commit -s` — see [`DCO`](DCO) and
+      [CONTRIBUTING.md](CONTRIBUTING.md)
 - [ ] My contribution is licensed under **AGPL-3.0-or-later**
 - [ ] No AGPL-incompatible or unverified dependency added
       (updated [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) if a shipped dependency changed)
