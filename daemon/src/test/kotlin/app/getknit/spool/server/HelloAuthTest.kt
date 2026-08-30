@@ -55,6 +55,48 @@ class HelloAuthTest {
         }
     }
 
+    /**
+     * The point of a second credential: during a rotation both halves work, so no client is refused
+     * while it migrates. Anything that is neither is still refused — a spool mid-rotation accepts
+     * two secrets, not any secret.
+     */
+    @Test
+    fun bothTokensAreAcceptedDuringRotation() {
+        withServer(testConfig(token = "old", tokenNext = "new")) {
+            connect(token = "old") {
+                helloHandshake()
+                subscribe(testScope(1))
+            }
+            connect(token = "new") {
+                helloHandshake()
+                subscribe(testScope(2))
+            }
+            connect(token = "neither") {
+                awaitClose(CloseCode.AUTH)
+            }
+            connect {
+                awaitClose(CloseCode.AUTH)
+            }
+        }
+    }
+
+    /**
+     * Retiring the old half is what ends a rotation, and it has to actually end it: a client still
+     * presenting the retired credential must be refused, or the rotation bought nothing.
+     */
+    @Test
+    fun promotingNextRetiresTheOldToken() {
+        withServer(testConfig(token = "new")) {
+            connect(token = "new") {
+                helloHandshake()
+                subscribe(testScope(1))
+            }
+            connect(token = "old") {
+                awaitClose(CloseCode.AUTH)
+            }
+        }
+    }
+
     @Test
     fun nonHelloFirstCloses4000() {
         withServer {

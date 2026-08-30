@@ -9,6 +9,7 @@ import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.SqliteScopeStore
 import org.slf4j.LoggerFactory
 import sun.misc.Signal
+import sun.misc.SignalHandler
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
@@ -26,6 +27,7 @@ internal val KNOWN_VARS =
     setOf(
         "SPOOL_PORT",
         "SPOOL_TOKEN",
+        "SPOOL_TOKEN_NEXT",
         "SPOOL_METRICS_TOKEN",
         "SPOOL_POW_BITS",
         "SPOOL_MAX_BLOB",
@@ -49,6 +51,7 @@ internal val KNOWN_VARS =
         "SPOOL_LOG_LEVEL",
         "SPOOL_SOURCE_URL",
         "SPOOL_DATA_DIR",
+        "SPOOL_RELOAD_FILE",
         "SPOOL_COMMONS_ID",
         "SPOOL_COMMONS_NAME",
         "SPOOL_COMMONS_MAX_FRAMES",
@@ -175,6 +178,70 @@ private fun installDrainSignal(server: SpoolServer) {
         .onFailure { log.warn("SIGUSR1 unavailable — drain mode cannot be toggled: {}", it.message) }
 }
 
+/**
+ * Re-read the configuration on SIGHUP and install its reloadable half.
+ *
+ * The environment cannot be the source. `System.getenv()` is fixed at exec — a container's
+ * variables cannot change without recreating it, which is the reconnect this exists to avoid — so
+ * re-reading it would be an elaborate no-op. `SPOOL_RELOAD_FILE` names a file of `KEY=value` lines
+ * in exactly the environment's own syntax, layered *over* the environment: anything the file names
+ * wins, anything it omits falls back to the value the process booted with. Unsetting a variable is
+ * therefore removing its line, not writing an empty one.
+ *
+ * A file that is missing, unreadable or invalid leaves the running configuration exactly as it is
+ * and logs why. A reload is an operation that can be retried; a spool that dropped its quotas
+ * because a config write was half-flushed is not.
+ */
+private fun installReloadSignal(
+    server: SpoolServer,
+    environment: Map<String, String>,
+) {
+    val path = environment["SPOOL_RELOAD_FILE"]?.takeIf { it.isNotEmpty() }
+    val handler =
+        SignalHandler {
+            if (path == null) {
+                log.warn("SIGHUP ignored — set SPOOL_RELOAD_FILE to the file a reload should read")
+                return@SignalHandler
+            }
+            val overrides =
+                try {
+                    readEnvFile(Path.of(path))
+                } catch (e: Exception) {
+                    log.error("SIGHUP: cannot read {}: {} — configuration unchanged", path, e.message)
+                    return@SignalHandler
+                }
+            val candidate =
+                try {
+                    configFromEnv { name -> overrides[name] ?: environment[name] }
+                } catch (e: IllegalArgumentException) {
+                    log.error("SIGHUP: invalid configuration: {} — configuration unchanged", e.message)
+                    return@SignalHandler
+                }
+            server.reload(candidate).forEach { log.warn("SIGHUP: {} needs a restart — ignored", it) }
+            log.info("reloaded configuration from {}: {}", path, candidate.reloadable().entries.joinToString(" ") { (k, v) -> "$k=$v" })
+        }
+    runCatching { Signal.handle(Signal("HUP"), handler) }
+        .onFailure { log.warn("SIGHUP unavailable — configuration cannot be reloaded: {}", it.message) }
+}
+
+/**
+ * `KEY=value` per line, `#` comments and blanks skipped, no quote or escape processing.
+ *
+ * Deliberately the same shape as the environment and nothing more: this file is written by
+ * whatever provisions the spool, and a format with quoting rules is a format with a parser
+ * disagreement waiting in it. A value is the rest of the line, trailing whitespace and all.
+ */
+internal fun readEnvFile(path: Path): Map<String, String> =
+    Files
+        .readAllLines(path)
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .mapNotNull { line ->
+            val eq = line.indexOf('=')
+            if (eq <= 0) null else line.substring(0, eq).trim() to line.substring(eq + 1)
+        }.toMap()
+
 private fun serve() {
     val environment = System.getenv()
     unknownVars(environment).forEach { log.warn("unrecognized environment variable {} — typo?", it) }
@@ -201,6 +268,7 @@ private fun serve() {
     val server = SpoolServer(config, store)
     Runtime.getRuntime().addShutdownHook(Thread(server::stop, "spool-shutdown"))
     installDrainSignal(server)
+    installReloadSignal(server, environment)
     try {
         server.start(wait = true)
     } catch (e: IllegalStateException) {
@@ -243,9 +311,21 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
             maxAChunk = intVar(env, "SPOOL_MAX_A_CHUNK", default = HardLimits.DEFAULT_MAX_A_CHUNK, min = 1),
         )
     val maxBytes = longVar(env, "SPOOL_MAX_BYTES", default = 268_435_456L, min = 0L)
+    // Rotation, in the order an operator performs it: publish NEXT, let clients migrate, promote
+    // it to TOKEN, unset NEXT. Both are accepted for as long as both are set.
+    val token = env("SPOOL_TOKEN")?.takeIf { it.isNotEmpty() }
+    val tokenNext = env("SPOOL_TOKEN_NEXT")?.takeIf { it.isNotEmpty() }
+    // NEXT alone would work — it is just a second accepted credential — but it would mean an
+    // operator had opened a spool believing they had gated it, or had finished a rotation by
+    // clearing the wrong half. Neither is worth silently allowing.
+    require(tokenNext == null || token != null) {
+        "SPOOL_TOKEN_NEXT is set but SPOOL_TOKEN is not: set both during a rotation, then promote NEXT into TOKEN"
+    }
+    require(tokenNext == null || tokenNext != token) { "SPOOL_TOKEN_NEXT must differ from SPOOL_TOKEN" }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
-        token = env("SPOOL_TOKEN")?.takeIf { it.isNotEmpty() },
+        token = token,
+        tokenNext = tokenNext,
         metricsToken = env("SPOOL_METRICS_TOKEN")?.takeIf { it.isNotEmpty() },
         powBits = intVar(env, "SPOOL_POW_BITS", default = 0, min = 0, max = 30),
         maxRecord = maxRecord,

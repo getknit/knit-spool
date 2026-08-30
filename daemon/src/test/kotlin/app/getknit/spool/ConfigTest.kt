@@ -43,12 +43,35 @@ class ConfigTest {
         val unlisted = read - KNOWN_VARS
         assertTrue(unlisted.isEmpty(), "read by configFromEnv but missing from KNOWN_VARS: $unlisted")
 
-        // The two nothing in configFromEnv reads: SPOOL_DATA_DIR goes straight from the environment
-        // map in serve() and checkConfig(), and SPOOL_LOG_LEVEL is substituted by logback and never
-        // touched by Kotlin at all.
-        val readElsewhere = setOf("SPOOL_DATA_DIR", "SPOOL_LOG_LEVEL")
+        // The three nothing in configFromEnv reads: SPOOL_DATA_DIR and SPOOL_RELOAD_FILE go
+        // straight from the environment map in serve() (and checkConfig(), for the data dir), and
+        // SPOOL_LOG_LEVEL is substituted by logback and never touched by Kotlin at all. All three
+        // still belong in KNOWN_VARS or a correct configuration warns about them on every boot.
+        val readElsewhere = setOf("SPOOL_DATA_DIR", "SPOOL_RELOAD_FILE", "SPOOL_LOG_LEVEL")
         val unread = KNOWN_VARS - read - readElsewhere
         assertTrue(unread.isEmpty(), "in KNOWN_VARS but nothing reads them: $unread")
+    }
+
+    /**
+     * `SPOOL_TOKEN_NEXT` is only ever half of a rotation. Alone it would still gate the spool — it
+     * is just a second accepted credential — but it would mean the operator either believed they
+     * had set the primary and had not, or finished a rotation by clearing the wrong half. Both are
+     * worth refusing to boot over rather than accepting quietly.
+     */
+    @Test
+    fun tokenNextRequiresATokenAndMustDifferFromIt() {
+        val rotating = config(mapOf("SPOOL_TOKEN" to "old", "SPOOL_TOKEN_NEXT" to "new"))
+        assertEquals("old", rotating.token)
+        assertEquals("new", rotating.tokenNext)
+
+        assertNull(config(mapOf("SPOOL_TOKEN" to "old")).tokenNext)
+        // Empty is unset, the same as every other credential here.
+        assertNull(config(mapOf("SPOOL_TOKEN" to "old", "SPOOL_TOKEN_NEXT" to "")).tokenNext)
+
+        assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TOKEN_NEXT" to "new")) }
+        assertFailsWith<IllegalArgumentException> {
+            config(mapOf("SPOOL_TOKEN" to "same", "SPOOL_TOKEN_NEXT" to "same"))
+        }
     }
 
     @Test

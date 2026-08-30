@@ -165,6 +165,8 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 |---|---|---|
 | `SPOOL_PORT` | `9470` | listen port |
 | `SPOOL_TOKEN` | unset | bearer token; unset = public spool |
+| `SPOOL_TOKEN_NEXT` | unset | a second accepted token, for rotating without a cutover: set it, let clients migrate, promote it into `SPOOL_TOKEN`, unset it. Requires `SPOOL_TOKEN`, and must differ from it |
+| `SPOOL_RELOAD_FILE` | unset | a `KEY=value` file `SIGHUP` re-reads, layered over the environment. Unset means `SIGHUP` has nothing to read and says so |
 | `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
 | `SPOOL_DATA_DIR` | unset | unset = in-memory; set = SQLite at `$DIR/spool.db` |
 | `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
@@ -346,6 +348,65 @@ code.
 > cannot tell you the size of — and on the cheap VPS tiers the monthly transfer allowance binds
 > long before CPU or memory does. It counts CBOR record payload, excluding WebSocket and TLS
 > framing, so it runs a few percent under the figure your provider bills.
+
+### Rotating the token
+
+`SPOOL_TOKEN` alone makes rotation a cutover: change it and every client is locked out until it
+updates. `SPOOL_TOKEN_NEXT` is a second credential the spool accepts alongside the first, so the
+rotation becomes four steps with nothing refused at any point:
+
+```sh
+SPOOL_TOKEN=old SPOOL_TOKEN_NEXT=new   # 1. both work; hand `new` out
+                                       # 2. wait for clients to migrate
+SPOOL_TOKEN=new                        # 3. promote; `old` stops working here
+                                       # 4. issue the next one as NEXT when it is time
+```
+
+Both are accepted for as long as both are set, and anything that is neither is still refused — a
+spool mid-rotation accepts two secrets, not any secret. Step 3 is the one that ends the rotation,
+so do not leave `SPOOL_TOKEN_NEXT` set indefinitely: a credential you have stopped tracking is
+still a credential that works.
+
+Each step is a `SIGHUP` away — see below — so a rotation costs no client a reconnect.
+
+### Reloading configuration
+
+`SIGHUP` re-reads the file named by `SPOOL_RELOAD_FILE` and installs it without restarting, so a
+quota or a credential can change while connections stay up.
+
+The file is `KEY=value` lines in the environment's own syntax, `#` comments and blanks skipped, and
+it is layered **over** the environment: what the file names wins, what it omits falls back to what
+the process booted with. Unsetting a value therefore means deleting its line, not writing an empty
+one.
+
+```sh
+printf 'SPOOL_MAX_CONNS=500\nSPOOL_TOKEN=old\nSPOOL_TOKEN_NEXT=new\n' > /data/reload.env
+docker kill --signal=HUP spool
+```
+
+The environment cannot be the source, which is why the file exists: `System.getenv()` is fixed when
+the process starts, so a container's variables cannot change without recreating it — the reconnect
+this feature exists to avoid.
+
+**What a reload can move**, and when it bites:
+
+| | Takes effect |
+|---|---|
+| `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
+| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
+| `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address the spool has not seen recently |
+
+**What it cannot**, because something is already built from it — the store from the blob and scope
+limits, the sweeper and status line from their cadences, the commons scope from its id, the
+listener from the port: `SPOOL_PORT`, `SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`,
+`SPOOL_MAX_SCOPES`, `SPOOL_MAX_ATTACH_BYTES`, `SPOOL_MAX_A_CHUNK`, `SPOOL_SWEEP_MS`,
+`SPOOL_STATUS_MS`, `SPOOL_TRUST_PROXY`, `SPOOL_COMMONS_*`, `SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`.
+
+Naming one of those in the file is not fatal — it is logged as ignored and everything else still
+applies, so a stale line cannot block a later change. A file that is missing, unreadable or invalid
+leaves the running configuration untouched and logs why; reloads are retryable, and a spool that
+dropped its quotas to a half-written file would not be.
 
 ### Draining
 

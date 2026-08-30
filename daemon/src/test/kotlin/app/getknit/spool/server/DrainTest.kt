@@ -97,7 +97,7 @@ class DrainTest {
         StatusLine(
             metrics = Metrics(),
             maxScopes = 64,
-            maxBytes = 0L,
+            maxBytes = { 0L },
             startedAtMs = 0L,
             heap = { HeapUse(used = 0L, max = 1L) },
         )

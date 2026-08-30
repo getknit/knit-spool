@@ -22,6 +22,18 @@ document:
 
 ### Added
 
+- **`SIGHUP` reloads the configuration** — quotas, rate limits and credentials change without
+  restarting, so no client loses its connection to a settings change. `SPOOL_RELOAD_FILE` names a
+  `KEY=value` file layered over the environment; the environment itself cannot be the source,
+  because `System.getenv()` is fixed at exec and a container's variables cannot change without
+  recreating it. What a reload can and cannot move, and when each takes effect, is in the README.
+  Naming an unreloadable value is logged and ignored rather than fatal, and an unreadable or
+  invalid file leaves the running configuration untouched.
+- **`SPOOL_TOKEN_NEXT`, a second accepted credential** — rotation becomes add-new, migrate,
+  promote, retire instead of a cutover that locks out every client until it updates. Both tokens
+  are accepted for as long as both are set; anything that is neither is still refused. Compared in
+  constant time with no early exit, so the timing does not say which credential was presented.
+
 - **Drain mode, toggled by `SIGUSR1`** — new connections refused `503` with a `Retry-After` while
   the live ones keep being served. There was nowhere to stand between "serving" and "stopped":
   shutdown closes every session at once, so on a busy spool an upgrade sent every client back on

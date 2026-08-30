@@ -36,6 +36,12 @@ class ConfigDescribeTest {
         assertEquals("set", fields(line)["token"])
         assertEquals("set", fields(line)["metricsToken"])
         assertEquals("unset", fields(testConfig().describe())["token"])
+
+        // A rotation puts a second live secret in the process; it is reported the same way.
+        val rotating = testConfig(token = "s3cret", tokenNext = "n3xt").describe()
+        assertEquals("set", fields(rotating)["tokenNext"])
+        assertFalse(rotating.contains("n3xt"), rotating)
+        assertEquals("unset", fields(testConfig(token = "s3cret").describe())["tokenNext"])
     }
 
     /**

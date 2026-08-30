@@ -116,13 +116,42 @@ private val HEX_DIGITS = "0123456789abcdef".toCharArray()
  * proxy-appended `X-Forwarded-For` hop instead of the socket address.
  */
 class SpoolServer(
-    private val config: Config,
+    config: Config,
     private val store: ScopeStore = InMemoryScopeStore(config.hardLimits),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    /**
+     * The live configuration, swapped as a whole object by [reload].
+     *
+     * Volatile and replaced rather than mutated field-by-field, so any single read sees one
+     * generation and never a half-applied one. A handler that reads several related values should
+     * take a local snapshot first for the same reason; the ones here that matter — the watermark's
+     * ceiling and low-water mark — already do.
+     *
+     * What a reload can and cannot change is [Config.RELOADABLE]. The rest is captured at boot by
+     * something that cannot be rebuilt underneath a live connection: the store is constructed from
+     * `hardLimits`, the sweeper and status line are scheduled from their cadences, the commons
+     * scope is created before the first client, and the port is bound.
+     */
+    @Volatile
+    private var config: Config = config
+
     class Config(
         val port: Int,
         val token: String?,
+        /**
+         * A second connect credential, accepted alongside [token] and never announced.
+         *
+         * Rotation without it is a cutover: change the one token and every client is locked out
+         * until it updates, which in a fleet means scheduling an outage to change a secret. With
+         * it the sequence is add-new, let clients migrate, promote, retire — and nothing is
+         * refused at any point.
+         *
+         * Deliberately two named values rather than a delimited list. A separator is a character
+         * a token may legally contain, and the failure mode of getting that wrong is a spool that
+         * accepts a credential nobody issued.
+         */
+        val tokenNext: String? = null,
         /**
          * The scrape credential, deliberately not the connect credential. Null falls back to
          * [token], which is how every spool behaved before this existed.
@@ -166,33 +195,77 @@ class SpoolServer(
          * invite holders can find into one anybody can subscribe to. Its bounds are already on the
          * `commons enabled:` line, so they are not repeated here.
          */
-        fun describe(): String =
-            listOf(
+        fun describe(): String = (bootOnly() + reloadable()).entries.joinToString(" ") { (key, value) -> "$key=$value" }
+
+        /**
+         * The half a restart is required to change, because something is already built from it: the
+         * store from `hardLimits`, the sweeper and status line from their cadences, the commons
+         * scope from its id, the listener from the port.
+         *
+         * A reload that names any of these keeps the boot value and says so.
+         */
+        internal fun bootOnly(): Map<String, Any?> =
+            linkedMapOf(
                 "port" to port,
-                "token" to secret(token),
-                "metricsToken" to secret(metricsToken),
-                "pow" to powBits,
-                "maxRecord" to maxRecord,
                 "maxBlob" to hardLimits.maxBlob,
                 "maxFrames" to hardLimits.maxFramesCap,
                 "maxTtlMs" to hardLimits.maxTtlMs,
                 "maxScopes" to hardLimits.maxScopes,
-                "maxPull" to maxPull,
-                "maxAget" to maxAget,
                 "attachBytes" to hardLimits.maxAttachBytes,
                 "maxAChunk" to hardLimits.maxAChunk,
-                "maxBytes" to maxBytes,
                 "sweepMs" to sweepMs,
                 "statusMs" to statusMs,
                 "trustProxy" to trustProxy,
+                "commons" to (commons?.let { shortHex(it.scopeId) } ?: "off"),
+                "source" to sourceUrl,
+            )
+
+        /** The half `SIGHUP` may replace. Everything here is read live off the volatile config. */
+        internal fun reloadable(): Map<String, Any?> =
+            linkedMapOf(
+                "token" to secret(token),
+                "tokenNext" to secret(tokenNext),
+                "metricsToken" to secret(metricsToken),
+                "pow" to powBits,
+                "maxRecord" to maxRecord,
+                "maxPull" to maxPull,
+                "maxAget" to maxAget,
+                "maxBytes" to maxBytes,
                 "maxConns" to maxConns,
                 "maxConnsPerIp" to maxConnsPerIp,
                 "rateRecords" to rateRecords,
                 "ratePushes" to ratePushes,
                 "rateNewScopes" to rateNewScopesPerMin,
-                "commons" to (commons?.let { shortHex(it.scopeId) } ?: "off"),
-                "source" to sourceUrl,
-            ).joinToString(" ") { (key, value) -> "$key=$value" }
+            )
+
+        /**
+         * This config's boot half with [candidate]'s reloadable half — what a `SIGHUP` actually
+         * installs. Built by naming every field rather than by copying, so adding one to [Config]
+         * without deciding which half it belongs to fails to compile here.
+         */
+        internal fun withRuntimeOf(candidate: Config): Config =
+            Config(
+                port = port,
+                hardLimits = hardLimits,
+                sweepMs = sweepMs,
+                statusMs = statusMs,
+                trustProxy = trustProxy,
+                sourceUrl = sourceUrl,
+                commons = commons,
+                token = candidate.token,
+                tokenNext = candidate.tokenNext,
+                metricsToken = candidate.metricsToken,
+                powBits = candidate.powBits,
+                maxRecord = candidate.maxRecord,
+                maxPull = candidate.maxPull,
+                maxAget = candidate.maxAget,
+                maxBytes = candidate.maxBytes,
+                maxConns = candidate.maxConns,
+                maxConnsPerIp = candidate.maxConnsPerIp,
+                rateRecords = candidate.rateRecords,
+                ratePushes = candidate.ratePushes,
+                rateNewScopesPerMin = candidate.rateNewScopesPerMin,
+            )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
     }
@@ -232,8 +305,8 @@ class SpoolServer(
         StatusLine(
             metrics = metrics,
             maxScopes = config.hardLimits.maxScopes,
-            maxBytes = config.maxBytes,
-            maxConns = config.maxConns,
+            maxBytes = { config.maxBytes },
+            maxConns = { config.maxConns },
             startedAtMs = clock(),
         )
 
@@ -277,7 +350,12 @@ class SpoolServer(
      * customer's connect secret in its scrape config to read them. Null here means a public spool
      * with no metrics token, and `/metrics` is open exactly as it was.
      */
-    private val metricsGate = config.metricsToken ?: config.token
+    private val metricsGate: List<String>
+        get() = listOfNotNull(config.metricsToken).ifEmpty { connectGate }
+
+    /** Every credential `?k=` may present on a connect. Empty means an open spool. */
+    private val connectGate: List<String>
+        get() = listOfNotNull(config.token, config.tokenNext)
 
     /**
      * The §13 answer, assembled once: it cannot change while the process runs, and an
@@ -398,7 +476,7 @@ class SpoolServer(
                         call.respondText(sourceJson, ContentType.Application.Json)
                     }
                     get("/metrics") {
-                        if (metricsGate != null && !constantTimeEquals(call.request.queryParameters["k"], metricsGate)) {
+                        if (!accepts(metricsGate, call.request.queryParameters["k"])) {
                             call.respondText("forbidden", status = HttpStatusCode.Forbidden)
                             return@get
                         }
@@ -415,6 +493,35 @@ class SpoolServer(
         log.info("effective config: {}", config.describe())
         log.info("knit-spool listening on :{} (pow={} bits, token={})", config.port, config.powBits, config.token != null)
         return server.start(wait = wait)
+    }
+
+    /**
+     * Install [candidate]'s reloadable half, keeping this spool's boot half, and report what moved.
+     *
+     * Live connections are untouched, which is the entire point: changing a quota or rotating a
+     * credential should not cost every client a reconnect. What that buys is bounded, and the
+     * bound is worth stating rather than discovering:
+     *
+     *  - `maxConns`, `maxBytes` and the credentials are read on every use, so they bite immediately.
+     *  - `powBits`, `maxRecord`, `maxPull` and `maxAget` are announced in `hello`, so they apply to
+     *    connections opened after the reload. Existing ones keep the contract they negotiated.
+     *  - `rateRecords` and `ratePushes` size a bucket built per connection, and
+     *    `rateNewScopesPerMin` one built per client address, so both apply to *new* connections and
+     *    addresses. An established client keeps the budget it was admitted with until it reconnects.
+     *
+     * Returns the boot-only fields [candidate] tried to change, which the caller logs. They are
+     * ignored rather than fatal: refusing the whole reload over one would mean a stale `SPOOL_PORT`
+     * in an overrides file could block every later change to a rate limit.
+     */
+    fun reload(candidate: Config): List<String> {
+        val current = config
+        val ignored =
+            current.bootOnly().mapNotNull { (key, value) ->
+                val proposed = candidate.bootOnly()[key]
+                if (proposed != value) "$key=$proposed (still $value)" else null
+            }
+        config = current.withRuntimeOf(candidate)
+        return ignored
     }
 
     /** Graceful shutdown: close every session 1001, stop the engine, close the store. */
@@ -514,9 +621,7 @@ class SpoolServer(
             return
         }
         try {
-            if (config.token != null &&
-                !constantTimeEquals(session.call.request.queryParameters["k"], config.token)
-            ) {
+            if (!accepts(connectGate, session.call.request.queryParameters["k"])) {
                 session.close(CloseReason(CloseCode.AUTH.toShort(), "auth"))
                 return
             }
@@ -1191,6 +1296,25 @@ class SpoolServer(
                 }
             }
         }
+
+    /**
+     * Whether [candidate] matches any of [accepted]; an empty [accepted] admits everyone, which is
+     * what an unconfigured spool is.
+     *
+     * Every candidate is compared with no early exit once one matches — `or`, not `||` — so the
+     * time taken does not say *which* credential was presented. What it still says is how long the
+     * accepted ones are, since [constantTimeEquals] returns on a length mismatch; that was already
+     * true of the single-token version and is not made worse by there being two.
+     */
+    private fun accepts(
+        accepted: List<String>,
+        candidate: String?,
+    ): Boolean {
+        if (accepted.isEmpty()) return true
+        var ok = false
+        for (token in accepted) ok = ok or constantTimeEquals(candidate, token)
+        return ok
+    }
 
     private fun constantTimeEquals(
         a: String?,

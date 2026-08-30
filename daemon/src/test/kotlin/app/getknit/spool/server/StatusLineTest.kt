@@ -19,7 +19,7 @@ class StatusLineTest {
     ) = StatusLine(
         metrics = metrics,
         maxScopes = 64,
-        maxBytes = maxBytes,
+        maxBytes = { maxBytes },
         startedAtMs = 0L,
         heap = { HeapUse(used = heapUsed, max = 256L * 1024 * 1024) },
     )

@@ -26,8 +26,10 @@ class HeapUse(
 class StatusLine(
     private val metrics: Metrics,
     private val maxScopes: Int,
-    private val maxBytes: Long,
-    private val maxConns: Int = 0,
+    // Suppliers, not values: SIGHUP can move both ceilings, and a status line reporting what boot
+    // saw would be a quietly wrong number in the one place an operator looks for the right one.
+    private val maxBytes: () -> Long,
+    private val maxConns: () -> Int = { 0 },
     private val startedAtMs: Long,
     private val heap: () -> HeapUse = ::runtimeHeap,
 ) {
@@ -52,7 +54,8 @@ class StatusLine(
             append("up=").append(uptime(now - startedAtMs))
             append(" conns=").append(metrics.connectionsCurrent.get())
             // Same idiom as scopes: the ceiling is only printed when there is one to hit.
-            if (maxConns > 0) append('/').append(maxConns)
+            val connCeiling = maxConns()
+            if (connCeiling > 0) append('/').append(connCeiling)
             append(" accepted=+").append(delta.connections)
             append(" scopes=").append(scopes).append('/').append(maxScopes)
             // Members in the room and frames it holds. Omitted when there is no commons; the frame
@@ -66,7 +69,8 @@ class StatusLine(
             }
             append(" live=").append(bytes(liveBytes))
             // 0 is "unlimited" for the watermark, and "4.2MiB/0B" would read as a spool at its cap.
-            if (maxBytes > 0) append('/').append(bytes(maxBytes))
+            val byteCeiling = maxBytes()
+            if (byteCeiling > 0) append('/').append(bytes(byteCeiling))
             append(" heap=").append(bytes(heapUse.used)).append('/').append(bytes(heapUse.max))
             append(" records=+").append(delta.records)
             append(" pushes=+").append(delta.pushes)
