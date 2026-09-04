@@ -14,3 +14,7 @@ build.env
 metadata.json
 digest
 trivy-*.json
+
+# Local load-test scratch: compiled LoadGen classes, per-run logs and results, and the throwaway
+# proxy cert/token a run mints. Generated output only — no source lives here.
+bench/
