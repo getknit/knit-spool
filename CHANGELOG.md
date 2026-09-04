@@ -47,6 +47,12 @@ document:
   mounts the volume, so letting `.env` move either would break the proxy or the store rather than
   configure it.
 
+  Pinned so it cannot happen again: `DeployConfigTest` fails the build if a variable the daemon
+  reads is not reachable from `.env`, if one is declared that nothing reads, or if a numeric one
+  is given the empty-string form. It asks the parser whether an empty value is tolerated rather
+  than keeping a list to answer that, and `deploy/` is declared an input to the test task — Gradle
+  would otherwise hold the task up to date across exactly the edit the check exists to catch.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

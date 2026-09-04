@@ -80,4 +80,13 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+
+    // DeployConfigTest reads deploy/ to pin the shipped compose files against KNOWN_VARS. Gradle
+    // cannot infer that from the classpath, so without this the task stays UP-TO-DATE when only
+    // those files change -- which is exactly the edit the test exists to catch, and it would pass
+    // by never running. Declared as an input so editing a compose file re-runs the check.
+    inputs
+        .files(rootProject.layout.projectDirectory.dir("deploy"))
+        .withPropertyName("deployConfigs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
