@@ -22,8 +22,23 @@ services:
     expose:
       - "9470" # compose network only — never published to the host
     environment:
+      # Compose does NOT pass deploy/.env into the container — that file is interpolated into
+      # *this* one and nothing more. Every variable the daemon reads therefore needs a line
+      # here, or it is silently dropped and the daemon quietly runs its own default instead.
+      #
+      # The bare `KEY:` form is deliberate: it forwards the value from .env when set and omits
+      # the variable entirely when not, so the daemon's own default applies and no default is
+      # duplicated here to drift. Writing `KEY: "${KEY:-}"` would instead pass an empty string,
+      # which every numeric variable rejects at boot with `must be an integer, got ""`.
+      #
+      # Overlay order matters: docker-compose.tiny.yml re-pins several of these for 1 GB boxes
+      # and the last -f wins, so always -f docker-compose.tls.yml -f docker-compose.tiny.yml.
       SPOOL_POW_BITS: "${SPOOL_POW_BITS:-20}" # spec §12 recommended difficulty
       SPOOL_TOKEN: "${SPOOL_TOKEN:-}" # empty = public spool
+      # The second accepted credential. Rotation is add-new, migrate clients, promote, retire —
+      # both are accepted while both are set, so no client is locked out mid-cutover. Setting
+      # this without SPOOL_TOKEN refuses to boot: alone it is never what anyone meant.
+      SPOOL_TOKEN_NEXT:
       # Separate scrape credential for /metrics; empty = SPOOL_TOKEN gates it.
       SPOOL_METRICS_TOKEN: "${SPOOL_METRICS_TOKEN:-}"
       SPOOL_TRUST_PROXY: "true" # Caddy appends X-Forwarded-For; per-IP limits need it
@@ -31,6 +46,41 @@ services:
       SPOOL_LOG_LEVEL: "${SPOOL_LOG_LEVEL:-INFO}"
       # One status line every 5 min — what `docker compose logs -f spool` shows you. 0 = off.
       SPOOL_STATUS_MS: "${SPOOL_STATUS_MS:-300000}"
+      # AGPL §13: running a modified build obliges you to offer ITS source to the users whose
+      # clients connect. Unset serves the upstream URL — the wrong offer for a fork, and the
+      # reason this has to be reachable from .env rather than baked in.
+      SPOOL_SOURCE_URL:
+      # The KEY=value file SIGHUP re-reads, so a quota or a credential can change without the
+      # restart that drops every live connection. Put it on the volume: /data/reload.env.
+      SPOOL_RELOAD_FILE:
+      # Limits. Unset = the daemon's own default, documented in the README's config table.
+      SPOOL_MAX_BLOB:
+      SPOOL_MAX_RECORD:
+      SPOOL_MAX_FRAMES:
+      SPOOL_MAX_TTL_MS:
+      SPOOL_MAX_SCOPES:
+      SPOOL_MAX_PULL:
+      SPOOL_MAX_ATTACH_BYTES:
+      SPOOL_MAX_A_CHUNK:
+      SPOOL_MAX_AGET:
+      SPOOL_SWEEP_MS:
+      # Abuse control.
+      SPOOL_MAX_CONNS:
+      SPOOL_MAX_CONNS_PER_IP:
+      SPOOL_RATE_RECORDS:
+      SPOOL_RATE_PUSHES:
+      SPOOL_RATE_NEW_SCOPES:
+      # The commons (spec §7.4), one shared scope per spool. No SPOOL_COMMONS_ID = no commons,
+      # and the rest are then never read. SPOOL_COMMONS_MAX_BLOB deliberately gets no default
+      # here: the daemon falls back to SPOOL_MAX_BLOB, and a literal would break that link and
+      # refuse to boot under the tiny overlay, which lowers SPOOL_MAX_BLOB to 32 KiB.
+      SPOOL_COMMONS_ID:
+      SPOOL_COMMONS_NAME:
+      SPOOL_COMMONS_MAX_FRAMES:
+      SPOOL_COMMONS_TTL_MS:
+      SPOOL_COMMONS_MAX_BLOB:
+      SPOOL_COMMONS_ATTACH:
+      SPOOL_COMMONS_RATE_PUSHES:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

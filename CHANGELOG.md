@@ -20,7 +20,32 @@ document:
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- **The shipped compose files silently dropped most of `deploy/.env`.** Compose interpolates that
+  file into the compose file; it does not pass it to the container, so a variable reaches the
+  daemon only if `docker-compose.tls.yml` also names it under `environment:` — and it named eight.
+  Everything else an operator set there was accepted without complaint and then ignored, the daemon
+  running its own default instead. Nothing failed; the setting just never happened.
+
+  Worst of these was **`SPOOL_SOURCE_URL`**, which `deploy/.env.example` has always documented: a
+  fork setting it still served upstream's repository at `GET /source`, which is the wrong answer to
+  an AGPL §13 offer. Every variable added in 0.2.0 was unreachable the same way —
+  `SPOOL_TOKEN_NEXT`, `SPOOL_RELOAD_FILE` and all seven `SPOOL_COMMONS_*`, so the commons could not
+  be switched on from `.env` at all, and a `SIGHUP` logged `SPOOL_RELOAD_FILE` unset no matter what
+  the file said.
+
+  Every variable the daemon reads is now declared, using compose's bare `KEY:` form rather than
+  `KEY: "${KEY:-}"`. It forwards the value when `.env` sets one and omits the variable entirely
+  when it does not, so the daemon's own default applies and no default is duplicated here to drift
+  out of step. The empty-string form would also have been a boot failure waiting to happen: every
+  numeric variable rejects `""` with `must be an integer`. `SPOOL_COMMONS_MAX_BLOB` shows why the
+  distinction matters — it defaults to whatever `SPOOL_MAX_BLOB` is, and a literal default would
+  refuse to boot under the 1 GB overlay, which lowers `SPOOL_MAX_BLOB` to 32 KiB.
+
+  `SPOOL_PORT` and `SPOOL_DATA_DIR` stay undeclared on purpose: compose publishes the port and
+  mounts the volume, so letting `.env` move either would break the proxy or the store rather than
+  configure it.
 
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 

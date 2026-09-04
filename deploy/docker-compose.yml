@@ -11,8 +11,13 @@ services:
     environment:
       SPOOL_POW_BITS: "20" # spec §12 recommended difficulty for public spools
       # SPOOL_TOKEN: "change-me"      # private spool: wss://host/spool/v1?k=change-me
+      # SPOOL_TOKEN_NEXT: "next"      # second accepted credential, for rotating without lockout
       # SPOOL_TRUST_PROXY: "true"     # only when the proxy sets X-Forwarded-For
       # SPOOL_MAX_BYTES: "268435456"  # payload watermark (default 256 MiB)
+      # SPOOL_MAX_CONNS: "2000"       # total live connections; over it, 503 + Retry-After
+      # SPOOL_RELOAD_FILE: "/data/reload.env"  # the file SIGHUP re-reads; no restart needed
+      # SPOOL_SOURCE_URL: "https://example.com/your/fork"  # AGPL §13, if you run a modified build
+      # SPOOL_COMMONS_ID: "<64 hex>"  # one shared scope per spool (§7.4); unset = no commons
     volumes:
       - spool-data:/data
 
