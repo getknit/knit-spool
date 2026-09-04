@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-08-20T23:03:48Z
+  updated: 2026-09-04T19:49:37Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -19,6 +19,17 @@ document:
 # knit-spool changelog
 
 ## Unreleased
+
+Nothing yet.
+
+## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
+
+> The operator release. A spool can now be reloaded, drained, credential-rotated and
+> validated without dropping a connection or guessing, and it will tell you which version of
+> itself is running. It also gains a commons — one optional shared scope per spool, relayed
+> but unreadable. Pre-1.0, so every interface below is still subject to change; the wire is
+> additive only, with no records or error codes removed or changed, so a 0.1.0 client talks to
+> a 0.2.0 spool unchanged.
 
 ### Added
 
