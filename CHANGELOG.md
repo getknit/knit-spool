@@ -22,6 +22,27 @@ document:
 
 ### Fixed
 
+- **The documented way to drain or reload stopped the spool coming back after a reboot.** Both
+  `README.md` and `HOSTING.md` said `docker kill --signal=USR1|HUP <container>`, and *any*
+  `docker kill` marks a container manually stopped — whatever signal it carries, and even when the
+  process keeps running and the reload succeeds. `restart: unless-stopped`, which every compose
+  file here ships, means "restart unless the operator stopped it", so Docker then declined to start
+  the container after the next reboot: silently, `RestartCount=0` because it never tried, while
+  every other container on the box came back.
+
+  The two operations that exist to *avoid* disruption were the two that armed it, and the damage
+  was invisible until a reboot that might be weeks later and look unrelated. It cost this project's
+  own reference spool 1h23m of downtime on an unattended-upgrades reboot, with Caddy up in front of
+  it returning `502` the whole time.
+
+  Both now document `docker exec <container> kill -HUP 1` (or `-USR1`), which delivers the same
+  signal and touches none of Docker's stop bookkeeping. `restart: always` is deliberately **not**
+  the advice: it ignores the flag at boot, but a `docker kill` still suppresses the ordinary
+  restart-on-exit, so a signal that did stop the process would leave the spool down until the next
+  reboot rather than back in seconds. The signal reaches PID 1 because the daemon installs handlers
+  for `HUP`, `USR1` and `TERM` — a namespace init ignores a signal raised inside it unless there is
+  a handler, which is why `kill -KILL 1` from in there does nothing.
+
 - **The shipped compose files silently dropped most of `deploy/.env`.** Compose interpolates that
   file into the compose file; it does not pass it to the container, so a variable reaches the
   daemon only if `docker-compose.tls.yml` also names it under `environment:` — and it named eight.

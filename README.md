@@ -381,8 +381,22 @@ one.
 
 ```sh
 printf 'SPOOL_MAX_CONNS=500\nSPOOL_TOKEN=old\nSPOOL_TOKEN_NEXT=new\n' > /data/reload.env
-docker kill --signal=HUP spool
+docker exec spool kill -HUP 1          # compose: docker compose exec -T spool kill -HUP 1
 ```
+
+**Not `docker kill --signal=HUP`.** It delivers the same signal, and one thing more: *any*
+`docker kill` marks the container manually stopped, whatever signal it carries and even when the
+process keeps running. Under `restart: unless-stopped` — which every compose file here ships —
+Docker then declines to start it after a reboot, silently, with `RestartCount=0` to show it never
+tried. The spool that reloaded perfectly is simply missing the next morning. `restart: always` is
+not a fix either: it ignores that flag at boot, but a `docker kill` still suppresses the ordinary
+restart-on-exit, so a signal that did stop the process would leave the spool down until the next
+reboot rather than back in seconds.
+
+`docker exec … kill` sends the signal and touches none of that bookkeeping. It reaches PID 1
+because this daemon installs handlers for `HUP`, `USR1` and `TERM` — a namespace init ignores a
+signal sent from inside it unless there is a handler, which is also why `kill -KILL 1` from in
+there does nothing.
 
 The environment cannot be the source, which is why the file exists: `System.getenv()` is fixed when
 the process starts, so a container's variables cannot change without recreating it — the reconnect
@@ -415,9 +429,13 @@ upgrade needs between "serving" and "stopped", since a plain stop closes every s
 and sends every client back on the same second:
 
 ```sh
-docker kill --signal=USR1 spool   # drain: new upgrades get 503 + Retry-After, live conns served
-docker kill --signal=USR1 spool   # again to lift it
+docker exec spool kill -USR1 1   # drain: new upgrades get 503 + Retry-After, live conns served
+docker exec spool kill -USR1 1   # again to lift it
 ```
+
+`docker exec`, not `docker kill --signal=USR1`, for the reason under reloading above — a
+`docker kill` of any kind is what stops the container coming back after a reboot, and drain is
+exactly the thing you reach for right before one.
 
 Shift traffic to a sibling spool, wait for the connection count to fall, then stop. `/healthz`
 deliberately keeps answering `200` throughout — the container HEALTHCHECK and compose's
