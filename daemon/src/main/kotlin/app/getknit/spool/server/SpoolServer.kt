@@ -727,8 +727,10 @@ class SpoolServer(
             // A peer that stopped answering pings — sleep, network drop, killed process. Expected
             // churn, and the finally below still unwinds the connection, so don't let it reach
             // Ktor's handler and land as ERROR-with-stack-trace. Anything else still propagates.
+            // Routine enough to stay off the default log: one line per sleeping client buries the
+            // lines that mean something, and the status line's `conns` gauge already shows churn.
             if (e.message != PING_TIMEOUT_MESSAGE) throw e
-            log.info("connection dropped: ping timeout")
+            log.debug("connection dropped: ping timeout")
         } finally {
             activeSessions.remove(session)
             conn.subscriptions.keys.forEach { scopeHex ->

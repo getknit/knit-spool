@@ -20,6 +20,18 @@ document:
 
 ## Unreleased
 
+### Changed
+
+- **Routine connection drops no longer log.** `connection dropped: ping timeout` was `INFO`, so
+  the default log carried one line every time a client slept, changed network or died without
+  closing — the ordinary churn of mobile peers, at a rate that scales with the fleet and buries
+  the lines that mean something. It logs at `DEBUG` now. Nothing is lost: the drop was never a
+  fault, the connection unwinds identically, and the status line's `conns` gauge and
+  `knit_spool_connections_total` already count churn in a form you can actually read. Individual
+  drops come back with a `DEBUG` override on `app.getknit.spool.server.SpoolServer` — that one
+  logger, not `SPOOL_LOG_LEVEL`, which would take Ktor and the rest of the daemon with it. An
+  `IOException` that is *not* a ping timeout still propagates untouched.
+
 ### Fixed
 
 - **The documented way to drain or reload stopped the spool coming back after a reboot.** Both

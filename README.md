@@ -467,6 +467,15 @@ It logs under its own logger name, `app.getknit.spool.Status`, so a logback over
 re-level just this line; `SPOOL_LOG_LEVEL` is the root level and would take the rest of the daemon
 with it.
 
+Routine socket churn — a client that sleeps, loses its network, or dies without closing — is a
+`ping timeout` drop, and those log at `DEBUG`, so the default log stays quiet under a fleet of
+mobile clients. The `conns` gauge above is where churn shows up instead. To watch the individual
+drops, level up that one logger rather than the root:
+
+```xml
+<logger name="app.getknit.spool.server.SpoolServer" level="DEBUG"/>
+```
+
 ## 🧪 Conformance
 
 Validate any spool implementation — this one or a third party's — over a live connection:
