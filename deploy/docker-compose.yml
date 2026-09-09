@@ -5,6 +5,10 @@ services:
   spool:
     build: ..
     # or: image: <registry>/knit-spool:latest
+    # Without this the container is named for the directory compose ran in — `deploy-spool-1`.
+    # See docker-compose.tls.yml for what pinning the name costs. No project `name:` here on
+    # purpose: it sets the volume name, and changing that would orphan an existing store.
+    container_name: knit-spool
     restart: unless-stopped
     ports:
       - "127.0.0.1:9470:9470"

@@ -299,7 +299,8 @@ pulls the same way an x86 VPS does.
 
 ```sh
 docker pull ghcr.io/getknit/knit-spool:0.1.0
-docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 ghcr.io/getknit/knit-spool:0.1.0
+docker run --name knit-spool -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 \
+    ghcr.io/getknit/knit-spool:0.1.0
 ```
 
 Every release is tagged with its version, and a release that is not a prerelease also moves
@@ -320,7 +321,7 @@ Building your own is the other route, and the one to take if you have modified t
 
 ```sh
 docker build -t knit-spool .
-docker run -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 knit-spool
+docker run --name knit-spool -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 knit-spool
 ```
 
 However the image arrives, it persists to the `/data` volume, runs as uid 65532, and carries a
@@ -381,7 +382,7 @@ one.
 
 ```sh
 printf 'SPOOL_MAX_CONNS=500\nSPOOL_TOKEN=old\nSPOOL_TOKEN_NEXT=new\n' > /data/reload.env
-docker exec spool kill -HUP 1          # compose: docker compose exec -T spool kill -HUP 1
+docker exec knit-spool kill -HUP 1     # compose: docker compose exec -T spool kill -HUP 1
 ```
 
 **Not `docker kill --signal=HUP`.** It delivers the same signal, and one thing more: *any*
@@ -429,8 +430,8 @@ upgrade needs between "serving" and "stopped", since a plain stop closes every s
 and sends every client back on the same second:
 
 ```sh
-docker exec spool kill -USR1 1   # drain: new upgrades get 503 + Retry-After, live conns served
-docker exec spool kill -USR1 1   # again to lift it
+docker exec knit-spool kill -USR1 1   # drain: new upgrades get 503 + Retry-After, live conns served
+docker exec knit-spool kill -USR1 1   # again to lift it
 ```
 
 `docker exec`, not `docker kill --signal=USR1`, for the reason under reloading above — a

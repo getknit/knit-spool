@@ -163,8 +163,10 @@ internal fun checkConfig(environment: Map<String, String>): Int {
 }
 
 /**
- * SIGUSR1 toggles draining: `docker kill --signal=USR1 <container>` closes the door to new
- * connections and leaves the live ones alone, and sending it again re-opens.
+ * SIGUSR1 toggles draining: `docker exec knit-spool kill -USR1 1` closes the door to new
+ * connections and leaves the live ones alone, and sending it again re-opens. Not
+ * `docker kill --signal=USR1` — that marks the container manually stopped whatever signal it
+ * carries, and `restart: unless-stopped` then skips it on the next reboot.
  *
  * SIGUSR1 rather than a second SIGTERM, which is what `docker stop` sends before it SIGKILLs — a
  * two-phase TERM would drain and then be killed mid-drain by the ordinary stop path.

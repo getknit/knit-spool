@@ -18,6 +18,12 @@ services:
   spool:
     build: ..
     # or: image: <registry>/knit-spool:latest
+    # Pinned rather than left to compose, which would name this `knit-spool-spool-1` — the
+    # project name and the service name concatenated, plus a replica index. The name is what
+    # every `docker exec`/`logs` in the README and HOSTING.md types, so it is worth the two
+    # things pinning costs: `--scale` no longer works (meaningless here — one SQLite store on
+    # one volume), and the name is host-global, so a second stack on this host needs its own.
+    container_name: knit-spool
     restart: unless-stopped
     expose:
       - "9470" # compose network only — never published to the host
@@ -88,6 +94,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    container_name: knit-caddy
     restart: unless-stopped
     depends_on:
       spool:

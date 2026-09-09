@@ -22,6 +22,18 @@ document:
 
 ### Changed
 
+- **The compose containers are named `knit-spool` and `knit-caddy`.** Compose derives a name from
+  the project and the service and appends a replica index, so the daemon came up as
+  `knit-spool-spool-1` — and as `deploy-spool-1` under `docker-compose.yml`, which sets no project
+  name and so was named for whatever directory you ran it in. Both now pin `container_name`, which
+  is what the `docker exec` lines in `README.md` and `HOSTING.md` had already been written against:
+  they said `docker exec spool`, a name nothing created. Pinning costs `--scale`, meaningless for
+  one SQLite store on one volume, and makes the name host-global, so a second stack on one host
+  needs its own. The project name is deliberately unchanged: it is also the volume prefix, and
+  renaming it would leave an existing `knit-spool_spool-data` orphaned and start the spool on an
+  empty store. Existing deployments need `docker compose up -d` to pick the name up; the volume,
+  and everything in it, is untouched.
+
 - **Routine connection drops no longer log.** `connection dropped: ping timeout` was `INFO`, so
   the default log carried one line every time a client slept, changed network or died without
   closing — the ordinary churn of mobile peers, at a rate that scales with the fleet and buries

@@ -219,7 +219,7 @@ to back everyone else up.
 ## Upgrading without a reconnect storm
 
 Stopping a spool closes every session at once, and a few thousand clients then redial together.
-`docker exec <container> kill -USR1 1` puts it in drain instead: new upgrades are refused `503`
+`docker exec knit-spool kill -USR1 1` puts it in drain instead: new upgrades are refused `503`
 with a `Retry-After`, live connections keep being served, and a multi-homing client quietly uses
 its other spools. Drain, watch `knit_spool_connections_current` fall, then stop and upgrade.
 Sending the signal again lifts the drain if you change your mind.
