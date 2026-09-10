@@ -46,6 +46,21 @@ document:
 
 ### Fixed
 
+- **Every build that was not a release reported version `0.1.0-SNAPSHOT`.** The version reaches a
+  build one of two ways: a tagged release passes it on the command line, and everything else falls
+  back to a single literal in `build.gradle.kts`. Cutting 0.1.0 and 0.2.0 went through the first
+  path, so nothing ever moved the second — and every main build since went on reporting a version
+  two releases old, one that sorts *below* the release it supersedes. `GET /source` exists to
+  answer "what is running", and the `commit` field beside it was correct throughout, which is what
+  made the stale version worse than an absent one: the record looked answered.
+
+  The literal is now `0.3.0-SNAPSHOT`, and `BuildInfoTest` pins it against this file — the build
+  fails while the snapshot trails the newest released section here. Cutting a release renames
+  `## Unreleased` to `## <version>`, which trips that check until the literal moves to the next
+  release's snapshot, so the bump lands in the release commit rather than being remembered after
+  it. A tag build is unaffected: it carries the tag's own version, which the release workflow
+  already refuses to ship without a section here.
+
 - **The documented way to drain or reload stopped the spool coming back after a reboot.** Both
   `README.md` and `HOSTING.md` said `docker kill --signal=USR1|HUP <container>`, and *any*
   `docker kill` marks a container manually stopped — whatever signal it carries, and even when the

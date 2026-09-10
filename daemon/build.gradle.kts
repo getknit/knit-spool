@@ -89,4 +89,12 @@ tasks.test {
         .files(rootProject.layout.projectDirectory.dir("deploy"))
         .withPropertyName("deployConfigs")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // BuildInfoTest reads CHANGELOG.md to pin the snapshot version against the newest released
+    // section, and for the same reason: cutting a release edits only that file, which is exactly
+    // when this task must not be held up to date.
+    inputs
+        .files(rootProject.layout.projectDirectory.file("CHANGELOG.md"))
+        .withPropertyName("changelog")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
