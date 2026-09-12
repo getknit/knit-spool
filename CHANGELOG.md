@@ -20,6 +20,26 @@ document:
 
 ## Unreleased
 
+### Added
+
+- **`SPOOL_REQUIRE_MODERATION`, a send-side moderation request in `hello`.** A spool holds
+  ciphertext and cannot screen a message, so an operator who answers for the people on their spool
+  had no moderation lever at all. This is the one the design allows: set the flag and `hello`
+  carries `moderation: true`, asking every conforming client to run its on-device content screen —
+  the text and image classifier it already runs on what it receives — on what its user *sends* into
+  any scope this spool carries, and to refuse what the screen flags with no "send anyway". Spec
+  §7.5. The spool checks nothing and must not try; a modified client can ignore the field exactly as
+  it can skip any sender-side check, and what the flag buys is that every conforming client on the
+  spool refuses the same content the same way. Receiving is untouched: what a member hides or reveals
+  stays their own setting.
+
+  Strictest wins across a multi-homed conversation, because a sender seals once and pushes identical
+  bytes to every spool it knows — a per-spool split would fork the conversation by operator. Off by
+  default, and off is the absence of the field, never `false`: an unset spool's `hello` is
+  byte-identical to before, the §13 vectors are untouched, and one new vector pins the on state.
+  Reloadable on `SIGHUP` for the next connection, like `SPOOL_POW_BITS`. The conformance suite
+  gains an advisory `moderation-advertisement` check, and the compose files declare the variable.
+
 ### Changed
 
 - **The compose containers are named `knit-spool` and `knit-caddy`.** Compose derives a name from

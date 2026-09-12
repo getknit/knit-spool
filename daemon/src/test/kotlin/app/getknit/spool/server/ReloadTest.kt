@@ -8,6 +8,7 @@ import io.ktor.client.statement.bodyAsText
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -34,6 +35,22 @@ class ReloadTest {
             assertTrue(spool.reload(testConfig(token = "new")).isEmpty())
             connect(token = "new") { helloHandshake() }
             connect(token = "old") { awaitClose(CloseCode.AUTH) }
+        }
+    }
+
+    /**
+     * `requireModeration` is announced in `hello`, so it belongs to the half a reload may move and
+     * takes effect on the next connection — the same contract as `powBits`. A live client keeps the
+     * hello it negotiated; the test only asserts what a new one is told.
+     */
+    @Test
+    fun moderationRequestAppliesToConnectionsOpenedAfterReload() {
+        withServer(testConfig()) {
+            connect { assertNull(helloHandshake().moderation) }
+            assertTrue(spool.reload(testConfig(requireModeration = true)).isEmpty())
+            connect { assertEquals(true, helloHandshake().moderation) }
+            assertTrue(spool.reload(testConfig()).isEmpty())
+            connect { assertNull(helloHandshake().moderation) }
         }
     }
 

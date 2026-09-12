@@ -22,6 +22,7 @@ services:
       # SPOOL_RELOAD_FILE: "/data/reload.env"  # the file SIGHUP re-reads; no restart needed
       # SPOOL_SOURCE_URL: "https://example.com/your/fork"  # AGPL §13, if you run a modified build
       # SPOOL_COMMONS_ID: "<64 hex>"  # one shared scope per spool (§7.4); unset = no commons
+      # SPOOL_REQUIRE_MODERATION: "true"  # ask clients to screen before sending (§7.5); a request, not a check
     volumes:
       - spool-data:/data
 

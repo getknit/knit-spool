@@ -5,6 +5,7 @@ import app.getknit.spool.protocol.Commons
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -202,5 +203,23 @@ class ConfigTest {
         val commons = assertNotNull(withCommons("SPOOL_COMMONS_NAME" to "lax", "SPOOL_COMMONS_ATTACH" to "true").commons)
         assertEquals("lax", commons.name)
         assertTrue(commons.attach)
+    }
+
+    /**
+     * Spec §7.5. Off is the default because the flag changes what every conforming client on the
+     * spool will let its user send, which is not a decision to make for an operator who never set it.
+     */
+    @Test
+    fun requireModerationDefaultsOffAndParsesTrue() {
+        assertFalse(config(emptyMap()).requireModeration)
+        assertFalse(config(mapOf("SPOOL_REQUIRE_MODERATION" to "false")).requireModeration)
+        assertTrue(config(mapOf("SPOOL_REQUIRE_MODERATION" to "true")).requireModeration)
+    }
+
+    /** `yes`, `1`, `on`: each means something to somebody and nothing to the parser, by design. */
+    @Test
+    fun requireModerationRefusesAnythingButTrueOrFalse() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_REQUIRE_MODERATION" to "yes")) }
+        assertTrue(e.message!!.contains("SPOOL_REQUIRE_MODERATION"), e.message!!)
     }
 }

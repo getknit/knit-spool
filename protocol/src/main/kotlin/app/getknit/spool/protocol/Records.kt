@@ -126,6 +126,16 @@ class CommonsInfo(
     val attach: Boolean = false,
 )
 
+/**
+ * The first record in each direction (spec §7.1). Spool→client carries the negotiation and every
+ * capability signal; client→spool is `t` and the chosen `v`, nothing identifying.
+ *
+ * [moderation] is the send-side moderation request of spec §7.5: `true` asks clients to run their
+ * on-device content screen before sending and to withhold what it flags. Nullable rather than
+ * defaulted to `false` so a decoder can tell the field apart from its absence — the spec says a
+ * spool that does not require it omits the field, and `false` on the wire is a conformance finding.
+ * It is a request, not a check: the spool holds ciphertext and cannot verify compliance.
+ */
 @Serializable
 class Hello(
     val t: String,
@@ -134,6 +144,7 @@ class Hello(
     val limits: Limits? = null,
     val powBits: Int? = null,
     val commons: CommonsInfo? = null,
+    val moderation: Boolean? = null,
 )
 
 @Serializable

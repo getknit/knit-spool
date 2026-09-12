@@ -177,6 +177,15 @@ class SpoolServer(
         val rateRecords: Int = 50,
         val ratePushes: Int = 10,
         val rateNewScopesPerMin: Int = 6,
+        /**
+         * Ask clients to run their on-device content screen before sending and to withhold what
+         * it flags (spec §7.5). Advertised as `moderation: true` in `hello` and omitted when off.
+         *
+         * A request, not a check: this spool holds ciphertext and cannot tell whether a client
+         * complied, and it must not try. What the flag buys the operator is that every conforming
+         * client on the spool refuses the same content the same way, with no "send anyway".
+         */
+        val requireModeration: Boolean = false,
         /** The §13 corresponding-source URL served at `GET /source`; a fork overrides it. */
         val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
@@ -236,6 +245,7 @@ class SpoolServer(
                 "rateRecords" to rateRecords,
                 "ratePushes" to ratePushes,
                 "rateNewScopes" to rateNewScopesPerMin,
+                "moderation" to requireModeration,
             )
 
         /**
@@ -265,6 +275,7 @@ class SpoolServer(
                 rateRecords = candidate.rateRecords,
                 ratePushes = candidate.ratePushes,
                 rateNewScopesPerMin = candidate.rateNewScopesPerMin,
+                requireModeration = candidate.requireModeration,
             )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
@@ -503,8 +514,9 @@ class SpoolServer(
      * bound is worth stating rather than discovering:
      *
      *  - `maxConns`, `maxBytes` and the credentials are read on every use, so they bite immediately.
-     *  - `powBits`, `maxRecord`, `maxPull` and `maxAget` are announced in `hello`, so they apply to
-     *    connections opened after the reload. Existing ones keep the contract they negotiated.
+     *  - `powBits`, `maxRecord`, `maxPull`, `maxAget` and `requireModeration` are announced in
+     *    `hello`, so they apply to connections opened after the reload. Existing ones keep the
+     *    contract they negotiated.
      *  - `rateRecords` and `ratePushes` size a bucket built per connection, and
      *    `rateNewScopesPerMin` one built per client address, so both apply to *new* connections and
      *    addresses. An established client keeps the budget it was admitted with until it reconnects.
@@ -1212,6 +1224,9 @@ class SpoolServer(
                     maxAget = config.maxAget.takeIf { config.hardLimits.attachments },
                 ),
             powBits = config.powBits,
+            // Present only when on (§7.5, S-7.5-1): omitted is the off state, and `false` is never
+            // sent. A request to clients, not something this spool can check.
+            moderation = true.takeIf { config.requireModeration },
             // Bounds and a label — never `scopeId`. The id comes from the invite, and a spool that
             // published it would turn a room only invite holders can find into one that anybody
             // who connects can subscribe to and flood.

@@ -59,6 +59,7 @@ fun testConfig(
     rateRecords: Int = 1_000,
     ratePushes: Int = 1_000,
     rateNewScopesPerMin: Int = 10_000,
+    requireModeration: Boolean = false,
     sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
     commons: SpoolServer.CommonsConfig? = null,
 ): SpoolServer.Config =
@@ -82,9 +83,14 @@ fun testConfig(
         rateRecords = rateRecords,
         ratePushes = ratePushes,
         rateNewScopesPerMin = rateNewScopesPerMin,
+        requireModeration = requireModeration,
         sourceUrl = sourceUrl,
         commons = commons,
     )
+
+/** Whether [needle] occurs anywhere in this array — for asserting what an encoded record does *not* carry. */
+fun ByteArray.containsBytes(needle: ByteArray): Boolean =
+    (0..size - needle.size).any { start -> needle.indices.all { this[start + it] == needle[it] } }
 
 /** A fixed invite, so a test can derive the same commons scope id the server was configured with. */
 val TEST_COMMONS_SECRET = ByteArray(Commons.SECRET_BYTES) { (it + 1).toByte() }

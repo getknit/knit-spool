@@ -63,6 +63,7 @@ one conversation member.
 - [Run](#-run)
 - [Configuration](#-configuration)
 - [The commons](#-the-commons)
+- [Send-side moderation](#-send-side-moderation)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -125,6 +126,10 @@ Implements the full **v1** protocol:
 - **Commons** (§7.4) — one optional shared scope per spool, off unless `SPOOL_COMMONS_ID` is set.
   Ordinary records on the data path; what is added is the policy a *shared* scope needs. See
   [the commons](#-the-commons).
+- **Send-side moderation** (§7.5) — one optional `hello` bool, off unless
+  `SPOOL_REQUIRE_MODERATION` is set, asking clients to run their on-device content screen before
+  sending. A request the spool cannot check, and nothing on the data path. See
+  [send-side moderation](#-send-side-moderation).
 - **Capacity** — an optional total-connection cap that refuses the upgrade with `503` and a
   `Retry-After` rather than letting the box degrade into GC thrash. Not a protocol limit: a full
   spool is a property of the hardware, and a multi-homing client treats it as one more unreachable
@@ -190,6 +195,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×) |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×) |
+| `SPOOL_REQUIRE_MODERATION` | `false` | ask clients to run their on-device content screen before sending and refuse what it flags; advertised as `moderation: true` in `hello`, omitted when off. A request the spool cannot verify (§7.5) |
 | `SPOOL_COMMONS_ID` | unset | the commons scope id, 64 hex chars from `knit-spool commons-invite`; **unset = no commons** |
 | `SPOOL_COMMONS_NAME` | unset | display label advertised in `hello` |
 | `SPOOL_COMMONS_MAX_FRAMES` | `500` | commons frame cap — pinned, not client-declared |
@@ -244,7 +250,31 @@ invite learns only that the spool has a commons.
 > per-member identity or ban list. Removing someone means rotating the room: mint a new invite, set
 > the new id, restart. The old scope is no longer pinned and ages out on its TTL or under the
 > watermark. The operator cannot moderate individual messages — that would need the key they do not
-> have. See [`SECURITY.md`](SECURITY.md#the-commons).
+> have; the one lever is [send-side moderation](#-send-side-moderation), and it is the members'
+> clients that pull it. See [`SECURITY.md`](SECURITY.md#the-commons).
+
+## 🛡 Send-side moderation
+
+A spool holds ciphertext, so it cannot screen a message and never will. What an operator who answers
+for the people on their spool — a school, a workplace, a household — *can* do is ask the clients to.
+Set `SPOOL_REQUIRE_MODERATION=true` and `hello` carries one more field:
+
+```
+{ t: "hello", v: 1, min: 1, limits: {…}, powBits: 20, moderation: true }
+```
+
+A conforming client (spec §7.5) then runs its on-device content screen — the same text and image
+classifier it already runs on everything it receives — on what its user *sends* into any scope this
+spool carries, and refuses what the screen flags, with no "send anyway". Off, or unset, the field is
+omitted and nothing changes: clients still screen on receive and blur or collapse flagged content
+behind tap-to-reveal, as their own setting says.
+
+| | |
+|---|---|
+| **A request, not an enforcement** | The spool sees sealed bytes and can neither check nor punish. A modified client can ignore the flag exactly as it can skip any sender-side check; what the flag buys is that every *conforming* client on the spool refuses the same content the same way. Receive-side screening is what survives a hostile sender, and it stays the recipient's own — the flag never touches it. |
+| **Strictest wins** | A sender seals a frame once and pushes identical bytes to every spool it knows. If *any* spool of a conversation asks for moderation, a conforming client withholds flagged content from all of them rather than fork the conversation by operator. |
+| **Nothing on the data path** | No record, error code, close code or bound is added. An off spool's `hello` is byte-identical to before this existed. |
+| **Reloadable** | Announced in `hello`, so like `SPOOL_POW_BITS` a `SIGHUP` moves it for the next connection; a live client keeps the hello it negotiated. |
 
 ## 🌐 Deploy
 
@@ -408,7 +438,7 @@ this feature exists to avoid.
 | | Takes effect |
 |---|---|
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
-| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address the spool has not seen recently |
 

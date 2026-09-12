@@ -25,6 +25,7 @@ class ConfigDescribeTest {
         assertEquals("16", fields["maxConnsPerIp"])
         assertEquals("false", fields["trustProxy"])
         assertEquals("off", fields["commons"])
+        assertEquals("false", fields["moderation"])
     }
 
     /** SECURITY.md makes a token in this daemon's log a reportable vulnerability. */

@@ -159,6 +159,26 @@ class SpecVectorTest {
                             powBits = 20,
                         ),
                     ),
+                // §7.5: the send-side moderation request, present only when the operator set it.
+                "helloSpoolModeration" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                ),
+                            powBits = 20,
+                            moderation = true,
+                        ),
+                    ),
                 "ahave" to
                     RecordCodec.encode(Ahave(t = RecordType.AHAVE, q = 5L, scope = fixture(32, 1), aid = fixture(32, 7))),
                 "ahas" to
@@ -328,6 +348,11 @@ class SpecVectorTest {
                     "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
                     "0c84006e6d617841747461636842797465731a01000000696d6178414368756e6b19" +
                     "c045676d617841676574182067706f774269747314",
+                "helloSpoolModeration" to
+                    "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a" +
+                    "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
+                    "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
+                    "0c840067706f7742697473146a6d6f6465726174696f6ef5",
                 "ahave" to
                     "a461746561686176656171056573636f7065582001080f161d242b323940474e555c" +
                     "636a71787f868d949ba2a9b0b7bec5ccd3da636169645820070e151c232a31383f46" +

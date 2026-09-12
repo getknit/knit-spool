@@ -48,6 +48,7 @@ internal val KNOWN_VARS =
         "SPOOL_RATE_RECORDS",
         "SPOOL_RATE_PUSHES",
         "SPOOL_RATE_NEW_SCOPES",
+        "SPOOL_REQUIRE_MODERATION",
         "SPOOL_LOG_LEVEL",
         "SPOOL_SOURCE_URL",
         "SPOOL_DATA_DIR",
@@ -343,6 +344,9 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         rateRecords = intVar(env, "SPOOL_RATE_RECORDS", default = 50, min = 1),
         ratePushes = intVar(env, "SPOOL_RATE_PUSHES", default = 10, min = 1),
         rateNewScopesPerMin = intVar(env, "SPOOL_RATE_NEW_SCOPES", default = 6, min = 1),
+        // Announced in hello and honoured by clients (spec §7.5). The spool itself enforces nothing:
+        // it holds ciphertext and has nothing to screen.
+        requireModeration = boolVar(env, "SPOOL_REQUIRE_MODERATION", default = false),
         sourceUrl = sourceUrlFromEnv(env),
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
     )

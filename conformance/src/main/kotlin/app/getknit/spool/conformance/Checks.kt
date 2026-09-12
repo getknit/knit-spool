@@ -167,6 +167,7 @@ fun allChecks(): List<Check> =
         commonsAdvertisement(),
         commonsBoundsPinned(),
         commonsFanout(),
+        moderationAdvertisement(),
         rateLimit(),
         quotaScopes(),
     )
@@ -194,6 +195,18 @@ private fun commonsAdvertisement(): Check =
         ensure(!commons.attach || limits.attachments) {
             "commons advertises attachments on a spool that advertises no attachment limits"
         }
+    }
+
+/**
+ * §7.5, S-7.5-1: a spool that requires send-side moderation says `moderation: true`, and one that
+ * does not says nothing. `false` on the wire is the one shape the spec rules out — presence is the
+ * signal, so a client is entitled to read the key's existence alone. Nothing else is checkable from
+ * outside: the spool cannot enforce the request, and S-7.5-2 says it must not try.
+ */
+private fun moderationAdvertisement(): Check =
+    Check(name = "moderation-advertisement", must = false) { ctx ->
+        val moderation = ctx.serverHello.moderation ?: throw SkipCheck("spool advertises no moderation requirement (§7.5)")
+        ensure(moderation) { "hello carries moderation=false; S-7.5-1 omits the field when the spool does not require it" }
     }
 
 /**

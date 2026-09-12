@@ -7,9 +7,12 @@ import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Hello
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Pull
+import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 
 /** Connection establishment per spec §7.1: hello negotiation, auth, close codes. */
 class HelloAuthTest {
@@ -29,6 +32,35 @@ class HelloAuthTest {
                 assertEquals(config.maxPull, limits.maxPull)
                 assertEquals(config.hardLimits.maxFramesCap, limits.maxFramesCap)
                 assertEquals(config.hardLimits.maxTtlMs, limits.maxTtlMs)
+            }
+        }
+    }
+
+    /**
+     * Spec §7.5, S-7.5-1: omitted is the off state and `false` is never sent. Checked on the bytes
+     * as well as the decoded record — the bytes are what a third-party client sees, and the key's
+     * absence, not a `false`, is what the spec promises. It also keeps an off spool's `hello`
+     * byte-identical to the §13 `helloSpool` vector.
+     */
+    @Test
+    fun helloOmitsModerationByDefault() {
+        withServer(testConfig()) {
+            connect {
+                val hello = helloHandshake()
+                assertNull(hello.moderation)
+                assertFalse(
+                    RecordCodec.encode(hello).containsBytes("moderation".toByteArray()),
+                    "the server hello carried a moderation key on a spool that does not require it",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun helloAdvertisesModerationWhenRequired() {
+        withServer(testConfig(requireModeration = true)) {
+            connect {
+                assertEquals(true, helloHandshake().moderation)
             }
         }
     }

@@ -70,7 +70,8 @@ Two things a commons does move:
 
 Removing a member means rotating the room: mint a new invite, set the new `SPOOL_COMMONS_ID`, and
 restart. The old scope is no longer pinned, so it ages out on its TTL or under the watermark. The
-operator cannot moderate individual messages — that would need the key they do not have.
+operator cannot moderate individual messages — that would need the key they do not have. The one
+lever is `SPOOL_REQUIRE_MODERATION`, and it is the members' clients that pull it (below).
 
 ## Scope and known limitations
 
@@ -98,6 +99,12 @@ vulnerabilities** — they are documented and out of scope for reports:
   re-push, not a promise from the spool.
 - **A spool can withhold, delay, or forget.** Availability from any single spool is explicitly not
   guaranteed; that is why no spool is load-bearing.
+- **`SPOOL_REQUIRE_MODERATION` is a request, not an enforcement.** The spool holds ciphertext and
+  cannot screen it; the flag asks conforming clients to run their on-device content screen before
+  sending and to refuse what it flags (spec §7.5). A modified client can ignore it exactly as it can
+  skip any sender-side check, and the spool cannot tell — a report that one does is not a finding.
+  Receive-side screening is unaffected and stays the recipient's own setting, which is the
+  protection that survives a hostile sender.
 - **A commons is only as private as its invite, and every member shares one key.** Anyone the secret
   reaches can read and write the room, and there is no per-member identity, ban list, or revocation
   short of rotating the invite. Whether a member can forge another's display name is a property of

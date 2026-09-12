@@ -251,8 +251,5 @@ class CommonsTest {
                 cid = cid,
                 data = data,
             )
-
-        fun ByteArray.containsBytes(needle: ByteArray): Boolean =
-            (0..size - needle.size).any { start -> needle.indices.all { this[start + it] == needle[it] } }
     }
 }

@@ -76,6 +76,10 @@ services:
       SPOOL_RATE_RECORDS:
       SPOOL_RATE_PUSHES:
       SPOOL_RATE_NEW_SCOPES:
+      # Send-side moderation (spec §7.5). "true" asks every client on this spool to run its
+      # on-device content screen before sending and to refuse what it flags, with no "send
+      # anyway". A request the spool cannot check — it holds ciphertext — and off by default.
+      SPOOL_REQUIRE_MODERATION:
       # The commons (spec §7.4), one shared scope per spool. No SPOOL_COMMONS_ID = no commons,
       # and the rest are then never read. SPOOL_COMMONS_MAX_BLOB deliberately gets no default
       # here: the daemon falls back to SPOOL_MAX_BLOB, and a literal would break that link and
