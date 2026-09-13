@@ -184,6 +184,40 @@ document:
   amount), a SQLite test that a pre-floor `attach_bytes` column is healed on reopen, and a server
   test that two one-byte chunks trip a 1,000-byte watermark.
 
+- **An `aput` declaring more chunks than the quota could hold is refused `quota` before its first
+  chunk is stored.** The store accepted any `total ≥ 1`, and every later `ahave` for that `aid`
+  allocated a presence bitmap of `⌈total / 8⌉` bytes on the single store thread and sent it back:
+  a client-chosen `total` of 80,000,000 turned an 80-byte request into a 10 MB `ahas` costing
+  125 ms of the thread every other connection shares, `Int.MAX_VALUE` wrapped the `Int` arithmetic
+  into `NegativeArraySizeException` — `err internal` and a stack trace per request, 50 a second per
+  connection into a log the plain compose file never rotates — and anything between asked for more
+  than a 192 MiB heap holds. Finding F2 of the same review.
+
+  Chunking is structural: §4.5 fixes `total = ceil(|A| / aChunkBytes)` with `aChunkBytes = 49152`
+  (C-4.5-3), so a `total` above `⌈SPOOL_MAX_ATTACH_BYTES / 49152⌉` — 342 at the default — describes
+  an attachment larger than the whole quota, one that "cannot fit the budget even alone" and that
+  S-6.5-3 says to refuse `quota`. Both stores now do, first among the cheap rejections and ahead of
+  the hash, reaching the verdict the byte quota would have reached at the last chunk before the
+  first one exists. `A_CHUNK_BYTES` in `:protocol` names the constant; `HardLimits.maxATotal`
+  derives the bound from the quota, so there is nothing new to declare, document or reload, and the
+  bitmap arithmetic is bounded by construction — every stored `total` is at most `maxATotal`, which
+  is 43,691 even at a quota of `Int.MAX_VALUE`, so `(total + 7) / 8` cannot wrap. No conforming
+  client is touched: its `total` is at most the bound by definition.
+
+  **This changes what an upgraded SQLite store holds.** A spool that ran before this fix may hold a
+  header carrying whatever `total` a client chose; on its first boot the daemon drops every
+  attachment declaring more than `maxATotal` chunks — header and chunks, no tombstone, since nothing
+  conforming wrote it and `ahave` should answer absent rather than dead — logs one WARN naming the
+  count, and re-derives `attach_bytes` from what remains. The same drop covers an operator lowering
+  `SPOOL_MAX_ATTACH_BYTES` below an existing attachment's chunk count: it could never complete. The
+  conformance suite gains `aput-total-over-quota`, an advisory check that an `aput` declaring
+  `2³¹−1` chunks is answered with an `err` carrying `q` on a connection that keeps working, and
+  `attachment-get-truncated` skips itself on a spool whose quota cannot admit the `maxAget + 2`
+  chunks it declares. Pinned by `AttachmentTotalTest` (each refused `total` answers `quota`, leaves
+  presence absent and the store empty, and never reaches the guarded catch-all), the store contract
+  tests on both backends, `HardLimitsTest` for the derivation, and a SQLite test that a header set
+  to `Int.MAX_VALUE` is dropped on reopen.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

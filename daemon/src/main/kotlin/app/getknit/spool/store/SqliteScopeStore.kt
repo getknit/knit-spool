@@ -174,9 +174,36 @@ class SqliteScopeStore private constructor(
         recomputeOnBoot()
     }
 
-    /** Recomputes digest/count/bytes per scope from the blob rows; heals and warns on drift. */
+    /**
+     * Recomputes digest/count/bytes per scope from the blob rows; heals and warns on drift.
+     *
+     * First drops every attachment whose header declares more chunks than [HardLimits.maxATotal],
+     * so the `attach_bytes` re-sum below never counts one. Such a header is either older than the
+     * bound — written by a client that chose a `total` no attachment could have, when nothing
+     * refused it — or it was legitimate under a `SPOOL_MAX_ATTACH_BYTES` the operator has since
+     * lowered below its chunk count; either way the attachment can never complete, and the
+     * presence bitmap `ahave` would build for it is sized by that `total`. No tombstone: nothing
+     * conforming wrote it, and `ahave` should answer absent, not dead.
+     */
     private fun recomputeOnBoot() {
         tx {
+            val dropChunks =
+                prep(
+                    "DELETE FROM attachment_chunks WHERE (scope_id, aid) IN " +
+                        "(SELECT scope_id, aid FROM attachments WHERE total > ?)",
+                )
+            dropChunks.setInt(1, hardLimits.maxATotal)
+            dropChunks.executeUpdate()
+            val dropHeaders = prep("DELETE FROM attachments WHERE total > ?")
+            dropHeaders.setInt(1, hardLimits.maxATotal)
+            val dropped = dropHeaders.executeUpdate()
+            if (dropped > 0) {
+                log.warn(
+                    "dropped {} attachment(s) declaring more than {} chunks — none could ever fit the quota",
+                    dropped,
+                    hardLimits.maxATotal,
+                )
+            }
             var total = 0L
             prep("SELECT scope_id, digest, live_count, live_bytes FROM scopes").executeQuery().use { rows ->
                 val scopes = ArrayList<Triple<ByteArray, Long, Pair<Int, Long>>>()
@@ -459,6 +486,8 @@ class SqliteScopeStore private constructor(
             totalSelect.setBytes(2, aid)
             val total = totalSelect.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
             if (total <= 0) return@tx ABSENT
+            // total ≤ hardLimits.maxATotal: attachmentPut refuses more and the boot heal drops any
+            // header above it, so this is at most ⌈maxATotal / 8⌉ bytes and the Int sum cannot wrap.
             val bits = ByteArray((total + BITS_PER_BYTE - 1) / BITS_PER_BYTE)
             val chunkSelect = prep("SELECT idx FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
             chunkSelect.setBytes(1, scopeId)
@@ -524,7 +553,8 @@ class SqliteScopeStore private constructor(
         now: Long,
     ): AputResult {
         // The cheap, DB-free rejections run first so no path returns after a sweep without writing
-        // the scope row back.
+        // the scope row back. The total bound leads: a record that will be refused pays for no hash.
+        if (total > hardLimits.maxATotal) return AputResult.QuotaExceeded
         if (data.size > hardLimits.maxAChunk) return AputResult.TooLarge
         if (!sha256.digest(data).contentEquals(cid)) return AputResult.BadId
         if (total < 1 || idx !in 0 until total) return AputResult.Conflict

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.store
 
+import app.getknit.spool.protocol.A_CHUNK_BYTES
 import app.getknit.spool.protocol.ScopeBounds
 
 /**
@@ -18,12 +19,25 @@ class HardLimits(
     val maxScopes: Int,
     val maxAttachBytes: Int = 0,
     val maxAChunk: Int = DEFAULT_MAX_A_CHUNK,
+    /**
+     * The largest `total` an `aput` may declare: `⌈maxAttachBytes / A_CHUNK_BYTES⌉`, 342 at the
+     * 16 MiB default. Chunking is structural (§4.5: `total = ceil(|A| / aChunkBytes)`, C-4.5-3), so
+     * an attachment declaring more chunks than this is larger than the whole quota and can never
+     * fit — S-6.5-3's `quota`, reached before its first chunk is stored rather than at its last.
+     * Every `ahave` allocates and sends a presence bitmap of `⌈total / 8⌉` bytes, so this is also
+     * what bounds that allocation: a client-chosen `total` of 80,000,000 was a 10 MB reply to an
+     * 80-byte request, and `Int.MAX_VALUE` wrapped the arithmetic. Derived, not configured — there
+     * is nothing to declare, document or reload — and computed in Long so a budget near
+     * `Int.MAX_VALUE` cannot wrap it. Overridable only so tests that scale the budget below one
+     * structural chunk keep a usable range of totals.
+     */
+    val maxATotal: Int = ((maxAttachBytes.toLong() + A_CHUNK_BYTES - 1) / A_CHUNK_BYTES).toInt(),
 ) {
     val attachments: Boolean get() = maxAttachBytes > 0
 
     companion object {
-        /** A sealed chunk at the spec's structural 48 KiB: `1 + 12 + 40 + 49152 + 16` (§12). */
-        const val DEFAULT_MAX_A_CHUNK = 49_221
+        /** A sealed chunk at the spec's structural 48 KiB: `1 + 12 + 40 + A_CHUNK_BYTES + 16` (§12). */
+        const val DEFAULT_MAX_A_CHUNK = 1 + 12 + 40 + A_CHUNK_BYTES + 16
     }
 }
 
@@ -60,7 +74,11 @@ sealed class AputResult {
 
     object BadId : AputResult()
 
-    /** The attachment cannot fit the per-scope byte budget even with every other one evicted. */
+    /**
+     * The attachment cannot fit the per-scope byte budget even with every other one evicted — or
+     * declares a `total` above [HardLimits.maxATotal], which no attachment inside the budget can
+     * have (§4.5), and is refused before its first chunk is stored.
+     */
     object QuotaExceeded : AputResult()
 }
 
@@ -128,6 +146,11 @@ class ShedScope(
  * Every `scopeId`, `blobId`, `aid` and `cid` handed in is exactly `ID_BYTES` (32) long: the server
  * refuses anything else as `malformed` at the top of each handler, so implementations may key on an
  * id without re-checking its length.
+ *
+ * Every stored attachment's `total` is at most [HardLimits.maxATotal]: [attachmentPut] refuses a
+ * larger one as [AputResult.QuotaExceeded], and a persistent store drops any header above it on
+ * boot, so the presence bitmap [attachmentPresence] builds is at most `⌈maxATotal / 8⌉` bytes and
+ * its `Int` arithmetic cannot wrap.
  *
  * Implementations are safe for use from multiple threads; the server serializes calls through a
  * single-parallelism dispatcher regardless, so implementations may simply lock.
@@ -207,7 +230,10 @@ interface ScopeStore : AutoCloseable {
         now: Long,
     ): List<AttachmentChunk>
 
-    /** Stores one sealed chunk; see [AputResult] for the outcomes §6.5 requires. */
+    /**
+     * Stores one sealed chunk; see [AputResult] for the outcomes §6.5 requires. A `total` above
+     * [HardLimits.maxATotal] is [AputResult.QuotaExceeded] before anything is looked up or hashed.
+     */
     fun attachmentPut(
         scopeId: ByteArray,
         aid: ByteArray,

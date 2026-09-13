@@ -70,6 +70,15 @@ const val RECORD_VERSION = 1
  */
 const val ID_BYTES = 32
 
+/**
+ * The plaintext bytes of every attachment chunk but the last: `aChunkBytes` of §4.5 and §12.1,
+ * structural and not tunable (C-4.5-3), because it is what makes a chunk's position derivable
+ * without a manifest. An attachment of `|A|` bytes is exactly `total = ceil(|A| / A_CHUNK_BYTES)`
+ * chunks, so a spool can derive from its own attachment quota the largest `total` any attachment
+ * that fits it could declare, and refuse a larger one before a chunk is stored.
+ */
+const val A_CHUNK_BYTES = 49_152
+
 @Serializable
 class RecordHead(
     val t: String,

@@ -91,4 +91,31 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
             assertEquals(0L, store.totalBytes())
         }
     }
+
+    @Test
+    fun bootDropsAnAttachmentDeclaringMoreChunksThanTheBoundOnReopen() {
+        val data = byteArrayOf(1)
+        val cid = MessageDigest.getInstance("SHA-256").digest(data)
+        val aid = ByteArray(32) { 9 }
+        createStore().use { store ->
+            store.subscribe(scope, bounds, now = 0L)
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L))
+        }
+
+        // A store written before the bound holds whatever `total` the client chose.
+        DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { raw ->
+            raw.createStatement().use { it.executeUpdate("UPDATE attachments SET total = ${Int.MAX_VALUE}") }
+        }
+
+        createStore().use { store ->
+            // Gone whole — header and chunk — and released from the charge, not merely hidden.
+            val info = store.attachmentPresence(scope, aid, now = 2L)
+            assertEquals(0, info.total)
+            assertEquals(0, info.bits.size)
+            assertTrue(!info.dead, "the drop must not tombstone: nothing conforming wrote it")
+            assertEquals(0L, store.totalBytes())
+            assertEquals(0, store.attachmentGet(scope, aid, from = 0, n = 1, now = 2L).size)
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = 3L))
+        }
+    }
 }

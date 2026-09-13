@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.conformance
 
+import app.getknit.spool.protocol.A_CHUNK_BYTES
 import app.getknit.spool.protocol.Achunk
 import app.getknit.spool.protocol.Aget
 import app.getknit.spool.protocol.Ahas
@@ -165,6 +166,7 @@ fun allChecks(): List<Check> =
         attachmentBadId(),
         attachmentFirstWriteWins(),
         attachmentGetTruncated(),
+        aputTotalOverQuota(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
         commonsAdvertisement(),
@@ -413,13 +415,20 @@ private fun attachmentGetTruncated(): Check =
     Check(name = "attachment-get-truncated") { ctx ->
         val limits = ctx.requireAttachments()
         val maxAget = limits.maxAget ?: throw SkipCheck("no maxAget advertised")
+        val maxAttachBytes = limits.maxAttachBytes ?: throw SkipCheck("no maxAttachBytes advertised")
+        val total = maxAget + 2
+        // A spool may refuse a `total` no attachment inside its quota could have (§4.5, S-6.5-3);
+        // this probe needs one past maxAget, which a small quota cannot admit.
+        val maxTotal = (maxAttachBytes.toLong() + A_CHUNK_BYTES - 1) / A_CHUNK_BYTES
+        if (total > maxTotal) {
+            throw SkipCheck("maxAttachBytes=$maxAttachBytes admits at most $maxTotal chunks, fewer than the $total this probe declares")
+        }
         ctx.client.connect {
             hello()
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
             val (cid, data) = ctx.randomBlob(32)
-            val total = maxAget + 2
             send(
                 Aput(t = RecordType.APUT, q = nextQ(), scope = scope, aid = aid, idx = 0, total = total, cid = cid, data = data),
             )
@@ -431,6 +440,45 @@ private fun attachmentGetTruncated(): Check =
             ensure(chunk.idx == 0) { "expected chunk 0, got ${chunk.idx}" }
             val ok = expect<Ok>(RecordType.OK)
             ensure(ok.q == getQ) { "an over-long aget must be truncated and acked, not refused" }
+        }
+    }
+
+/**
+ * §4.5/S-6.5-3: chunking is structural (`total = ceil(|A| / aChunkBytes)`), so an `aput` declaring
+ * more chunks than `⌈maxAttachBytes / aChunkBytes⌉` describes an attachment larger than the whole
+ * quota — one that "cannot fit the budget even alone" and MUST be refused `quota`. Every `ahave`
+ * for an accepted header allocates and sends a bitmap of `⌈total / 8⌉` bytes, which is what a
+ * client-chosen `total` sizes. Advisory: the spec states the allocation bound as a member's duty
+ * (C-4.5-8) and numbers no spool-side refusal by `total`; which code to use is the spool's call —
+ * `quota` is what this repo's daemon says. Answered in-band on a connection that keeps working.
+ */
+private fun aputTotalOverQuota(): Check =
+    Check(name = "aput-total-over-quota", must = false) { ctx ->
+        ctx.requireAttachments()
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            ctx.subscribeFresh(this, scope)
+            val aid = ctx.randomScope()
+            val (cid, data) = ctx.randomBlob(32)
+            val q = nextQ()
+            send(Aput(t = RecordType.APUT, q = q, scope = scope, aid = aid, idx = 0, total = Int.MAX_VALUE, cid = cid, data = data))
+            val bytes =
+                try {
+                    receiveBytes()
+                } catch (e: TimeoutException) {
+                    throw CheckFailure("expected err for an aput declaring ${Int.MAX_VALUE} chunks, got timeout after $timeoutMs ms")
+                }
+            val t = RecordCodec.peekType(bytes)
+            ensure(t != RecordType.OK) {
+                "expected err for an aput declaring ${Int.MAX_VALUE} chunks, got ok: the spool stored a header no attachment could fill"
+            }
+            ensure(t == RecordType.ERR) { "expected err for an aput declaring ${Int.MAX_VALUE} chunks, got '${t ?: "undecodable record"}'" }
+            val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
+            ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
+            ensure(err.code == ErrCode.QUOTA) { "expected err code=quota for an aput declaring ${Int.MAX_VALUE} chunks, got ${err.code}" }
+            // Still a working connection: the refusal was in-band, not a close.
+            ctx.subscribeFresh(this, ctx.randomScope())
         }
     }
 

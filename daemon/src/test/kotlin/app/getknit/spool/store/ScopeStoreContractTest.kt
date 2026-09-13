@@ -28,6 +28,8 @@ abstract class ScopeStoreContractTest {
             // reachable) and that admits exactly 1_500 / ATTACH_CHUNK_FLOOR = 2 floor-charged rows.
             maxAttachBytes = 1_500,
             maxAChunk = 1_024,
+            // The derived bound at a 1,500 B budget is one chunk; the tests here declare up to 5.
+            maxATotal = 8,
         )
     private val bounds = ScopeBounds(maxFrames = 3, ttlMs = 10_000L, maxBlob = 1_024)
     private val scope = ByteArray(32) { 1 }
@@ -318,6 +320,32 @@ abstract class ScopeStoreContractTest {
                 store.attachmentPut(scope, aid, 0, 1, cid, ByteArray(limits.maxAChunk + 1), now = 1L),
             )
             assertEquals(0, store.attachmentPresence(scope, aid, now = 1L).total)
+        }
+    }
+
+    @Test
+    fun anAttachmentDeclaringMoreChunksThanTheBudgetHoldsIsRefusedQuota() {
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (cid, data) = chunk(0)
+            val before = store.totalBytes()
+
+            // The two probes from the review, and the first value past the bound: refused before a
+            // header exists, so `ahave` answers absent — not dead — and nothing was charged.
+            for (total in listOf(limits.maxATotal + 1, 80_000_000, Int.MAX_VALUE)) {
+                assertIs<AputResult.QuotaExceeded>(store.attachmentPut(scope, aid, 0, total, cid, data, now = 1L), "total $total")
+                val info = store.attachmentPresence(scope, aid, now = 1L)
+                assertEquals(0, info.total)
+                assertEquals(0, info.bits.size)
+                assertTrue(!info.dead, "an over-bound total must leave no tombstone")
+            }
+            assertEquals(before, store.totalBytes())
+
+            // The bound itself is admissible, and its bitmap is the largest a scope can be asked for.
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, limits.maxATotal, cid, data, now = 2L))
+            val info = store.attachmentPresence(scope, aid, now = 2L)
+            assertEquals(limits.maxATotal, info.total)
+            assertEquals((limits.maxATotal + 7) / 8, info.bits.size)
         }
     }
 

@@ -214,6 +214,8 @@ class InMemoryScopeStore(
         val scope = scopes[hex(scopeId)] ?: return AputResult.BadId
         scope.lastActivity = now
         sweepScope(scope, now)
+        // The total bound leads: a record that will be refused pays for no hash.
+        if (total > hardLimits.maxATotal) return AputResult.QuotaExceeded
         if (data.size > hardLimits.maxAChunk) return AputResult.TooLarge
         if (!MessageDigest.getInstance("SHA-256").digest(data).contentEquals(cid)) return AputResult.BadId
         if (total < 1 || idx !in 0 until total) return AputResult.Conflict
@@ -279,6 +281,8 @@ class InMemoryScopeStore(
     }
 
     private fun bitmapOf(attachment: StoredAttachment): ByteArray {
+        // total ≤ hardLimits.maxATotal: attachmentPut refuses more, so this is at most
+        // ⌈maxATotal / 8⌉ bytes and the Int sum cannot wrap.
         val out = ByteArray((attachment.total + BITS_PER_BYTE - 1) / BITS_PER_BYTE)
         for (index in attachment.chunks.keys) {
             if (index in 0 until attachment.total) {
