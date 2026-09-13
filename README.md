@@ -180,7 +180,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
 | `SPOOL_POW_BITS` | `0` | PoW difficulty for unknown scopes (spec suggests 20; 0 = off) |
 | `SPOOL_MAX_BLOB` | `65536` | max sealed-blob bytes |
-| `SPOOL_MAX_SCOPES` | `64` | max scopes held |
+| `SPOOL_MAX_SCOPES` | `64` | max scopes held; also the most scopes one `sub` may name — a longer one, or one naming a scope twice, is refused `malformed` whole |
 | `SPOOL_MAX_FRAMES` | `1000` | per-scope frame-cap ceiling |
 | `SPOOL_MAX_TTL_MS` | `604800000` | per-scope TTL ceiling (7 d) |
 | `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes (must fit `SPOOL_MAX_BLOB` + 512) |
@@ -195,9 +195,9 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop for per-IP limits |
 | `SPOOL_MAX_CONNS` | `0` | total live connections; over it the upgrade is refused **503 + `Retry-After`**, never a close code. 0 = unlimited |
 | `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client IP |
-| `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×) |
+| `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×); a `sub` spends one token per scope it names, and once the bucket is dry the rest of its scopes answer `err rate` |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
-| `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×) |
+| `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×); a `sub` naming more new scopes than the burst has its tail answered `err rate`, and a record refused for rate strikes the abuse window once, not once per scope |
 | `SPOOL_REQUIRE_MODERATION` | `false` | ask clients to run their on-device content screen before sending and refuse what it flags; advertised as `moderation: true` in `hello`, omitted when off. A request the spool cannot verify (§7.5) |
 | `SPOOL_COMMONS_ID` | unset | the commons scope id, 64 hex chars from `knit-spool commons-invite`; **unset = no commons** |
 | `SPOOL_COMMONS_NAME` | unset | display label advertised in `hello` |

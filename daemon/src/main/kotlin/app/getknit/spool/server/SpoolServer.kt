@@ -809,16 +809,61 @@ class SpoolServer(
         }
     }
 
+    /**
+     * A `sub` costs one record token at the dispatch loop and one more for every scope past the
+     * first. Each entry is a store transaction — the unknown-scope check, then the row read, sweep
+     * and write inside [ScopeStore.subscribe] — plus a `digest`, all on the one store thread every
+     * connection shares, so the record's cost is its entry count: 2,000 entries in one record at the
+     * default `maxRecord` measured 747 ms of store time for a single token. The list is bounded
+     * before anything is charged. More entries than `maxScopes` — the spool's advertised total, which
+     * a conforming client batches under — or the same scope twice, which leaves S-6.2-2 no "most
+     * recent declaration" to apply, is a malformed record, refused whole ahead of any token or hop
+     * exactly as an off-length id is; the cap is also what bounds the un-tokened `err rate` tail
+     * below to `maxScopes − 1` replies per record.
+     *
+     * Once the bucket is dry the rest of the record is refused `rate` per scope, with `retryMs`, and
+     * the entries before it stand. A client drops a scope from its table on a scoped `err` and
+     * re-subs it on its next round (C-9.1), so a partial answer converges where a whole-record
+     * `rate` would loop for ever on a spool whose burst is below the client's batch. One record
+     * strikes the abuse window at most once, whichever bucket refused it: a strike is evidence of a
+     * client ignoring backpressure, and one that has sent a single record has had none to ignore
+     * yet — [commonsBudget]'s reasoning. A conforming client is untouched: its batch is at most
+     * `maxScopes` entries, under the burst of 4 × `rateRecords` at every default.
+     */
     private suspend fun handleSub(
         conn: Conn,
         sub: Sub,
     ) {
         if (!requireIds(conn, sub.q, scope = null, ids = sub.subs.map { it.scope })) return
+        if (sub.subs.size > config.hardLimits.maxScopes) {
+            sendErr(conn, ErrCode.MALFORMED, q = sub.q)
+            return
+        }
+        val hexes = sub.subs.map { hex(it.scope) }
+        if (hexes.toHashSet().size != hexes.size) {
+            sendErr(conn, ErrCode.MALFORMED, q = sub.q)
+            return
+        }
         val now = clock()
-        for (scopeSub in sub.subs) {
-            val scopeHex = hex(scopeSub.scope)
+        var struck = false
+        for ((index, scopeSub) in sub.subs.withIndex()) {
+            val scopeHex = hexes[index]
+            if (index > 0) {
+                val retryMs = conn.recordBucket.take()
+                if (retryMs > 0) {
+                    // This entry and every one after it, at the same retryMs; one strike at most.
+                    for (rest in sub.subs.subList(index, sub.subs.size)) {
+                        if (rateLimited(conn, q = sub.q, scope = rest.scope, retryMs = retryMs, strike = !struck)) return
+                        struck = true
+                    }
+                    return
+                }
+            }
             if (scopeHex !in conn.subscriptions && withStore { store.isUnknownScope(scopeSub.scope) }) {
-                if (!newScopeGates(conn, scopeSub.scope, scopeSub.pow?.d, scopeSub.pow?.n, sub.q, now)) continue
+                val gate = newScopeGates(conn, scopeSub.scope, scopeSub.pow?.d, scopeSub.pow?.n, sub.q, now, strike = !struck)
+                if (gate == Gate.CLOSED) return
+                if (gate == Gate.RATE_REFUSED) struck = true
+                if (gate != Gate.PASSED) continue
             }
             // The commons declares its own bounds. Substituted rather than refused — the `digest`
             // reply already carries the applied bounds, so the client learns the truth in the
@@ -943,7 +988,7 @@ class SpoolServer(
         // An aput can recreate a shed scope exactly as a push can (§6.2/§6.4), so it passes the same
         // creation gates and re-subscribes the connection's remembered bounds before storing.
         if (withStore { store.isUnknownScope(aput.scope) }) {
-            if (!newScopeGates(conn, aput.scope, aput.pow?.d, aput.pow?.n, aput.q, now)) return
+            if (newScopeGates(conn, aput.scope, aput.pow?.d, aput.pow?.n, aput.q, now) != Gate.PASSED) return
             val declared = conn.subscriptions[hex(aput.scope)] ?: return
             when (val result = withStore { store.subscribe(aput.scope, declared, now) }) {
                 is SubscribeResult.Subscribed -> {
@@ -1026,7 +1071,7 @@ class SpoolServer(
             // The scope was shed or expired away while this connection stayed subscribed. A push
             // recreates it — exactly §6.4's "first SUB or PUSH for an unknown scope", so the
             // new-scope gates apply, then the remembered bounds re-subscribe.
-            if (!newScopeGates(conn, push.scope, push.pow?.d, push.pow?.n, push.q, now)) return
+            if (newScopeGates(conn, push.scope, push.pow?.d, push.pow?.n, push.q, now) != Gate.PASSED) return
             val declared = conn.subscriptions[hex(push.scope)] ?: return
             when (val result = withStore { store.subscribe(push.scope, declared, now) }) {
                 is SubscribeResult.Subscribed -> {
@@ -1070,7 +1115,15 @@ class SpoolServer(
         }
     }
 
-    /** The unknown-scope gates, cheapest first: per-IP creation rate, then PoW (spec §6.4). */
+    /** What [newScopeGates] made of a record. Only [PASSED] lets the scope be created. */
+    private enum class Gate { PASSED, POW_REFUSED, RATE_REFUSED, CLOSED }
+
+    /**
+     * The unknown-scope gates, cheapest first: per-IP creation rate, then PoW (spec §6.4). A bucket
+     * refusal strikes the abuse window only when [strike] says so — a `sub` naming many new scopes
+     * is one record and strikes once for all of them — and [Gate.CLOSED] reports that the strike
+     * closed the session, so a caller in a loop stops sending into it.
+     */
     private suspend fun newScopeGates(
         conn: Conn,
         scope: ByteArray,
@@ -1078,17 +1131,18 @@ class SpoolServer(
         powN: Long?,
         q: Long,
         now: Long,
-    ): Boolean {
+        strike: Boolean = true,
+    ): Gate {
         val retryMs = conn.ipState.newScopeBucket.take()
         if (retryMs > 0) {
-            rateLimited(conn, q = q, scope = scope, retryMs = retryMs)
-            return false
+            val closed = rateLimited(conn, q = q, scope = scope, retryMs = retryMs, strike = strike)
+            return if (closed) Gate.CLOSED else Gate.RATE_REFUSED
         }
         if (!powGate(scope, powDay, powN, now)) {
             sendErr(conn, ErrCode.POW, q = q, scope = scope)
-            return false
+            return Gate.POW_REFUSED
         }
-        return true
+        return Gate.PASSED
     }
 
     /**

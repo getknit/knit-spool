@@ -226,6 +226,40 @@ document:
   counted in `knit_spool_errs_total{code="internal"}`. Pinned by `GuardedTest`: five failures in one
   window are five answers and one trace, and the next window's trace says `4 more`.
 
+- **A `sub` is bounded at `maxScopes` entries and charged one record token per scope.** The record
+  bucket took one token per record at the dispatch loop, and a `sub` carried as many scopes as fit
+  `SPOOL_MAX_RECORD` — about 1,600 at the default — each a store transaction (the unknown-scope
+  check, then the row read, sweep and write of the subscribe) plus a `digest`, on the one store
+  thread every connection shares. Measured: 2,000 entries in one 160 KB record, 747 ms of store
+  time for one token; at 50 records a second one connection could demand some 35 seconds of store
+  time per second, and every other connection's pushes, pulls and health checks queued behind it.
+  No PoW involved: the scopes already existed. Finding F3 of the same review.
+
+  A `sub` naming more scopes than `maxScopes` — the spool's advertised total, which a conforming
+  client batches under — or naming a scope twice, which leaves S-6.2-2 no "most recent declaration"
+  to apply, is now `malformed`, refused whole ahead of any token or store hop exactly as an
+  off-length id is. Within the bound, every scope past the first spends a record token before its
+  store work, so a record's cost is its entry count; once the bucket is dry the rest of the record
+  answers `err rate` per scope with `retryMs`, and the scopes before it stand. Partial on purpose: a
+  client drops a scope from its table on a scoped `err` and re-subs it on its next round, so it
+  converges even on a spool whose burst is below its batch, where a whole-record `rate` would loop
+  for ever. No conforming client notices: its batch is at most `maxScopes` entries, under the burst
+  of 4 × `SPOOL_RATE_RECORDS` at every default.
+
+  **Two visible changes.** A client that sent more than `maxScopes` entries in one record was
+  answered per entry — digests, then `quota` — and now gets one `malformed`; no conforming client
+  ever sent one. And a record refused for rate strikes the abuse window once, whichever bucket
+  refused it, where the new-scope bucket used to strike once per scope: a fresh address whose first
+  `sub` named more new scopes than the `SPOOL_RATE_NEW_SCOPES` burst (24 at the default) was closed
+  4003 at the eighth refusal, one record into a session that had never been told to slow down, and
+  the handler then kept writing into the closed session. A strike is evidence of a client ignoring
+  backpressure; one record has had none to ignore. The conformance suite gains `sub-over-max-scopes`
+  and `sub-duplicate-scope`, advisory checks that each shape is answered with a single `err` echoing
+  `q` on a connection that keeps working. Pinned by `SubEntriesTest`: the cap is exact, the
+  duplicate is refused whole, twelve entries on a one-per-second bucket are four digests and eight
+  scoped `err rate` with the connection open afterwards, and the same twelve against a dry
+  new-scope bucket strike once — all four fail against the unbounded handler.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

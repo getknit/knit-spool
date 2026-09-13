@@ -54,6 +54,9 @@ private const val MAX_QUOTA_PROBE = 4_096
 /** Ceiling on `maxPull` the overflow check will exceed (each id costs 34 encoded bytes). */
 private const val MAX_PULL_PROBE = 65_536
 
+/** A `maxScopes` above this is not probed: the over-cap `sub` would not fit `maxRecord` anyway. */
+private const val MAX_SCOPES_PROBE = 65_536
+
 /** Upper bound on pushes blasted by the rate-limit probe. */
 private const val RATE_BLAST_MAX = 1_000
 
@@ -159,6 +162,8 @@ fun allChecks(): List<Check> =
         unknownRecordTolerance(),
         unknownFieldTolerance(),
         subOffLengthScope(),
+        subOverMaxScopes(),
+        subDuplicateScope(),
         qCorrelation(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
@@ -1069,6 +1074,86 @@ private fun subOffLengthScope(): Check =
             ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for a ${ID_BYTES - 1}-byte scope id, got ${err.code}" }
             // Still a working connection: the refusal was in-band, not a close.
             ctx.subscribeFresh(this, ctx.randomScope())
+        }
+    }
+
+/**
+ * §7.1/§6.4: `maxScopes` is the spool's advertised total, and a conforming client batches a `sub`
+ * under it. A record naming more scopes than that is one the spool could never honour and, entry
+ * for entry, a store transaction each — so the answer is a single `err` echoing the request's `q`
+ * and naming no scope, ahead of any of it, on a connection that keeps working (B-7.1-7). Unstamped
+ * on purpose: the refusal precedes the creation gates, so a PoW spool that instead answers `err pow`
+ * for the first entry has processed the record rather than refused it. Advisory: the spec numbers
+ * no such refusal, and which code to use is the spool's call — `malformed` is what this repo's
+ * daemon says.
+ */
+private fun subOverMaxScopes(): Check =
+    Check(name = "sub-over-max-scopes", must = false) { ctx ->
+        val limits = ctx.limits()
+        if (limits.maxScopes > MAX_SCOPES_PROBE) throw SkipCheck("maxScopes ${limits.maxScopes} too large to overflow")
+        val entries = limits.maxScopes + 1
+        ctx.client.connect {
+            hello()
+            val q = nextQ()
+            val encoded =
+                RecordCodec.encode(
+                    Sub(
+                        t = RecordType.SUB,
+                        q = q,
+                        subs = List(entries) { ScopeSub(scope = ctx.randomScope(), bounds = defaultBounds()) },
+                    ),
+                )
+            if (encoded.size > limits.maxRecord) {
+                throw SkipCheck("maxScopes+1 entries encode to ${encoded.size} bytes, above maxRecord ${limits.maxRecord}")
+            }
+            sendRaw(encoded)
+            val bytes =
+                try {
+                    receiveBytes()
+                } catch (e: TimeoutException) {
+                    throw CheckFailure("expected err for a sub naming $entries scopes, got timeout after $timeoutMs ms")
+                }
+            val t = RecordCodec.peekType(bytes)
+            ensure(t != RecordType.DIGEST) { "expected err for a sub naming $entries scopes, got digest: the spool subscribed it" }
+            ensure(t == RecordType.ERR) { "expected err for a sub naming $entries scopes, got '${t ?: "undecodable record"}'" }
+            val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
+            ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
+            ensure(err.scope == null) { "expected a whole-record err naming no scope, got scope ${hex(err.scope!!)}" }
+            ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for an over-cap sub, got ${err.code}" }
+            // Still a working connection: the refusal was in-band, not a close.
+            ctx.subscribeFresh(this, ctx.randomScope())
+        }
+    }
+
+/**
+ * S-6.2-2: applied bounds are "the most recent SUB's declaration", which two entries for one scope
+ * in a single record leave undefined — and a repeated scope is a way to buy the same store
+ * transaction many times for one record token. Refused whole, like an off-length id: one `err`
+ * echoing `q`, no scope subscribed, connection intact. Stamped, so a PoW spool has nothing but the
+ * repeat left to refuse. Advisory, as above.
+ */
+private fun subDuplicateScope(): Check =
+    Check(name = "sub-duplicate-scope", must = false) { ctx ->
+        ctx.client.connect {
+            hello()
+            val scope = ctx.randomScope()
+            val q = nextQ()
+            val entry = ScopeSub(scope = scope, bounds = defaultBounds(), pow = ctx.mineStamp(scope))
+            send(Sub(t = RecordType.SUB, q = q, subs = listOf(entry, entry)))
+            val bytes =
+                try {
+                    receiveBytes()
+                } catch (e: TimeoutException) {
+                    throw CheckFailure("expected err for a sub naming one scope twice, got timeout after $timeoutMs ms")
+                }
+            val t = RecordCodec.peekType(bytes)
+            ensure(t != RecordType.DIGEST) { "expected err for a sub naming one scope twice, got digest: the spool subscribed it" }
+            ensure(t == RecordType.ERR) { "expected err for a sub naming one scope twice, got '${t ?: "undecodable record"}'" }
+            val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
+            ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
+            ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for a duplicated scope, got ${err.code}" }
+            // Still a working connection, and the scope itself was never the problem.
+            ctx.subscribeFresh(this, scope)
         }
     }
 
