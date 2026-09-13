@@ -133,6 +133,32 @@ document:
   than keeping a list to answer that, and `deploy/` is declared an input to the test task — Gradle
   would otherwise hold the task up to date across exactly the edit the check exists to catch.
 
+### Security
+
+- **An off-length wire id is refused as `malformed` before it touches anything.** Scope ids, blob
+  ids, attachment ids and chunk ids are `bstr32` on the wire (spec B-2-6, §7.2, §7.3), but the daemon
+  never checked, and the codec cannot: a CBOR byte string of any length decodes into a `ByteArray`,
+  so an empty scope or a 100 KB `aid` arrived looking exactly like a real one. Past the handler an
+  id becomes a map key and a row key, copied into every dependent row, index and tombstone, while
+  only `data` was metered against quota — 200 one-byte `aput`s under such an `aid` counted 200 bytes
+  and wrote 82 MB — and a `sub` naming an empty or 1000-byte scope was answered with a `digest`.
+  Finding F1 of the 2026-09-13 security review of `d58d1fb`.
+
+  Every handler now checks each id first, ahead of the subscription check and the push bucket, and
+  answers `err malformed` with the request's `q`. The scope is echoed only when it is itself 32
+  bytes, so an oversized one is never reflected back — `err.scope` is `bstr32` too. Nothing in a
+  refused record is processed: a `sub` with one bad entry subscribes none of them, and a `pull` with
+  a bad id anywhere in the list, past `maxPull` included, is refused whole. No strike and no log
+  line, as for every other in-band `malformed`. A record that could never be stored spends no push
+  token and never reaches the store thread.
+
+  **One visible change:** a `push` whose `blobId`, or an `aput` whose `cid`, is not 32 bytes long
+  now answers `malformed` rather than `bad_id`; `bad_id` still means a 32-byte hash that does not
+  match `data`. No conforming client ever sent one, and the §13 vectors are untouched. `ID_BYTES` in
+  `:protocol` names the length for the daemon, the tests and the conformance suite, which gains
+  `sub-off-length-scope` — an advisory check that a 31-byte scope is answered with an `err`, not a
+  `digest`, on a connection that keeps working. Pinned by `IdLengthTest`.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

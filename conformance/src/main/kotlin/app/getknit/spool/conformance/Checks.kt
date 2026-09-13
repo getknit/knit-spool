@@ -15,6 +15,7 @@ import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
 import app.getknit.spool.protocol.Hello
+import app.getknit.spool.protocol.ID_BYTES
 import app.getknit.spool.protocol.Limits
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Pow
@@ -34,6 +35,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.TimeoutException
 import kotlin.random.Random
 
 /** Grace window in which a record that must NOT arrive is awaited (uploader echo, duplicate event). */
@@ -155,6 +157,7 @@ fun allChecks(): List<Check> =
         powGate(),
         unknownRecordTolerance(),
         unknownFieldTolerance(),
+        subOffLengthScope(),
         qCorrelation(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
@@ -978,6 +981,46 @@ private fun unknownFieldTolerance(): Check =
             ensure(list.scope.contentEquals(scope)) {
                 "expected list response for scope ${hex(scope)}, got ${hex(list.scope)}"
             }
+        }
+    }
+
+/**
+ * B-2-6/§7.2: a scope id is `bstr32`. A `sub` naming a 31-byte scope cannot be answered with a
+ * `digest` — that record's own `scope` is `bstr32` too — so the answer is an `err` echoing the
+ * request's `q` and carrying no off-length scope, on a connection that keeps working (B-7.1-7).
+ * Advisory: the spec types the field but numbers no refusal, and which code to use is the spool's
+ * call — `malformed` is what this repo's daemon says.
+ */
+private fun subOffLengthScope(): Check =
+    Check(name = "sub-off-length-scope", must = false) { ctx ->
+        ctx.client.connect {
+            hello()
+            val scope = Random.nextBytes(ID_BYTES - 1)
+            val q = nextQ()
+            // Stamped, so a PoW spool has nothing but the length left to refuse.
+            send(
+                Sub(
+                    t = RecordType.SUB,
+                    q = q,
+                    subs = listOf(ScopeSub(scope = scope, bounds = defaultBounds(), pow = ctx.mineStamp(scope))),
+                ),
+            )
+            val bytes =
+                try {
+                    receiveBytes()
+                } catch (e: TimeoutException) {
+                    throw CheckFailure("expected err for a ${ID_BYTES - 1}-byte scope id, got timeout after $timeoutMs ms")
+                }
+            val t = RecordCodec.peekType(bytes)
+            ensure(t != RecordType.DIGEST) { "expected err for a ${ID_BYTES - 1}-byte scope id, got digest: the spool subscribed it" }
+            ensure(t == RecordType.ERR) { "expected err for a ${ID_BYTES - 1}-byte scope id, got '${t ?: "undecodable record"}'" }
+            val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
+            ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
+            val echoed = err.scope
+            ensure(echoed == null || echoed.size == ID_BYTES) { "expected err.scope absent or $ID_BYTES bytes, got ${echoed?.size} bytes" }
+            ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for a ${ID_BYTES - 1}-byte scope id, got ${err.code}" }
+            // Still a working connection: the refusal was in-band, not a close.
+            ctx.subscribeFresh(this, ctx.randomScope())
         }
     }
 

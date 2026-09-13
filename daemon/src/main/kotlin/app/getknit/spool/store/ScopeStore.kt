@@ -125,6 +125,10 @@ class ShedScope(
  * tombstone is refused and never re-enters the digest; `blobId = SHA-256(data)` is verified on
  * every push (spec: a third party must not be able to poison an honest spool's digest).
  *
+ * Every `scopeId`, `blobId`, `aid` and `cid` handed in is exactly `ID_BYTES` (32) long: the server
+ * refuses anything else as `malformed` at the top of each handler, so implementations may key on an
+ * id without re-checking its length.
+ *
  * Implementations are safe for use from multiple threads; the server serializes calls through a
  * single-parallelism dispatcher regardless, so implementations may simply lock.
  */

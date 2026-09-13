@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
-import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -233,23 +232,5 @@ class CommonsTest {
         ) {
             sendRecord(Push(t = RecordType.PUSH, q = q, scope = scope, blobId = blobId, data = data))
         }
-
-        fun aput(
-            q: Long,
-            scope: ByteArray,
-            aid: ByteArray,
-            cid: ByteArray,
-            data: ByteArray,
-        ): Aput =
-            Aput(
-                t = RecordType.APUT,
-                q = q,
-                scope = scope,
-                aid = aid,
-                idx = 0,
-                total = 1,
-                cid = cid,
-                data = data,
-            )
     }
 }

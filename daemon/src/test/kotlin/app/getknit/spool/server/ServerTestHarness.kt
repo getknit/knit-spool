@@ -2,6 +2,7 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.BuildInfo
+import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Hello
@@ -223,6 +224,25 @@ fun testBlob(seed: Int): Pair<ByteArray, ByteArray> {
     data[1] = seed.toByte()
     return MessageDigest.getInstance("SHA-256").digest(data) to data
 }
+
+/** A single-chunk `aput` (idx 0 of 1) — the smallest attachment record a test can send. */
+fun aput(
+    q: Long,
+    scope: ByteArray,
+    aid: ByteArray,
+    cid: ByteArray,
+    data: ByteArray,
+): Aput =
+    Aput(
+        t = RecordType.APUT,
+        q = q,
+        scope = scope,
+        aid = aid,
+        idx = 0,
+        total = 1,
+        cid = cid,
+        data = data,
+    )
 
 /**
  * Runs [block] with a [ListAppender] attached to [loggerName] and returns what it logged.

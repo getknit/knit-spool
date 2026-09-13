@@ -62,6 +62,14 @@ object CloseCode {
 
 const val RECORD_VERSION = 1
 
+/**
+ * The length of every wire id. Scope ids, blob ids, attachment ids (`aid`) and chunk ids (`cid`)
+ * are all raw 32-byte strings (spec B-2-6; the `bstr32` of §7.2 and §7.3). The codec cannot
+ * enforce it — a CBOR byte string of any length decodes into a `ByteArray` — so a receiver checks
+ * `size == ID_BYTES` itself before an id becomes a key.
+ */
+const val ID_BYTES = 32
+
 @Serializable
 class RecordHead(
     val t: String,

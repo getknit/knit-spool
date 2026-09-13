@@ -15,6 +15,7 @@ import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
 import app.getknit.spool.protocol.Hello
+import app.getknit.spool.protocol.ID_BYTES
 import app.getknit.spool.protocol.Limits
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Pow
@@ -774,6 +775,7 @@ class SpoolServer(
         conn: Conn,
         sub: Sub,
     ) {
+        if (!requireIds(conn, sub.q, scope = null, ids = sub.subs.map { it.scope })) return
         val now = clock()
         for (scopeSub in sub.subs) {
             val scopeHex = hex(scopeSub.scope)
@@ -803,6 +805,7 @@ class SpoolServer(
         conn: Conn,
         list: ScopeList,
     ) {
+        if (!requireIds(conn, list.q, list.scope)) return
         if (!requireSub(conn, list.scope, list.q)) return
         val info = withStore { store.list(list.scope, clock()) }
         // A subscribed-but-shed scope answers empty (nullable fields omitted), not an error: the
@@ -823,6 +826,7 @@ class SpoolServer(
         conn: Conn,
         pull: Pull,
     ) {
+        if (!requireIds(conn, pull.q, pull.scope, pull.blobIds)) return
         if (!requireSub(conn, pull.scope, pull.q)) return
         val wanted = pull.blobIds.take(config.maxPull)
         val served = withStore { store.pull(pull.scope, wanted, clock()) }
@@ -838,6 +842,7 @@ class SpoolServer(
         conn: Conn,
         ahave: Ahave,
     ) {
+        if (!requireIds(conn, ahave.q, ahave.scope, listOf(ahave.aid))) return
         if (!requireAttachments(conn, ahave.q, ahave.scope)) return
         if (!requireSub(conn, ahave.scope, ahave.q)) return
         val info = withStore { store.attachmentPresence(ahave.scope, ahave.aid, clock()) }
@@ -859,6 +864,7 @@ class SpoolServer(
         conn: Conn,
         aget: Aget,
     ) {
+        if (!requireIds(conn, aget.q, aget.scope, listOf(aget.aid))) return
         if (!requireAttachments(conn, aget.q, aget.scope)) return
         if (!requireSub(conn, aget.scope, aget.q)) return
         // Truncated, never an error — the `pull` rule of §7.2, reapplied.
@@ -886,6 +892,7 @@ class SpoolServer(
         conn: Conn,
         aput: Aput,
     ) {
+        if (!requireIds(conn, aput.q, aput.scope, listOf(aput.aid, aput.cid))) return
         if (!requireAttachments(conn, aput.q, aput.scope)) return
         if (!requireSub(conn, aput.scope, aput.q)) return
         val retryMs = conn.pushBucket.take()
@@ -967,6 +974,7 @@ class SpoolServer(
         conn: Conn,
         push: Push,
     ) {
+        if (!requireIds(conn, push.q, push.scope, listOf(push.blobId))) return
         if (!requireSub(conn, push.scope, push.q)) return
         val retryMs = conn.pushBucket.take()
         if (retryMs > 0) {
@@ -1176,6 +1184,33 @@ class SpoolServer(
     private fun commonsSubscribers(): Int? = commonsHex?.let { subscribers[it]?.size ?: 0 }
 
     private suspend fun <T> withStore(block: () -> T): T = withContext(storeDispatcher) { block() }
+
+    /**
+     * Refuses a record carrying any id that is not exactly [ID_BYTES] long: every `scope`, `blobId`,
+     * `aid` and `cid` is `bstr32` (spec B-2-6, §7.2, §7.3). Length is the one shape the codec cannot
+     * check — a CBOR byte string of any length decodes into a `ByteArray` — and past this point an id
+     * becomes a map key and a row key, copied into every dependent row, index and tombstone, while only
+     * `data` is metered. An off-length id makes the whole record malformed: nothing in it — not the good
+     * entries of a `sub`, not the first `maxPull` of a `pull` — is processed.
+     *
+     * First line of every handler, ahead of [requireAttachments], [requireSub] and the push bucket: a
+     * record that could never be stored spends no token, never reaches [hex] (which allocates twice the
+     * id), and never hops to the store thread. [scope] is echoed only when it is itself [ID_BYTES] long —
+     * `err.scope` is `bstr32` too, so an oversized scope is never reflected back. `sub` names no single
+     * scope and passes null. In-band and stateless like every other `malformed` (B-7.1-7): no strike,
+     * no log line.
+     */
+    private suspend fun requireIds(
+        conn: Conn,
+        q: Long,
+        scope: ByteArray?,
+        ids: List<ByteArray> = emptyList(),
+    ): Boolean {
+        val scopeOk = scope == null || scope.size == ID_BYTES
+        if (scopeOk && ids.all { it.size == ID_BYTES }) return true
+        sendErr(conn, ErrCode.MALFORMED, q = q, scope = scope?.takeIf { scopeOk })
+        return false
+    }
 
     private suspend fun requireSub(
         conn: Conn,
