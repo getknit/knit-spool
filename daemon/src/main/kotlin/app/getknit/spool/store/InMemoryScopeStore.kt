@@ -118,6 +118,7 @@ class InMemoryScopeStore(
     }
 
     @Synchronized
+    @Suppress("ReturnCount") // one return per PushResult, after the sweep that decides them
     override fun push(
         scopeId: ByteArray,
         blobId: ByteArray,
@@ -286,7 +287,7 @@ class InMemoryScopeStore(
         val out = ByteArray((attachment.total + BITS_PER_BYTE - 1) / BITS_PER_BYTE)
         for (index in attachment.chunks.keys) {
             if (index in 0 until attachment.total) {
-                out[index / BITS_PER_BYTE] = (out[index / BITS_PER_BYTE].toInt() or (0x80 ushr (index % BITS_PER_BYTE))).toByte()
+                out[index / BITS_PER_BYTE] = (out[index / BITS_PER_BYTE].toInt() or (HIGH_BIT ushr (index % BITS_PER_BYTE))).toByte()
             }
         }
         return out
@@ -353,6 +354,7 @@ class InMemoryScopeStore(
 
     // Hex is this store's map key, so it sits on every lookup: `String.format` per byte measured
     // ~100x a nibble table (≈6 us vs ≈0.05 us for a 32-byte id), and `list` unhexes every blob id.
+    @Suppress("MagicNumber") // nibble arithmetic
     private fun hex(bytes: ByteArray): String {
         val out = CharArray(bytes.size * 2)
         for (i in bytes.indices) {
@@ -363,16 +365,22 @@ class InMemoryScopeStore(
         return String(out)
     }
 
+    @Suppress("MagicNumber") // nibble arithmetic
     private fun unhex(value: String): ByteArray =
         ByteArray(value.length / 2) {
             ((hexNibble(value[it * 2]) shl 4) or hexNibble(value[it * 2 + 1])).toByte()
         }
 
+    @Suppress("MagicNumber") // nibble arithmetic
     private fun hexNibble(c: Char): Int = if (c <= '9') c - '0' else c - 'a' + 10
 
     private companion object {
         private val HEX_DIGITS = "0123456789abcdef".toCharArray()
         private const val BITS_PER_BYTE = 8
+
+        /** The chunk bitmap is MSB-first (spec §6.5): index 0 is the top bit of byte 0. */
+        private const val HIGH_BIT = 0x80
+
         private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
     }
 }

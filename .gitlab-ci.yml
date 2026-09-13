@@ -1,6 +1,5 @@
 # knit-spool CI — self-hosted GitLab.
-# Lint is ktlint (via `check`); detekt is deliberately deferred until the knit-next config
-# stabilizes off its alpha.
+# Lint is ktlint and detekt, both via `check`, so both gate here rather than sitting advisory.
 #
 # Stages: test -> package -> verify -> release.
 #   test     unit + spec-vector tests with Kover coverage, and the conformance suite against the
@@ -73,8 +72,8 @@ default:
       - .gradle/wrapper
 
 # ----------------- test ------------------
-# `check` runs the JVM tests plus ktlintCheck, so lint failures block here rather than sitting
-# advisory in verify — the codebase is already clean and the rule set is stable.
+# `check` runs the JVM tests plus ktlintCheck and detekt, so lint failures block here rather than
+# sitting advisory in verify — the codebase is already clean and both rule sets are pinned.
 #
 # Coverage rides along in the same job rather than getting its own: Kover reports from the test
 # execution's binary output, so a separate job would re-run every suite to measure what this one
@@ -105,6 +104,7 @@ test:
     paths:
       - "*/build/reports/tests/test/"
       - "*/build/reports/ktlint/"
+      - "*/build/reports/detekt/"
       # Root project, not `*/` — the merged report lands in the root build dir.
       - "build/reports/kover/"
 

@@ -44,7 +44,7 @@ class SpecVectorTest {
         seed: Int,
     ) = ByteArray(n) { ((it * 7 + seed) and 0xFF).toByte() }
 
-    private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
+    private fun ByteArray.toHex() = toHexString()
 
     @Test
     fun recordVectorsMatchTheSpec() {

@@ -5,6 +5,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 import kotlin.math.min
 
+private const val MS_PER_SECOND = 1000.0
+
 /**
  * Token bucket for the spec §6.4 rate limits. `take()` returns 0 on success or the milliseconds
  * until the next token — the `retryMs` an `err rate` record carries. Burst capacity is the
@@ -21,13 +23,13 @@ class TokenBucket(
     @Synchronized
     fun take(): Long {
         val now = clock()
-        tokens = min(burst, tokens + (now - lastRefillMs) / 1000.0 * ratePerSec)
+        tokens = min(burst, tokens + (now - lastRefillMs) / MS_PER_SECOND * ratePerSec)
         lastRefillMs = now
         if (tokens >= 1.0) {
             tokens -= 1.0
             return 0L
         }
-        return ceil((1.0 - tokens) / ratePerSec * 1000.0).toLong()
+        return ceil((1.0 - tokens) / ratePerSec * MS_PER_SECOND).toLong()
     }
 }
 

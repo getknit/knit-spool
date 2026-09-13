@@ -6,9 +6,9 @@ name: CI
 # stay on the internal pipeline, because they need a registry credential and they are advisory
 # anyway — nothing there gates a contribution.
 #
-# `check` covers compile, ktlint, the §13 spec vectors, both store backends, and the server
-# integration tests, so there is no separate lint job: a style failure blocks here rather than
-# sitting advisory.
+# `check` covers compile, ktlint, detekt, the §13 spec vectors, both store backends, and the
+# server integration tests, so there is no separate lint job: a style or analysis failure blocks
+# here rather than sitting advisory.
 
 on:
   push:
@@ -53,6 +53,7 @@ jobs:
           path: |
             */build/reports/tests/test/
             */build/reports/ktlint/
+            */build/reports/detekt/
           if-no-files-found: ignore
 
       # Root project, not `*/` — the merged report lands in the root build dir. The badge job

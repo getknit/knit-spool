@@ -471,7 +471,7 @@ private fun aputTotalOverQuota(): Check =
             val bytes =
                 try {
                     receiveBytes()
-                } catch (e: TimeoutException) {
+                } catch (_: TimeoutException) {
                     throw CheckFailure("expected err for an aput declaring ${Int.MAX_VALUE} chunks, got timeout after $timeoutMs ms")
                 }
             val t = RecordCodec.peekType(bytes)
@@ -633,7 +633,7 @@ private fun pushOkThenList(): Check =
             val listQ = nextQ()
             send(ScopeList(t = RecordType.LIST, q = listQ, scope = scope))
             val list = expect<ScopeList>(RecordType.LIST)
-            val ids = list.blobIds ?: emptyList()
+            val ids = list.blobIds.orEmpty()
             ensure(ids.any { it.contentEquals(blobId) }) {
                 "expected list blobIds to contain ${hex(blobId)}, got ${ids.joinToString { hex(it) }}"
             }
@@ -731,7 +731,7 @@ private fun pullBlobThenOkMissing(): Check =
             ensure(served.data.contentEquals(data)) { "expected pulled blob data to match the pushed bytes" }
             val ok = expect<Ok>(RecordType.OK)
             ensure(ok.q == pullQ) { "expected pull ok q=$pullQ, got ${ok.q}" }
-            val missing = ok.missing ?: emptyList()
+            val missing = ok.missing.orEmpty()
             ensure(missing.any { it.contentEquals(unknown) }) {
                 "expected ok.missing to contain ${hex(unknown)}, got ${missing.joinToString { hex(it) }}"
             }
@@ -1061,7 +1061,7 @@ private fun subOffLengthScope(): Check =
             val bytes =
                 try {
                     receiveBytes()
-                } catch (e: TimeoutException) {
+                } catch (_: TimeoutException) {
                     throw CheckFailure("expected err for a ${ID_BYTES - 1}-byte scope id, got timeout after $timeoutMs ms")
                 }
             val t = RecordCodec.peekType(bytes)
@@ -1110,7 +1110,7 @@ private fun subOverMaxScopes(): Check =
             val bytes =
                 try {
                     receiveBytes()
-                } catch (e: TimeoutException) {
+                } catch (_: TimeoutException) {
                     throw CheckFailure("expected err for a sub naming $entries scopes, got timeout after $timeoutMs ms")
                 }
             val t = RecordCodec.peekType(bytes)
@@ -1118,7 +1118,7 @@ private fun subOverMaxScopes(): Check =
             ensure(t == RecordType.ERR) { "expected err for a sub naming $entries scopes, got '${t ?: "undecodable record"}'" }
             val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
             ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
-            ensure(err.scope == null) { "expected a whole-record err naming no scope, got scope ${hex(err.scope!!)}" }
+            ensure(err.scope == null) { "expected a whole-record err naming no scope, got scope ${err.scope?.let(::hex)}" }
             ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for an over-cap sub, got ${err.code}" }
             // Still a working connection: the refusal was in-band, not a close.
             ctx.subscribeFresh(this, ctx.randomScope())
@@ -1143,7 +1143,7 @@ private fun subDuplicateScope(): Check =
             val bytes =
                 try {
                     receiveBytes()
-                } catch (e: TimeoutException) {
+                } catch (_: TimeoutException) {
                     throw CheckFailure("expected err for a sub naming one scope twice, got timeout after $timeoutMs ms")
                 }
             val t = RecordCodec.peekType(bytes)
@@ -1310,7 +1310,7 @@ private fun rateLimit(): Check =
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // The spool may close 4003 mid-blast; judge on whatever arrived before that.
             }
             val err = rateErr ?: throw CheckFailure("no err rate observed within $sent rapid pushes")
@@ -1395,4 +1395,4 @@ private object TinyCbor {
     }
 }
 
-private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+private fun hex(bytes: ByteArray): String = bytes.toHexString()

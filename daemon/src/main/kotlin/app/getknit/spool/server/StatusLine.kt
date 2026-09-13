@@ -147,6 +147,7 @@ class StatusLine(
         const val ERR_CODES_SHOWN = 3
 
         private val UNITS = arrayOf("B", "KiB", "MiB", "GiB", "TiB")
+        private const val UNIT = 1024
 
         fun runtimeHeap(): HeapUse {
             val runtime = Runtime.getRuntime()
@@ -170,11 +171,11 @@ class StatusLine(
 
         /** Binary units, one decimal above a kibibyte — `0B`, `912B`, `4.2MiB`. */
         internal fun bytes(n: Long): String {
-            if (n < 1024) return "${n}B"
+            if (n < UNIT) return "${n}B"
             var value = n.toDouble()
             var unit = 0
-            while (value >= 1024 && unit < UNITS.lastIndex) {
-                value /= 1024
+            while (value >= UNIT && unit < UNITS.lastIndex) {
+                value /= UNIT
                 unit++
             }
             return "%.1f%s".format(Locale.ROOT, value, UNITS[unit])

@@ -540,7 +540,7 @@ whole suite against the freshly built daemon on every pipeline (`conformance-sel
 JDK 21 — the Gradle wrapper pins Gradle 9.5.0.
 
 ```sh
-./gradlew check                 # compile + ktlint + every suite
+./gradlew check                 # compile + ktlint + detekt + every suite
 ./gradlew ktlintFormat          # autoformat
 ./gradlew :daemon:installDist   # runnable dist at daemon/build/install/knit-spool/
 ```

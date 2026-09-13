@@ -64,12 +64,22 @@ internal val KNOWN_VARS =
 
 /**
  * A `list` reply carries every live id and every tombstone in one record, so a scope's frame cap
- * and `SPOOL_MAX_RECORD` are coupled. 32 id bytes plus two of CBOR header, and [LIST_ENVELOPE] for
- * the record around them.
+ * and `SPOOL_MAX_RECORD` are coupled. 32 id bytes plus two of CBOR header, and [RECORD_ENVELOPE]
+ * for the record around them.
  */
 private const val ID_RECORD_BYTES = 34
 
-private const val LIST_ENVELOPE = 512
+/** The CBOR record around a payload — the fields beside the blob in a `push`, or the ids in a `list`. */
+private const val RECORD_ENVELOPE = 512
+
+/** `SPOOL_STATUS_MS` floor: a sub-second cadence would flood the log the status line exists to make readable. */
+private const val MIN_STATUS_MS = 1_000L
+
+/**
+ * How much of a rejected `SPOOL_COMMONS_ID` the error echoes: the width [shortHex] leaves in a log
+ * line, and as unmatchable.
+ */
+private const val ECHOED_ID_CHARS = 8
 
 private val HEX_64 = Regex("[0-9a-fA-F]{64}")
 
@@ -206,6 +216,9 @@ private fun installReloadSignal(
                 log.warn("SIGHUP ignored — set SPOOL_RELOAD_FILE to the file a reload should read")
                 return@SignalHandler
             }
+            // Whatever went wrong reading it, the running configuration stands: a reload must
+            // never take the daemon down.
+            @Suppress("TooGenericExceptionCaught")
             val overrides =
                 try {
                     readEnvFile(Path.of(path))
@@ -220,7 +233,7 @@ private fun installReloadSignal(
                     log.error("SIGHUP: invalid configuration: {} — configuration unchanged", e.message)
                     return@SignalHandler
                 }
-            server.reload(candidate).forEach { log.warn("SIGHUP: {} needs a restart — ignored", it) }
+            server.reload(candidate).forEach { name -> log.warn("SIGHUP: {} needs a restart — ignored", name) }
             log.info("reloaded configuration from {}: {}", path, candidate.reloadable().entries.joinToString(" ") { (k, v) -> "$k=$v" })
         }
     runCatching { Signal.handle(Signal("HUP"), handler) }
@@ -256,6 +269,9 @@ private fun serve() {
             exitProcess(1)
         }
     val dataDir = environment["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
+
+    // Process boundary: nothing the store can throw at open is recoverable here.
+    @Suppress("TooGenericExceptionCaught")
     val store =
         try {
             if (dataDir == null) {
@@ -285,13 +301,14 @@ private fun serve() {
 internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     val maxBlob = intVar(env, "SPOOL_MAX_BLOB", default = 65_536, min = 1)
     val maxRecord = intVar(env, "SPOOL_MAX_RECORD", default = 131_072, min = 1)
-    require(maxBlob + 512 <= maxRecord) {
-        "SPOOL_MAX_BLOB ($maxBlob) + 512 bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
+    require(maxBlob + RECORD_ENVELOPE <= maxRecord) {
+        "SPOOL_MAX_BLOB ($maxBlob) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
     }
-    // 0 is the off switch; anything else is a cadence, and a sub-second one would flood the log
-    // it exists to make readable.
+    // 0 is the off switch; anything else is a cadence.
     val statusMs = longVar(env, "SPOOL_STATUS_MS", default = 300_000L, min = 0L)
-    require(statusMs == 0L || statusMs >= 1_000L) { "SPOOL_STATUS_MS must be 0 (off) or >= 1000, got $statusMs" }
+    require(statusMs == 0L || statusMs >= MIN_STATUS_MS) {
+        "SPOOL_STATUS_MS must be 0 (off) or >= $MIN_STATUS_MS, got $statusMs"
+    }
     val maxConns = intVar(env, "SPOOL_MAX_CONNS", default = 0, min = 0)
     val maxConnsPerIp = intVar(env, "SPOOL_MAX_CONNS_PER_IP", default = 16, min = 1)
     // Legal but almost never meant: one address could fill the spool on its own, which is the
@@ -386,7 +403,7 @@ internal fun commonsFromEnv(
     // a real id would put a near-real scope id in the log the rest of this daemon keeps out.
     require(HEX_64.matches(raw)) {
         "SPOOL_COMMONS_ID must be 64 hex characters (a 32-byte scope id), got ${raw.length} " +
-            "characters starting \"${raw.take(8)}\""
+            "characters starting \"${raw.take(ECHOED_ID_CHARS)}\""
     }
     val maxFrames = intVar(env, "SPOOL_COMMONS_MAX_FRAMES", default = 500, min = 1)
     val ttlMs = longVar(env, "SPOOL_COMMONS_TTL_MS", default = 86_400_000L, min = 1L)
@@ -407,7 +424,7 @@ internal fun commonsFromEnv(
 
     // A `list` for the commons must fit one record, or the transport kills it (1009) and the room
     // can never be caught up on. Tombstones ride the same reply, bounded by ScopeStore.tombstoneCap.
-    val listBytes = (maxFrames.toLong() + maxOf(2L * maxFrames, 1024L)) * ID_RECORD_BYTES + LIST_ENVELOPE
+    val listBytes = (maxFrames.toLong() + maxOf(2L * maxFrames, 1024L)) * ID_RECORD_BYTES + RECORD_ENVELOPE
     require(listBytes <= maxRecord) {
         "SPOOL_COMMONS_MAX_FRAMES ($maxFrames) needs a $listBytes-byte list reply, over " +
             "SPOOL_MAX_RECORD ($maxRecord); lower it or raise SPOOL_MAX_RECORD"
@@ -434,9 +451,9 @@ internal fun commonsFromEnv(
     )
 }
 
-private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+private fun hex(bytes: ByteArray): String = bytes.toHexString()
 
-private fun unhex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+private fun unhex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(radix = 16).toByte() }
 
 private fun intVar(
     env: (String) -> String?,

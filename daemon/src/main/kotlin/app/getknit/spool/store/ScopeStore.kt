@@ -56,30 +56,30 @@ class AttachmentChunk(
     val data: ByteArray,
 )
 
-sealed class AputResult {
+sealed interface AputResult {
     /** Newly stored. [evicted] lists whole attachments dropped to stay inside the byte quota. */
     class Stored(
         val evicted: List<ByteArray>,
-    ) : AputResult()
+    ) : AputResult
 
     /** Byte-identical chunk already at that position — acked, nothing changed (§6.5). */
-    object Duplicate : AputResult()
+    object Duplicate : AputResult
 
     /** A *different* chunk already holds that position, or `total` disagrees. First write wins. */
-    object Conflict : AputResult()
+    object Conflict : AputResult
 
-    object Tombstoned : AputResult()
+    object Tombstoned : AputResult
 
-    object TooLarge : AputResult()
+    object TooLarge : AputResult
 
-    object BadId : AputResult()
+    object BadId : AputResult
 
     /**
      * The attachment cannot fit the per-scope byte budget even with every other one evicted — or
      * declares a `total` above [HardLimits.maxATotal], which no attachment inside the budget can
      * have (§4.5), and is refused before its first chunk is stored.
      */
-    object QuotaExceeded : AputResult()
+    object QuotaExceeded : AputResult
 }
 
 /** A scope's digest anchor: what a `digest` record carries (spec §7.2). */
@@ -95,16 +95,16 @@ class ListInfo(
     val tombstones: List<ByteArray>,
 )
 
-sealed class SubscribeResult {
+sealed interface SubscribeResult {
     class Subscribed(
         val digest: DigestInfo,
-    ) : SubscribeResult()
+    ) : SubscribeResult
 
     /** The spool is at `maxScopes` and the scope is new — enforced atomically inside the store. */
-    object QuotaExceeded : SubscribeResult()
+    object QuotaExceeded : SubscribeResult
 }
 
-sealed class PushResult {
+sealed interface PushResult {
     class Stored(
         val digest: DigestInfo,
         /**
@@ -112,15 +112,15 @@ sealed class PushResult {
          * pressure) — the server re-anchors all subscribers with a fresh `digest` record (§6.2).
          */
         val evictedOrExpired: Boolean,
-    ) : PushResult()
+    ) : PushResult
 
-    object Duplicate : PushResult()
+    object Duplicate : PushResult
 
-    object Tombstoned : PushResult()
+    object Tombstoned : PushResult
 
-    object TooLarge : PushResult()
+    object TooLarge : PushResult
 
-    object BadId : PushResult()
+    object BadId : PushResult
 }
 
 /** One scope whose live set changed during a [ScopeStore.sweep] — drives digest broadcasts. */

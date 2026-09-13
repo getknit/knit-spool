@@ -52,6 +52,8 @@ private class Options(
     val commonsSecret: ByteArray?,
 )
 
+// One `when` arm per flag: a switch table, and splitting it would hide that shape.
+@Suppress("CyclomaticComplexMethod")
 private fun parseArgs(args: Array<String>): Options {
     var url: String? = null
     var token: String? = null
@@ -242,11 +244,11 @@ fun describeFailure(e: Throwable): String {
     val origin =
         e.stackTrace.firstOrNull { it.className.startsWith("app.getknit.spool") }
             ?: e.stackTrace.firstOrNull()
-    val where = origin?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" } ?: ""
+    val where = origin?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }.orEmpty()
     val causedBy =
         generateSequence(e.cause) { it.cause }
             .take(CAUSE_CHAIN_DEPTH)
-            .joinToString("") { c -> " <- ${c::class.simpleName}${c.message?.let { m -> ": $m" } ?: ""}" }
+            .joinToString("") { c -> " <- ${c::class.simpleName}${c.message?.let { m -> ": $m" }.orEmpty()}" }
     return "$type$message$where$causedBy"
 }
 

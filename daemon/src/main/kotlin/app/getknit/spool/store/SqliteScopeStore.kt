@@ -31,9 +31,10 @@ class SqliteScopeStore private constructor(
     companion object {
         private val log = LoggerFactory.getLogger(SqliteScopeStore::class.java)
 
-        private val HEX_DIGITS = "0123456789abcdef".toCharArray()
-
         private const val BITS_PER_BYTE = 8
+
+        /** The chunk bitmap is MSB-first (spec §6.5): index 0 is the top bit of byte 0. */
+        private const val HIGH_BIT = 0x80
 
         private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
 
@@ -497,7 +498,7 @@ class SqliteScopeStore private constructor(
                     val index = rows.getInt(1)
                     if (index in 0 until total) {
                         bits[index / BITS_PER_BYTE] =
-                            (bits[index / BITS_PER_BYTE].toInt() or (0x80 ushr (index % BITS_PER_BYTE))).toByte()
+                            (bits[index / BITS_PER_BYTE].toInt() or (HIGH_BIT ushr (index % BITS_PER_BYTE))).toByte()
                     }
                 }
             }
@@ -868,6 +869,7 @@ class SqliteScopeStore private constructor(
         return select.executeQuery().use { it.next() }
     }
 
+    @Suppress("TooGenericExceptionCaught") // rolls back and rethrows; the type is not its business
     private fun <T> tx(block: () -> T): T =
         try {
             val result = block()
@@ -879,14 +881,4 @@ class SqliteScopeStore private constructor(
         }
 
     private fun prep(sql: String): PreparedStatement = statements.getOrPut(sql) { connection.prepareStatement(sql) }
-
-    private fun hex(bytes: ByteArray): String {
-        val out = CharArray(bytes.size * 2)
-        for (i in bytes.indices) {
-            val v = bytes[i].toInt() and 0xff
-            out[i * 2] = HEX_DIGITS[v ushr 4]
-            out[i * 2 + 1] = HEX_DIGITS[v and 0x0f]
-        }
-        return String(out)
-    }
 }

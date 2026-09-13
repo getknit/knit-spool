@@ -115,7 +115,7 @@ jobs:
 
       # A tag can point at any commit, including one CI never saw green. Re-running the gate is a
       # few minutes against publishing a broken image under a version number that is forever.
-      - name: check (compile, ktlint, spec vectors, both stores, integration)
+      - name: check (compile, ktlint, detekt, spec vectors, both stores, integration)
         run: ./gradlew check -PspoolVersion="$VERSION" --console=plain --stacktrace
 
       # The wire contract, against the daemon this tag actually produces. Same suite an independent

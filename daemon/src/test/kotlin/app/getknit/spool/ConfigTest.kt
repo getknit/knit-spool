@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
  */
 class ConfigTest {
     private val secret = ByteArray(Commons.SECRET_BYTES) { (it + 1).toByte() }
-    private val commonsId = Commons.scopeId(secret).joinToString("") { "%02x".format(it) }
+    private val commonsId = Commons.scopeId(secret).toHexString()
 
     private fun config(vars: Map<String, String>) = configFromEnv { vars[it] }
 

@@ -1,0 +1,107 @@
+# Project detekt config — a thin OVERLAY on detekt's bundled defaults (`buildUponDefaultConfig = true`
+# in the root build.gradle.kts, which is also where the task is wired into `check`). Only rules whose
+# defaults misfire on this codebase are listed, each with its reason; everything else keeps detekt's
+# default. Genuine findings are fixed in code, not silenced here, and the handful of single-site
+# exceptions carry a `@Suppress` with a reason next to the code rather than a path pattern here.
+#
+# Same shape and same detekt version as the Knit app repo's overlay, so a rule tuned there reads the
+# same here. This one is shorter because there is no Compose and no DI container to exempt.
+#
+# `excludes` REPLACES detekt's default list for that rule rather than extending it, so the rules
+# below that add a path restate `**/test/**`. The Android/JS/iOS test patterns in the defaults are
+# dropped on purpose — nothing here matches them.
+#
+# The `**/conformance/**` pattern is the conformance runner: a test suite that lives in src/main
+# because it ships as a CLI. Where detekt turns a rule off for `**/test/**` by default, it is off
+# for the runner for the same reason — its literals are fixtures and its catches are per-check
+# isolation.
+#
+# Rules that need type resolution are on: `check` runs the per-compilation tasks (detektMain,
+# detektTest), which see the compile classpath. See the root build.gradle.kts.
+
+complexity:
+  CyclomaticComplexMethod:
+    # The protocol handlers validate five to eight things before they act — ids, subscription,
+    # the record bucket, the commons budget, the creation gates — and each check is one branch that
+    # answers with its own err code. 20 fits them. The two flat dispatch tables above that (the
+    # daemon's record loop, one arm per record type; the conformance CLI's argument parser, one arm
+    # per flag) are suppressed at the site: splitting a switch table hides its shape.
+    allowedComplexity: 20
+  LargeClass:
+    # Two classes exceed the 600-line default: the server, where every record handler shares one
+    # connection table and is one class by design, and the SQLite store, one class per backend.
+    # Neither line count is something a reader would act on. TooManyFunctions below is the size
+    # rule that stays on, and it measures the surface rather than the length.
+    active: false
+  LongParameterList:
+    # A parameter with a default is an option, not a demand on the caller, so it is not counted:
+    # the server's Config has twenty-one, six of them required. What is left are value holders
+    # with one parameter per field — the wire records, the hard limits, the counters snapshot —
+    # which is the count the rule's own `ignoreDataClasses` exists to let through. These are
+    # plain classes on purpose (a data-class `toString` would put the connect token in any log
+    # line that printed a Config; `equals` on a ByteArray field compares references), so the
+    # ceiling has to hold them instead: the counters snapshot has nine. The function ceiling is
+    # the Knit app repo's; the store's `attachmentPut` mirrors the aput record's seven fields.
+    ignoreDefaultParameters: true
+    allowedConstructorParameters: 10
+    allowedFunctionParameters: 8
+  LongMethod:
+    # Line count measures text, not branching. The three at the top of the range — the SQLite DDL,
+    # Ktor's module wiring, the record dispatch loop — are linear blocks that read best in one
+    # place. Tests are excluded as tables: the §13 vector test is one function per vector set.
+    allowedLines: 100
+    excludes: ['**/test/**']
+  TooManyFunctions:
+    # Counted as API surface. Private helpers and interface implementations do not widen a class's
+    # contract, so the server's forty-odd private handlers and the two stores' overrides are not
+    # what this rule is for. What remains over the default is the ScopeStore contract itself: one
+    # method per store operation, fourteen today, under a ceiling of sixteen so that growing it by
+    # more than a couple is a conscious bump rather than a silent one.
+    ignorePrivate: true
+    ignoreOverridden: true
+    allowedFunctionsPerInterface: 16
+    excludes: ['**/test/**', '**/conformance/**']
+
+coroutines:
+  InjectDispatcher:
+    # Written for Android, where a hard-coded dispatcher in a ViewModel defeats `runTest`. The one
+    # hard-coded dispatcher here is the store's `Dispatchers.IO.limitedParallelism(1)`, which is
+    # how SQLite access is serialised off the event loops — a structural choice, not a scheduling
+    # one — and the server tests run it as is.
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    # Off for the conformance runner as it is for tests (see the header). The daemon's four generic
+    # catches are boundaries — the store open at boot, the SIGHUP reload, the per-record `guarded`,
+    # the SQLite transaction wrapper — and each is suppressed at the site with its reason.
+    excludes: ['**/test/**', '**/conformance/**']
+
+style:
+  LoopWithTooManyJumpStatements:
+    # It counts `?: continue` and `?: break`, which is the idiom every polling and dispatch loop
+    # here is written in. Each jump is a one-line guard — the readable form the rule exists to
+    # protect — and the alternative is the nested-if shape it was written to avoid.
+    active: false
+  MagicNumber:
+    # JDBC's parameters and columns are positional, so in the SQLite store the number *is* the API:
+    # `setLong(3, …)` names the third placeholder and nothing else could. Naming forty indices would
+    # add forty constants that say less than the SQL beside them.
+    excludes: ['**/test/**', '**/conformance/**', '**/store/SqliteScopeStore.kt']
+  MaxLineLength:
+    # ktlint_official's limit (see .editorconfig), which the code already runs to. detekt's 120
+    # default would contradict the formatter that owns line width.
+    maxLineLength: 140
+  ReturnCount:
+    # The handlers and store operations are chains of checks that each answer with their own
+    # result code — `BadId`, `TooLarge`, `Tombstoned`, `Duplicate` — and the early return is what
+    # keeps the chain flat. Guards at the top are the shape, not the smell, so they are not
+    # counted; four is the room the returns after them need, once the sweep or the activity stamp
+    # has ended the guard run.
+    max: 4
+    excludeGuardClauses: true
+  ThrowsCount:
+    # The conformance client's receive helpers throw one distinct expected-vs-got message per way a
+    # record can fail to arrive — timeout, wrong type, undecodable, err in its place. That is the
+    # assertion, not a function doing four things.
+    max: 4

@@ -38,7 +38,7 @@ class GuardedTest {
             scopeId: ByteArray,
             aid: ByteArray,
             now: Long,
-        ): AttachmentInfo = throw IllegalStateException("presence lookup exploded")
+        ): AttachmentInfo = error("presence lookup exploded")
     }
 
     @Test

@@ -246,7 +246,7 @@ class RateAndWatermarkTest {
     @Test
     fun theShedWarningTruncatesTheScopeIdAndKeepsTheFullOneAtDebug() {
         val shed = testScope(1)
-        val full = shed.joinToString("") { "%02x".format(it) }
+        val full = shed.toHexString()
         listOf(null to false, Level.DEBUG to true).forEach { (level, debugExpected) ->
             val logged =
                 withLogCapture("app.getknit.spool.server.SpoolServer", level) {

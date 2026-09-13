@@ -36,7 +36,7 @@ class SpoolClient(
         val ws =
             try {
                 withTimeout(timeoutMs) { httpClient.webSocketSession(url) }
-            } catch (e: TimeoutCancellationException) {
+            } catch (_: TimeoutCancellationException) {
                 throw TransportFailure("could not open a WebSocket within $timeoutMs ms")
             } catch (e: Exception) {
                 // The endpoint went away mid-run. That is not the spool failing the spec.
@@ -83,7 +83,7 @@ class Session(
     suspend fun receiveBytes(): ByteArray =
         try {
             withTimeout(timeoutMs) { nextBinary() }
-        } catch (e: TimeoutCancellationException) {
+        } catch (_: TimeoutCancellationException) {
             throw TimeoutException("timed out after $timeoutMs ms waiting for a record")
         }
 
@@ -100,7 +100,7 @@ class Session(
             val bytes =
                 try {
                     receiveBytes()
-                } catch (e: TimeoutException) {
+                } catch (_: TimeoutException) {
                     throw CheckFailure("expected '$type' record, got timeout after $timeoutMs ms")
                 }
             val t = RecordCodec.peekType(bytes)
@@ -143,7 +143,7 @@ class Session(
                     }
                     ws.closeReason.await()
                 }
-            } catch (e: TimeoutCancellationException) {
+            } catch (_: TimeoutCancellationException) {
                 throw CheckFailure("expected close $code, got no close within $timeoutMs ms")
             }
         if (reason == null) throw CheckFailure("expected close $code, got connection end without a close frame")
@@ -164,7 +164,7 @@ class Session(
         val bytes =
             try {
                 receiveBytes()
-            } catch (e: TimeoutException) {
+            } catch (_: TimeoutException) {
                 throw CheckFailure("expected server hello first, got no record within $timeoutMs ms")
             }
         val t = RecordCodec.peekType(bytes)
@@ -185,7 +185,7 @@ class Session(
             val frame =
                 try {
                     ws.incoming.receive()
-                } catch (e: ClosedReceiveChannelException) {
+                } catch (_: ClosedReceiveChannelException) {
                     val reason =
                         withTimeoutOrNull(1_000) { ws.closeReason.await() }
                             ?: throw TransportFailure("connection died while awaiting a record (no close frame)")

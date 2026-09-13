@@ -71,6 +71,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -106,6 +107,9 @@ private const val RETRY_AFTER_SECONDS = 30
 
 /** The one WebSocket route (spec §7.1); also what the capacity gate matches on. */
 private const val SPOOL_PATH = "/spool/v1"
+
+/** How long [SpoolServer.stop] waits for each session's 1001 close to go out before moving on. */
+private const val GOING_AWAY_CLOSE_MS = 1_000L
 
 private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
@@ -555,7 +559,7 @@ class SpoolServer(
         activeSessions.forEach { session ->
             runCatching {
                 runBlocking {
-                    withTimeout(1_000) {
+                    withTimeout(GOING_AWAY_CLOSE_MS) {
                         session.close(CloseReason(CloseReason.Codes.GOING_AWAY.code, "going away"))
                     }
                 }
@@ -623,7 +627,7 @@ class SpoolServer(
             // Reachable on a persistent store that already holds maxScopes scopes from before the
             // commons was configured (or under a previous SPOOL_COMMONS_ID). Refuse to start: a
             // spool silently up without the room it advertises is the worse outcome.
-            throw IllegalStateException(
+            error(
                 "commons scope cannot be created: the store already holds SPOOL_MAX_SCOPES " +
                     "(${config.hardLimits.maxScopes}) scopes. Raise SPOOL_MAX_SCOPES, or clear SPOOL_DATA_DIR.",
             )
@@ -663,6 +667,8 @@ class SpoolServer(
         }
     }
 
+    // One `when` arm per record type: a switch table, and splitting it would hide that shape.
+    @Suppress("CyclomaticComplexMethod")
     private suspend fun serveConnection(
         session: DefaultWebSocketServerSession,
         ipState: IpState,
@@ -768,6 +774,7 @@ class SpoolServer(
     }
 
     /** Wraps a record handler so an unexpected failure surfaces as `err internal`, not a dead task. */
+    @Suppress("TooGenericExceptionCaught") // the per-record boundary: that is the point of it
     private suspend fun guarded(
         conn: Conn,
         q: Long?,
@@ -829,7 +836,11 @@ class SpoolServer(
      * client ignoring backpressure, and one that has sent a single record has had none to ignore
      * yet — [commonsBudget]'s reasoning. A conforming client is untouched: its batch is at most
      * `maxScopes` entries, under the burst of 4 × `rateRecords` at every default.
+     *
+     * One level deeper than the other handlers by nature — the batch, the entry, its rate limit,
+     * and the rest of the batch that limit applies to — hence the suppression.
      */
+    @Suppress("NestedBlockDepth")
     private suspend fun handleSub(
         conn: Conn,
         sub: Sub,
@@ -1005,7 +1016,7 @@ class SpoolServer(
                 }
             }
         }
-        when (val result = withStore { store.attachmentPut(aput.scope, aput.aid, aput.idx, aput.total, aput.cid, aput.data, now) }) {
+        when (withStore { store.attachmentPut(aput.scope, aput.aid, aput.idx, aput.total, aput.cid, aput.data, now) }) {
             is AputResult.Stored -> {
                 metrics.attachChunksStoredTotal.increment()
                 out(conn, Ok(t = RecordType.OK, q = aput.q))
@@ -1416,6 +1427,7 @@ class SpoolServer(
     // On the hot path several times per record — twice per push, and once per requested *and* served
     // blob id in `handlePull`, so 128 calls for a full 64-id pull. `String.format` per byte measured
     // ~100x a nibble table (≈6 us vs ≈0.05 us for a 32-byte scope id).
+    @Suppress("MagicNumber") // nibble arithmetic
     private fun hex(bytes: ByteArray): String {
         val out = CharArray(bytes.size * 2)
         for (i in bytes.indices) {
@@ -1432,14 +1444,15 @@ class SpoolServer(
      * fixed document. Nothing in it is attacker-supplied, but `SPOOL_SOURCE_URL` is
      * operator-supplied and the build stamp is whatever `-PspoolVersion` was handed, so neither is
      * a literal. Deliberately not shared with the Prometheus label escaper in [Metrics]: the two
-     * formats escape different sets, and one helper would be wrong for one of them.
+     * formats escape different sets, and one helper would be wrong for one of them. What this one
+     * escapes is RFC 8259 §7's set: the quote, the backslash, and the controls below U+0020.
      */
     private fun jsonString(raw: String): String =
         buildString(raw.length) {
             raw.forEach { c ->
                 when {
                     c == '"' || c == '\\' -> append('\\').append(c)
-                    c.code < 0x20 -> append("\\u").append("%04x".format(c.code))
+                    c < ' ' -> append("\\u").append("%04x".format(Locale.ROOT, c.code))
                     else -> append(c)
                 }
             }

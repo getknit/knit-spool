@@ -19,6 +19,7 @@ private const val SHORT_HEX_BYTES = 4
  * Deliberately not the hot-path encoder: the full-width `hex` in the server and the store stay where
  * they are, one of them with a measured reason.
  */
+@Suppress("MagicNumber") // nibble arithmetic
 internal fun shortHex(bytes: ByteArray): String {
     val kept = minOf(bytes.size, SHORT_HEX_BYTES)
     val out = CharArray(kept * 2)

@@ -12,7 +12,7 @@ and that every commit is signed off under the DCO (`git commit -s`).
 
 <!-- Check what you ran / did. -->
 
-- [ ] `./gradlew check` (compile, ktlint, spec vectors, both store backends, integration tests)
+- [ ] `./gradlew check` (compile, ktlint, detekt, spec vectors, both store backends, integration tests)
 - [ ] Conformance suite against a locally built daemon (CI's `conformance` job does this too)
 - [ ] `--destructive` conformance run, if this touches quotas, rate limits, or shedding
 - [ ] Ran the daemon against a real client, if this touches the wire

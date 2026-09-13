@@ -54,7 +54,7 @@ class ConfigDescribeTest {
     fun theCommonsIdIsTruncatedTheSameWayEverythingElseIs() {
         val commons = testCommons()
         val line = testConfig(commons = commons).describe()
-        assertFalse(line.contains(commons.scopeId.joinToString("") { "%02x".format(it) }), line)
+        assertFalse(line.contains(commons.scopeId.toHexString()), line)
         assertEquals(shortHex(commons.scopeId), fields(line)["commons"])
     }
 

@@ -22,6 +22,24 @@ document:
 
 ### Added
 
+- **detekt, gating in `check`, with type resolution.** Static analysis alongside ktlint, on the
+  `dev.detekt` 2.0 line — the first that runs on Gradle 9 — pinned to the same version as the
+  Knit app so the two repos' overlays read against the same defaults. `check` runs the
+  per-compilation tasks (`detektMain`, `detektTest`), which see the compile classpath, so the
+  rules that reason about types run for real rather than staying silent. The rule set is detekt's
+  bundled defaults plus
+  [`config/detekt/detekt.yml`](https://github.com/getknit/knit-spool/blob/main/config/detekt/detekt.yml),
+  a short overlay where every departure from a default carries its reason: the line limit matches
+  ktlint's, the size and complexity ceilings fit the daemon's handlers, parameter lists are
+  counted without their defaults, and the conformance runner is treated as the test suite it is.
+  Everything the defaults flagged that was not a misfire is fixed in code — an unused hex helper
+  and an unused `when` subject are gone, the store's result hierarchies are sealed interfaces, an
+  unnamed CBOR-envelope allowance, a status-line floor and a byte-unit base now have names, hex
+  rendering goes through the stdlib's locale-free `toHexString()`, the conformance client no
+  longer binds exceptions it only uses as signals — and the few deliberate exceptions carry a
+  `@Suppress` with a reason beside the code. Both CI pipelines already ran `check`, so it gates
+  there without a new job; the reports ride along as artifacts.
+
 - **`SPOOL_REQUIRE_MODERATION`, a send-side moderation request in `hello`.** A spool holds
   ciphertext and cannot screen a message, so an operator who answers for the people on their spool
   had no moderation lever at all. This is the one the design allows: set the flag and `hello`

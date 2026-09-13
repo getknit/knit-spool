@@ -27,7 +27,7 @@ import kotlin.test.fail
  */
 class DeployConfigTest {
     private val secret = ByteArray(Commons.SECRET_BYTES) { (it + 1).toByte() }
-    private val commonsId = Commons.scopeId(secret).joinToString("") { "%02x".format(it) }
+    private val commonsId = Commons.scopeId(secret).toHexString()
 
     /**
      * Deliberately not reachable from `.env`, because compose itself is built from them: it

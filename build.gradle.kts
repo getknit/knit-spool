@@ -1,3 +1,5 @@
+import dev.detekt.gradle.extensions.DetektExtension
+import org.gradle.language.base.plugins.LifecycleBasePlugin
 import kotlinx.kover.gradle.plugin.dsl.AggregationType
 import kotlinx.kover.gradle.plugin.dsl.CoverageUnit
 import kotlinx.kover.gradle.plugin.dsl.GroupingEntityType
@@ -7,6 +9,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
     alias(libs.plugins.ktlint) apply false
+    alias(libs.plugins.detekt) apply false
     alias(libs.plugins.kover)
 }
 
@@ -130,6 +133,54 @@ subprojects {
                     }
                 }
             }
+        }
+    }
+}
+
+// ---- static analysis ----
+// detekt, applied per module (like ktlint) and configured once here so the three modules cannot
+// drift. `config/detekt/detekt.yml` is an overlay on detekt's bundled defaults, not a full config:
+// it lists only the rules whose defaults misfire on this codebase, with a reason each, and
+// everything else keeps the default. The same shape as the Knit app repo's overlay, on the same
+// detekt version, so a rule that is tuned there reads the same here.
+//
+//   ./gradlew detektMain detektTest   every module, with type resolution; what `check` (and so
+//                                     both CIs) runs. Reports under <module>/build/reports/detekt/
+//                                     as main.* and test.* (html for a person, sarif and
+//                                     checkstyle xml for tooling)
+//   ./gradlew :daemon:detektMain      one module, one compilation
+//   ./gradlew detekt                  every module, WITHOUT type resolution: no compile first, so
+//                                     the quick local pass — but the rules that need types stay
+//                                     silent, which is why `check` does not run this one
+//
+// The defaults the overlay sits on are detekt-core's default-detekt-config.yml at the pinned tag:
+// https://github.com/detekt/detekt/blob/v2.0.0-alpha.6/detekt-core/src/main/resources/default-detekt-config.yml
+//
+// Gating, not advisory, for the same reason ktlint is: the codebase is clean against this rule set
+// and the version is pinned, so a new finding is a real change to the code under review, not a
+// drift in the tool.
+//
+// Type resolution comes from the per-compilation tasks: the plugin hands `detektMain` and
+// `detektTest` the same classpath, language version and friend paths as the Kotlin compile task
+// they shadow, so rules that reason about types — unused declarations, an `!!` on a nullable, a
+// `?: emptyList()` that is `orEmpty()`, a parameter list counted without its defaults — run for
+// real. The plugin wires only the plain `detekt` task into `check`, so this swaps it out: keeping
+// both would run every non-type rule twice and report each finding twice.
+subprojects {
+    pluginManager.withPlugin("dev.detekt") {
+        extensions.configure<DetektExtension>("detekt") {
+            buildUponDefaultConfig = true
+            config.setFrom(rootProject.layout.projectDirectory.file("config/detekt/detekt.yml"))
+            // Report paths relative to the repo root rather than the module, so a SARIF location
+            // is the path a diff annotator expects.
+            basePath = rootProject.layout.projectDirectory
+        }
+        // `named(Spec)` rather than `matching`: it filters by name without realising every task,
+        // and it does not care whether `check` exists yet.
+        tasks.named { it == LifecycleBasePlugin.CHECK_TASK_NAME }.configureEach {
+            // Registered after the plugin's own `dependsOn(detekt)`, so this sees it and drops it.
+            setDependsOn(dependsOn.filterNot { it is TaskProvider<*> && it.name == "detekt" })
+            dependsOn("detektMain", "detektTest")
         }
     }
 }

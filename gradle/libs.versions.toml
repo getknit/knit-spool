@@ -8,6 +8,11 @@ sqliteJdbc = "3.50.3.0"
 ktlintPlugin = "14.2.0"
 ktlintTool = "1.8.0"
 kover = "0.9.9"
+# detekt's 2.0 line is the first that runs on Gradle 9 (1.23.x caps at Gradle 8.12.1), so an alpha it
+# is — pinned exactly, since the rule set and the config schema can still move between alphas. The
+# plugin id moved to `dev.detekt` with 2.0 (was io.gitlab.arturbosch.detekt). Kept on the same version
+# as the Knit app repo so the two `config/detekt/detekt.yml` overlays read against the same defaults.
+detekt = "2.0.0-alpha.6"
 
 [libraries]
 kotlinx-serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbor", version.ref = "kotlinxSerialization" }
@@ -25,3 +30,4 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
