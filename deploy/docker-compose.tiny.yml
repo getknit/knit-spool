@@ -81,8 +81,8 @@ services:
       # refused 503 + Retry-After, which a multi-homing client reads as "this spool is busy,
       # use the others" — a clean no, a whole class better than a slow yes.
       SPOOL_MAX_CONNS: "${SPOOL_MAX_CONNS:-2000}"
-      # 256, which is ~12% of the box's total. Enough that carrier-grade NAT does not cut
-      # off a whole mobile network, small enough that one address cannot take the spool.
+      # 256, which is ~12% of the box's total. Enough that carrier-grade NAT, or a shared
+      # IPv6 /64, does not cut off a whole network, small enough that one cannot take the spool.
       SPOOL_MAX_CONNS_PER_IP: "${SPOOL_MAX_CONNS_PER_IP:-256}"
       # 30 new scopes/min per IP, up from 6. A client joining a backlog of conversations
       # is not abuse, and 20-bit PoW already prices the unknown-scope path.

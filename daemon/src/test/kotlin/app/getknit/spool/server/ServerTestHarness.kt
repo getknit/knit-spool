@@ -25,6 +25,8 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.readBytes
@@ -55,6 +57,7 @@ fun testConfig(
     hardLimits: HardLimits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 4),
     maxBytes: Long = 0L,
     statusMs: Long = 0L,
+    trustProxy: Boolean = false,
     maxConns: Int = 0,
     maxConnsPerIp: Int = 16,
     rateRecords: Int = 1_000,
@@ -78,7 +81,7 @@ fun testConfig(
         sweepMs = 3_600_000L,
         // Off by default — StatusLineTest drives statusTick() itself.
         statusMs = statusMs,
-        trustProxy = false,
+        trustProxy = trustProxy,
         maxConns = maxConns,
         maxConnsPerIp = maxConnsPerIp,
         rateRecords = rateRecords,
@@ -121,12 +124,14 @@ class TestServer(
     val port: Int,
     val http: HttpClient,
 ) {
+    /** [forwardedFor] is sent as `X-Forwarded-For`, which the server honours only with `trustProxy`. */
     suspend fun connect(
         token: String? = null,
+        forwardedFor: String? = null,
         block: suspend DefaultClientWebSocketSession.() -> Unit,
     ) {
         val url = "ws://127.0.0.1:$port/spool/v1" + token?.let { "?k=$it" }.orEmpty()
-        http.webSocket(url) { block() }
+        http.webSocket(url, request = { forwardedFor?.let { header(HttpHeaders.XForwardedFor, it) } }) { block() }
     }
 }
 

@@ -121,7 +121,8 @@ private val HEX_DIGITS = "0123456789abcdef".toCharArray()
  * watermark, and a periodic sweeper that expires blobs and re-anchors subscribers by digest.
  *
  * TLS is left to a fronting reverse proxy; with `trustProxy` the per-IP limits key on the
- * proxy-appended `X-Forwarded-For` hop instead of the socket address.
+ * proxy-appended `X-Forwarded-For` hop instead of the socket address. Either way the key is the
+ * address literal — never a resolved name — and an IPv6 client is its /64; see [clientKey].
  */
 class SpoolServer(
     config: Config,
@@ -351,7 +352,7 @@ class SpoolServer(
     /** Accepted PoW cache: "scopeHex:day" → day (spec §8); pruned by the sweeper on day rollover. */
     private val powAccepted = ConcurrentHashMap<String, Long>()
 
-    /** Per-client-IP limiter state; idle entries pruned by the sweeper. */
+    /** Per-client limiter state, keyed by [clientKey]; idle entries pruned by the sweeper. */
     private val ips = ConcurrentHashMap<String, IpState>()
 
     /**
@@ -641,7 +642,7 @@ class SpoolServer(
     }
 
     private suspend fun acceptConnection(session: DefaultWebSocketServerSession) {
-        val ip = session.call.request.origin.remoteHost
+        val ip = clientKey(session.call.request.origin.remoteAddress)
         val ipState = ips.computeIfAbsent(ip) { IpState(config.rateNewScopesPerMin, clock) }
         ipState.lastSeen = clock()
         if (ipState.connections.incrementAndGet() > config.maxConnsPerIp) {

@@ -192,12 +192,12 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_SWEEP_MS` | `60000` | sweeper cadence (expiry, cache pruning, watermark) |
 | `SPOOL_STATUS_MS` | `300000` | status log line cadence (5 min); 0 = off |
 | `SPOOL_LOG_LEVEL` | `INFO` | root log level |
-| `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop for per-IP limits |
+| `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop as the client address for the per-IP limits |
 | `SPOOL_MAX_CONNS` | `0` | total live connections; over it the upgrade is refused **503 + `Retry-After`**, never a close code. 0 = unlimited |
-| `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client IP |
+| `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client address; an IPv6 client is its /64 |
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×); a `sub` spends one token per scope it names, and once the bucket is dry the rest of its scopes answer `err rate` |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
-| `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per IP (burst 4×); a `sub` naming more new scopes than the burst has its tail answered `err rate`, and a record refused for rate strikes the abuse window once, not once per scope |
+| `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per client address (IPv6: per /64; burst 4×); a `sub` naming more new scopes than the burst has its tail answered `err rate`, and a record refused for rate strikes the abuse window once, not once per scope |
 | `SPOOL_REQUIRE_MODERATION` | `false` | ask clients to run their on-device content screen before sending and refuse what it flags; advertised as `moderation: true` in `hello`, omitted when off. A request the spool cannot verify (§7.5) |
 | `SPOOL_COMMONS_ID` | unset | the commons scope id, 64 hex chars from `knit-spool commons-invite`; **unset = no commons** |
 | `SPOOL_COMMONS_NAME` | unset | display label advertised in `hello` |
@@ -443,7 +443,7 @@ this feature exists to avoid.
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
-| `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address the spool has not seen recently |
+| `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the spool has not seen recently |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope
 limits, the sweeper and status line from their cadences, the commons scope from its id, the

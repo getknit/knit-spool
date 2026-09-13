@@ -299,6 +299,37 @@ document:
   the cache; a still-held scope refreshes with no stamp) and `RateAndWatermarkTest` (the re-sub
   spends a new-scope token) — the two shed cases fail against the short-circuit.
 
+- **Accepting a connection no longer resolves the client's name, and an IPv6 client is keyed by
+  its /64.** The per-IP limits — the connection cap and the new-scope bucket — were keyed on
+  `origin.remoteHost`, which Ktor's CIO engine implements as `InetSocketAddress.hostName`: a
+  reverse DNS query and a forward confirmation, blocking the accepting worker, for every
+  connection before its session was served. Accept latency was tied to the operator's resolver, a
+  client whose reverse zone black-holes queries could make each of its connections cost a resolver
+  timeout of worker time, and a blinded relay was sending every client address to its resolver
+  and on to the client ISP's PTR servers — on a private spool too. Where a name came back, the
+  limits were keyed on it. The lookup ran whenever `SPOOL_TRUST_PROXY` was off, the default, and
+  behind a trusted proxy for any request that arrived without `X-Forwarded-For`. Finding F5 of
+  the same review, and the /64 half of F9.
+
+  The key is now `clientKey` of `origin.remoteAddress`: the address literal, never a name, and
+  nothing in the daemon resolves one. An IPv4 client is its address. An IPv6 client is its /64,
+  because a host owns every address in its on-link prefix and rotates through them by design
+  (SLAAC privacy extensions), so a per-address cap on IPv6 was no cap at all; a /64 is the unit a
+  network hands one subscriber, the way one IPv4 address is. An IPv4-mapped address is the IPv4
+  client it wraps, a zone id is dropped, and a string that is not an address literal — a proxy
+  that forwarded a name — is keyed as it came. Behind a trusted proxy nothing moves: Ktor's
+  `XForwardedHeaders` sets `remoteAddress` to the same appended hop.
+
+  **One visible change:** `SPOOL_MAX_CONNS_PER_IP` and `SPOOL_RATE_NEW_SCOPES` now apply to a
+  whole IPv6 /64. A prefix shared by many clients meets the same knob carrier-grade NAT already
+  does, and the tiny overlay's 256 was sized for that. Pinned by `ClientAddressTest`, through a
+  counting `InetAddressResolverProvider` the test suite now registers in front of the JDK's
+  resolver: two accepted connections make zero lookups (they made two against `remoteHost`), two
+  forwarded addresses in one /64 share a connection cap of one while a neighbouring /64 and an
+  IPv4 address do not, and a forged `X-Forwarded-For` without `SPOOL_TRUST_PROXY` changes nothing.
+  `ClientKeyTest` covers the spellings — compressed, uncompressed, upper-case, zoned, mapped — and
+  that an unparseable string comes back as written with the lookup counters still.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and
