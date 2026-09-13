@@ -119,7 +119,9 @@ Implements the full **v1** protocol:
   unsolicited re-anchors after eviction or expiry.
 - **Attachments** (§6.5/§7.3) — `ahave`/`ahas`/`aget`/`achunk`/`aput`, chunk presence bitmaps,
   first-write-wins with `conflict` on mismatch, truncated (never refused) over-long `aget`, and a
-  per-scope byte quota. Set `SPOOL_MAX_ATTACH_BYTES=0` and the family disappears from `hello`.
+  per-scope byte quota that charges every chunk at least 512 bytes, so a scope also holds at most
+  `SPOOL_MAX_ATTACH_BYTES / 512` chunks. Set `SPOOL_MAX_ATTACH_BYTES=0` and the family disappears
+  from `hello`.
 - **Abuse control** — stateless PoW (SUB *and* the shed-scope PUSH-recreate path) with the
   per-`(scope, day)` cache, per-connection and per-IP rate limits (`rate` + `retryMs`, escalating
   to close 4003), a global storage watermark with oldest-scope shedding.
@@ -182,10 +184,10 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_MAX_TTL_MS` | `604800000` | per-scope TTL ceiling (7 d) |
 | `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes (must fit `SPOOL_MAX_BLOB` + 512) |
 | `SPOOL_MAX_PULL` | `64` | max blob ids per `pull` |
-| `SPOOL_MAX_ATTACH_BYTES` | `16777216` | per-scope attachment byte quota (§6.5); **0 turns attachments off** — the three attachment limits then vanish from HELLO and a conforming client never sends `ahave`/`aget`/`aput` |
+| `SPOOL_MAX_ATTACH_BYTES` | `16777216` | per-scope attachment byte quota (§6.5); every chunk counts as at least 512 bytes, so a scope holds at most this ÷ 512 chunks; **0 turns attachments off** — the three attachment limits then vanish from HELLO and a conforming client never sends `ahave`/`aget`/`aput` |
 | `SPOOL_MAX_A_CHUNK` | `49221` | max sealed attachment-chunk bytes (the spec's structural 48 KiB plus framing) |
 | `SPOOL_MAX_AGET` | `32` | max chunks per `aget`; an over-long request is truncated, never refused |
-| `SPOOL_MAX_BYTES` | `268435456` | payload watermark; over it the least-active scope is shed; 0 = unlimited |
+| `SPOOL_MAX_BYTES` | `268435456` | payload watermark (attachment chunks at their charged size, at least 512 B each); over it the least-active scope is shed; 0 = unlimited |
 | `SPOOL_SWEEP_MS` | `60000` | sweeper cadence (expiry, cache pruning, watermark) |
 | `SPOOL_STATUS_MS` | `300000` | status log line cadence (5 min); 0 = off |
 | `SPOOL_LOG_LEVEL` | `INFO` | root log level |

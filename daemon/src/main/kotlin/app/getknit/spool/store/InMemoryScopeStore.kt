@@ -29,6 +29,8 @@ class InMemoryScopeStore(
         val arrivedAt: Long,
     ) {
         val chunks = HashMap<Int, StoredChunk>()
+
+        /** The accumulated [ScopeStore.chunkCharge] of every chunk held — what a drop gives back. */
         var bytes = 0L
     }
 
@@ -225,9 +227,10 @@ class InMemoryScopeStore(
         }
         val attachment = existing ?: StoredAttachment(total, now).also { scope.attachments[key] = it }
         attachment.chunks[idx] = StoredChunk(cid = cid, data = data)
-        attachment.bytes += data.size
-        scope.attachBytes += data.size
-        bytesTotal += data.size
+        val charge = ScopeStore.chunkCharge(data.size)
+        attachment.bytes += charge
+        scope.attachBytes += charge
+        bytesTotal += charge
         return enforceAttachmentQuota(scope, key, now)
     }
 

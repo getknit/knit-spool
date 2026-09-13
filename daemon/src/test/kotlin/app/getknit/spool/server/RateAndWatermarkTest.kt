@@ -11,11 +11,13 @@ import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
 import app.getknit.spool.shortHex
 import app.getknit.spool.store.HardLimits
+import app.getknit.spool.store.ScopeStore
 import ch.qos.logback.classic.Level
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -155,6 +157,57 @@ class RateAndWatermarkTest {
                 assertTrue(digest.digest.contentEquals(ByteArray(8)))
                 assertTrue(store.isUnknownScope(testScope(1)))
                 assertEquals(40L, store.totalBytes())
+            }
+        }
+    }
+
+    @Test
+    fun watermarkCountsTinyAttachmentChunksAtTheRowFloor() {
+        val limits =
+            HardLimits(
+                maxBlob = 1_024,
+                maxFramesCap = 100,
+                maxTtlMs = 86_400_000L,
+                maxScopes = 4,
+                maxAttachBytes = 4_096,
+                maxAChunk = 512,
+            )
+
+        fun tinyAput(
+            q: Long,
+            scope: ByteArray,
+            seed: Byte,
+        ) = aput(
+            q,
+            scope,
+            aid =
+                ByteArray(32) {
+                    seed
+                },
+            cid = MessageDigest.getInstance("SHA-256").digest(byteArrayOf(seed)),
+            data = byteArrayOf(seed),
+        )
+
+        // Two one-byte chunks: 2 bytes of payload, 1,024 charged — over a 1,000-byte watermark.
+        withServer(testConfig(hardLimits = limits, maxBytes = 1_000L)) {
+            connect {
+                helloHandshake()
+                subscribe(testScope(1))
+                sendRecord(tinyAput(q = 1L, scope = testScope(1), seed = 7))
+                expectRecord<Ok>(RecordType.OK)
+                clock.advance(1_000)
+                val anchored = this
+                connect {
+                    helloHandshake()
+                    subscribe(testScope(2))
+                    sendRecord(tinyAput(q = 2L, scope = testScope(2), seed = 8))
+                    expectRecord<Ok>(RecordType.OK) // 1,024 charged > 1,000: scope 1 is shed
+                }
+                val digest = anchored.expectRecord<app.getknit.spool.protocol.Digest>(RecordType.DIGEST)
+                assertTrue(digest.scope.contentEquals(testScope(1)))
+                assertEquals(0, digest.count)
+                assertTrue(store.isUnknownScope(testScope(1)))
+                assertEquals(ScopeStore.ATTACH_CHUNK_FLOOR.toLong(), store.totalBytes())
             }
         }
     }

@@ -159,6 +159,31 @@ document:
   `sub-off-length-scope` — an advisory check that a 31-byte scope is answered with an `err`, not a
   `digest`, on a connection that keeps working. Pinned by `IdLengthTest`.
 
+- **Every attachment chunk row is charged at least 512 bytes.** The attachment quota counted payload
+  bytes, and a one-byte chunk is not one byte: it is a header row, a chunk row and an index entry,
+  about 390 B of SQLite file (measured: 3,000 one-byte `aput`s were 3,000 B counted and 1,144 KiB
+  of file) and the same order of heap on the in-memory store. Frames are count-capped by
+  `maxFrames`; attachments had no count cap, so the 16 MiB default `SPOOL_MAX_ATTACH_BYTES` admitted
+  about 16 million rows — some 6 GB of file — per scope before `quota` fired, and `SPOOL_MAX_BYTES`
+  saw 16 MiB of it. Finding F7 of the same review, and the one that survives the id fix above.
+
+  Every chunk is now charged `max(size, 512)` at the put, the drop and the boot recompute, in both
+  stores, which bounds a scope at `SPOOL_MAX_ATTACH_BYTES / 512` chunk rows (32,768 at the default)
+  and the spool at `SPOOL_MAX_BYTES / 512`, without a new variable. A conforming client never
+  notices: only an attachment's last chunk can be shorter than the structural 48 KiB, so the charge
+  moves by at most 511 bytes per attachment, never for a full chunk, and two maximal 8 MiB
+  attachments still fit the default.
+
+  **This changes what the store counts, not its schema.** There is no migration: the first boot
+  after the upgrade re-derives every scope's `attach_bytes` under the new rule, and the `live=`
+  figure in the status line and `knit_spool_live_bytes` move with it — by at most 511 bytes per
+  stored attachment on a spool that has only ever seen conforming clients. If that carries the
+  total over `SPOOL_MAX_BYTES`, the watermark sheds at the first sweep exactly as it would for any
+  other growth. Pinned by the store contract tests on both backends (a one-byte chunk charges 512;
+  tiny attachments evict and refuse at the row cap; expiry, refusal and shed release the charged
+  amount), a SQLite test that a pre-floor `attach_bytes` column is healed on reopen, and a server
+  test that two one-byte chunks trip a 1,000-byte watermark.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

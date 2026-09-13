@@ -20,7 +20,9 @@ import java.util.concurrent.atomic.AtomicLong
  * tail after power loss is acceptable — spools are cattle, any member refills via anti-entropy
  * (spec §9.1) — while transactions keep blobs, tombstones, and the digest column mutually
  * consistent. On boot the per-scope digest/count/bytes columns are recomputed from the blob rows
- * and self-healed, so the incrementally maintained columns can never drift permanently.
+ * and self-healed, so the incrementally maintained columns can never drift permanently; the
+ * attachment bytes are re-summed the same way at their charged size ([ScopeStore.chunkCharge]), so
+ * a store written under an older counting rule is re-counted on its first boot.
  */
 class SqliteScopeStore private constructor(
     private val connection: Connection,
@@ -34,6 +36,9 @@ class SqliteScopeStore private constructor(
         private const val BITS_PER_BYTE = 8
 
         private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
+
+        /** One chunk row's charge in SQL — the same rule as [ScopeStore.chunkCharge]. */
+        private const val CHUNK_CHARGE_SQL = "max(length(data), ${ScopeStore.ATTACH_CHUNK_FLOOR})"
 
         fun open(
             dataDir: Path,
@@ -201,7 +206,7 @@ class SqliteScopeStore private constructor(
                         update.executeUpdate()
                     }
                     var attachBytes = 0L
-                    val attachSelect = prep("SELECT COALESCE(SUM(length(data)), 0) FROM attachment_chunks WHERE scope_id = ?")
+                    val attachSelect = prep("SELECT COALESCE(SUM($CHUNK_CHARGE_SQL), 0) FROM attachment_chunks WHERE scope_id = ?")
                     attachSelect.setBytes(1, scopeId)
                     attachSelect.executeQuery().use { attachRows ->
                         if (attachRows.next()) attachBytes = attachRows.getLong(1)
@@ -563,8 +568,9 @@ class SqliteScopeStore private constructor(
             insert.setBytes(4, cid)
             insert.setBytes(5, data)
             insert.executeUpdate()
-            row.attachBytes += data.size
-            bytesTotal.addAndGet(data.size.toLong())
+            val charge = ScopeStore.chunkCharge(data.size)
+            row.attachBytes += charge
+            bytesTotal.addAndGet(charge)
             val result = enforceAttachmentQuota(scopeId, row, aid, now)
             writeRow(scopeId, row, now)
             result
@@ -674,7 +680,7 @@ class SqliteScopeStore private constructor(
         now: Long,
     ) {
         var freed = 0L
-        val sum = prep("SELECT COALESCE(SUM(length(data)), 0) FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
+        val sum = prep("SELECT COALESCE(SUM($CHUNK_CHARGE_SQL), 0) FROM attachment_chunks WHERE scope_id = ? AND aid = ?")
         sum.setBytes(1, scopeId)
         sum.setBytes(2, aid)
         sum.executeQuery().use { if (it.next()) freed = it.getLong(1) }

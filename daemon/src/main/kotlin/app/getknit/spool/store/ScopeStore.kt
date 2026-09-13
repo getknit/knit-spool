@@ -138,7 +138,10 @@ interface ScopeStore : AutoCloseable {
 
     fun scopeCount(): Int
 
-    /** Total live payload bytes across all scopes (the watermark input; not file size). */
+    /**
+     * Total charged bytes across all scopes (the watermark input; not file size): frames at their
+     * payload size, attachment chunks at [chunkCharge] — never below [ATTACH_CHUNK_FLOOR] each.
+     */
     fun totalBytes(): Long
 
     /** Subscribe-time bounds declaration: clamps to the hard caps and (re)applies them. */
@@ -228,5 +231,25 @@ interface ScopeStore : AutoCloseable {
         const val TOMBSTONE_FLOOR = 1024
 
         fun tombstoneCap(bounds: ScopeBounds): Int = maxOf(2 * bounds.maxFrames, TOMBSTONE_FLOOR)
+
+        /**
+         * Per-chunk charge floor: an `aput` is charged `max(data.size, ATTACH_CHUNK_FLOOR)` against
+         * the scope's `maxAttachBytes` and the spool's watermark, at every site that counts
+         * attachment bytes — the put, the drop and the boot recompute — in both stores.
+         *
+         * The quota is in bytes (§6.5) but what a chunk costs is a row: a one-byte chunk is still a
+         * header row, a chunk row and an index entry, ~390 B of SQLite file (measured: 3,000
+         * one-byte chunks were 3,000 B counted and 1,144 KiB of file) and the same order on the
+         * heap. Counted at size, the 16 MiB default admitted ~16 million rows per scope while the
+         * watermark saw 16 MiB. Frames are count-capped by `maxFrames`; attachments have no count
+         * cap, and this floor stands in for one: a scope holds at most `maxAttachBytes / 512` chunk
+         * rows and the spool `maxBytes / 512`. Honest traffic never notices — only an attachment's
+         * last chunk can be shorter than the structural 48 KiB, so the charge moves by at most 511
+         * bytes per attachment and never for a full chunk.
+         */
+        const val ATTACH_CHUNK_FLOOR = 512
+
+        /** What one stored chunk of [size] bytes costs against the attachment quota and the watermark. */
+        fun chunkCharge(size: Int): Long = maxOf(size, ATTACH_CHUNK_FLOOR).toLong()
     }
 }

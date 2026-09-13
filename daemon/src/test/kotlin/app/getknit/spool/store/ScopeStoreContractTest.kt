@@ -24,9 +24,10 @@ abstract class ScopeStoreContractTest {
             maxFramesCap = 100,
             maxTtlMs = 86_400_000L,
             maxScopes = 8,
-            // Attachments on, with a tiny budget so the quota path is reachable in a test.
-            maxAttachBytes = 250,
-            maxAChunk = 128,
+            // Attachments on, with a budget three full-size chunks overflow (so the quota path is
+            // reachable) and that admits exactly 1_500 / ATTACH_CHUNK_FLOOR = 2 floor-charged rows.
+            maxAttachBytes = 1_500,
+            maxAChunk = 1_024,
         )
     private val bounds = ScopeBounds(maxFrames = 3, ttlMs = 10_000L, maxBlob = 1_024)
     private val scope = ByteArray(32) { 1 }
@@ -230,9 +231,16 @@ abstract class ScopeStoreContractTest {
 
     // --- Attachments, spec §6.5 ---
 
+    /** A chunk above [ScopeStore.ATTACH_CHUNK_FLOOR], so it is charged exactly its size. */
     private fun chunk(seed: Int): Pair<ByteArray, ByteArray> {
-        val data = ByteArray(100) { ((it * 11 + seed) and 0xFF).toByte() }
+        val data = ByteArray(600) { ((it * 11 + seed) and 0xFF).toByte() }
         data[0] = seed.toByte()
+        return MessageDigest.getInstance("SHA-256").digest(data) to data
+    }
+
+    /** A one-byte chunk: the cheapest row an uploader can make, and the whole point of the floor. */
+    private fun tiny(seed: Int): Pair<ByteArray, ByteArray> {
+        val data = byteArrayOf(seed.toByte())
         return MessageDigest.getInstance("SHA-256").digest(data) to data
     }
 
@@ -279,7 +287,7 @@ abstract class ScopeStoreContractTest {
             val after = store.digest(scope, now = 2L)!!
             assertEquals(before.digest, after.digest)
             assertEquals(0, after.count)
-            assertEquals(100L, store.totalBytes())
+            assertEquals(600L, store.totalBytes())
         }
     }
 
@@ -322,7 +330,7 @@ abstract class ScopeStoreContractTest {
             val (cidA, dataA) = chunk(0)
             val (cidB, dataB) = chunk(1)
             val (cidC, dataC) = chunk(2)
-            // 3 x 100 bytes against a 250-byte budget: the third push must evict a whole attachment.
+            // 3 x 600 bytes against a 1,500-byte budget: the third push must evict a whole attachment.
             store.attachmentPut(scope, old, 0, 1, cidA, dataA, now = 1L)
             store.attachmentPut(scope, new, 0, 2, cidB, dataB, now = 2L)
 
@@ -336,7 +344,7 @@ abstract class ScopeStoreContractTest {
             assertEquals(true, gone.dead)
             assertIs<AputResult.Tombstoned>(store.attachmentPut(scope, old, 0, 1, cidA, dataA, now = 4L))
             assertEquals(2, store.attachmentPresence(scope, new, now = 4L).total)
-            assertEquals(200L, store.totalBytes())
+            assertEquals(1_200L, store.totalBytes())
         }
     }
 
@@ -386,7 +394,108 @@ abstract class ScopeStoreContractTest {
 
             val shed = store.shedOldestScope()!!
             assertTrue(shed.scopeId.contentEquals(scope))
-            assertEquals(100L, shed.freedBytes)
+            assertEquals(600L, shed.freedBytes)
+            assertEquals(0L, store.totalBytes())
+            assertEquals(true, store.isUnknownScope(scope))
+        }
+    }
+
+    // --- The per-row charge floor: a chunk costs a row, whatever its payload weighs ---
+
+    @Test
+    fun aChunkIsChargedAtLeastTheRowFloor() {
+        val floor = ScopeStore.ATTACH_CHUNK_FLOOR.toLong()
+        assertEquals(floor, ScopeStore.chunkCharge(0))
+        assertEquals(floor, ScopeStore.chunkCharge(511))
+        assertEquals(floor, ScopeStore.chunkCharge(512))
+        assertEquals(513L, ScopeStore.chunkCharge(513))
+        // The structural full chunk (§12 aChunkBytes) is never touched by the floor.
+        assertEquals(49_152L, ScopeStore.chunkCharge(49_152))
+
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (tinyCid, tinyData) = tiny(0)
+            val other = ByteArray(32) { 3 }
+            val (cid, data) = chunk(0)
+
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, tinyCid, tinyData, now = 1L))
+            // One byte of payload, a whole row's worth counted.
+            assertEquals(floor, store.totalBytes())
+
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, other, 0, 1, cid, data, now = 2L))
+            // At or above the floor a chunk is charged what it weighs.
+            assertEquals(floor + 600L, store.totalBytes())
+        }
+    }
+
+    @Test
+    fun tinyAttachmentsHitTheQuotaAtTheRowCapNotTheByteCount() {
+        createStore().use { store ->
+            store.subscribed(scope)
+            val rowCap = limits.maxAttachBytes / ScopeStore.ATTACH_CHUNK_FLOOR
+            assertEquals(2, rowCap)
+            val aids = List(rowCap + 1) { i -> ByteArray(32) { (i + 1).toByte() } }
+
+            // Three bytes of payload could never overflow a 1,500-byte quota; three rows can.
+            aids.forEachIndexed { i, id ->
+                val (cid, data) = tiny(i)
+                val stored = assertIs<AputResult.Stored>(store.attachmentPut(scope, id, 0, 1, cid, data, now = 1L + i))
+                if (i < rowCap) {
+                    assertTrue(stored.evicted.isEmpty(), "row ${i + 1} of $rowCap should fit")
+                } else {
+                    assertTrue(stored.evicted.single().contentEquals(aids.first()))
+                }
+            }
+            assertEquals(true, store.attachmentPresence(scope, aids.first(), now = 5L).dead)
+            assertEquals(rowCap * ScopeStore.ATTACH_CHUNK_FLOOR.toLong(), store.totalBytes())
+        }
+    }
+
+    @Test
+    fun anAttachmentOfTinyChunksIsRefusedWhenItsRowsCannotFit() {
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (cid0, data0) = tiny(0)
+            val (cid1, data1) = tiny(1)
+            val (cid2, data2) = tiny(2)
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 3, cid0, data0, now = 1L))
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 1, 3, cid1, data1, now = 1L))
+
+            // 3 x 512 > 1,500 with nothing else to evict: S-6.5-3, under the row rule.
+            assertIs<AputResult.QuotaExceeded>(store.attachmentPut(scope, aid, 2, 3, cid2, data2, now = 2L))
+
+            val info = store.attachmentPresence(scope, aid, now = 3L)
+            assertEquals(0, info.total)
+            assertEquals(false, info.dead)
+            // The refusal releases what was charged, not what the payload weighed.
+            assertEquals(0L, store.totalBytes())
+        }
+    }
+
+    @Test
+    fun theChargedAmountIsReleasedOnExpiryAndShed() {
+        val floor = ScopeStore.ATTACH_CHUNK_FLOOR.toLong()
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (cid, data) = tiny(0)
+            store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L)
+            assertEquals(floor, store.totalBytes())
+
+            store.sweep(now = 1L + bounds.ttlMs + 1)
+            assertEquals(true, store.attachmentPresence(scope, aid, now = 1L + bounds.ttlMs + 1).dead)
+            assertEquals(0L, store.totalBytes())
+        }
+
+        // A fresh aid: a persistent backend reopens the same database, where the one above is
+        // tombstoned.
+        val shedAid = ByteArray(32) { 6 }
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (cid, data) = tiny(0)
+            store.attachmentPut(scope, shedAid, 0, 1, cid, data, now = 1L)
+
+            val shed = store.shedOldestScope()!!
+            assertEquals(floor, shed.freedBytes)
             assertEquals(0L, store.totalBytes())
             assertEquals(true, store.isUnknownScope(scope))
         }

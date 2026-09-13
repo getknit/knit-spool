@@ -67,4 +67,28 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
             assertEquals(40L, store.totalBytes())
         }
     }
+
+    @Test
+    fun bootRecomputeHealsAPreFloorAttachBytesColumn() {
+        val data = byteArrayOf(1)
+        val cid = MessageDigest.getInstance("SHA-256").digest(data)
+        val aid = ByteArray(32) { 9 }
+        createStore().use { store ->
+            store.subscribe(scope, bounds, now = 0L)
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L))
+        }
+
+        // A store written before the floor summed raw payload: one byte for this row.
+        DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { raw ->
+            raw.createStatement().use { it.executeUpdate("UPDATE scopes SET attach_bytes = 1") }
+        }
+
+        createStore().use { store ->
+            val floor = ScopeStore.ATTACH_CHUNK_FLOOR.toLong()
+            assertEquals(floor, store.totalBytes())
+            // The shed reads the column itself, so this proves the row was healed, not just the gauge.
+            assertEquals(floor, store.shedOldestScope()!!.freedBytes)
+            assertEquals(0L, store.totalBytes())
+        }
+    }
 }
