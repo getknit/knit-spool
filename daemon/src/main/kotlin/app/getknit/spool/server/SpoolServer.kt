@@ -93,6 +93,9 @@ private const val RATE_STRIKE_WINDOW_MS = 10_000L
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
 private const val IP_IDLE_MS = 600_000L
 
+/** How often `guarded` writes a stack trace; the failures between two are counted, not logged. */
+private const val INTERNAL_TRACE_MS = 60_000L
+
 /**
  * `Retry-After` on a capacity refusal. Long enough that a rejected client spends the interval on
  * its other spools rather than re-dialing this one, short enough that a spool which empties out is
@@ -304,6 +307,15 @@ class SpoolServer(
     )
 
     private val log = LoggerFactory.getLogger(SpoolServer::class.java)
+
+    /**
+     * [guarded]'s trace sampler: when the next stack trace may be written (never before the first)
+     * and how many failures went unwritten since the last, both under [internalTraceLock]. See
+     * [logInternal].
+     */
+    private val internalTraceLock = Any()
+    private var internalTraceDueAt = Long.MIN_VALUE
+    private var internalSuppressed = 0L
 
     /**
      * The periodic status line logs under its own name so an operator can re-level or silence just
@@ -766,8 +778,34 @@ class SpoolServer(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.error("record handling failed", e)
+            logInternal(e)
             sendErr(conn, ErrCode.INTERNAL, q = q)
+        }
+    }
+
+    /**
+     * Writes [guarded]'s stack trace at most once per [INTERNAL_TRACE_MS]; failures in between are
+     * counted onto the next trace's line rather than logged. A handler failure a client can
+     * provoke arrives at the record rate — 50 a second per connection — and the plain compose file
+     * rotates nothing, so one trace per failure is a disk-filling primitive handed to whoever finds
+     * the next such bug. The sample loses nothing an operator acts on: every failure still answers
+     * `err internal`, and every one is counted in `knit_spool_errs_total{code="internal"}`.
+     */
+    private fun logInternal(e: Exception) {
+        val now = clock()
+        val suppressed =
+            synchronized(internalTraceLock) {
+                if (now < internalTraceDueAt) {
+                    internalSuppressed++
+                    return
+                }
+                internalTraceDueAt = now + INTERNAL_TRACE_MS
+                internalSuppressed.also { internalSuppressed = 0 }
+            }
+        if (suppressed == 0L) {
+            log.error("record handling failed", e)
+        } else {
+            log.error("record handling failed ({} more since the last trace)", suppressed, e)
         }
     }
 

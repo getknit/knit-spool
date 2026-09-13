@@ -218,6 +218,14 @@ document:
   tests on both backends, `HardLimitsTest` for the derivation, and a SQLite test that a header set
   to `Int.MAX_VALUE` is dropped on reopen.
 
+  The catch-all that turns a handler failure into `err internal` now writes its stack trace at
+  most once a minute and counts the failures in between onto the next trace's line. A failure a
+  client can provoke arrives at the record rate into a log the plain compose file never rotates,
+  which made the overflow above a disk-filling primitive as well as a crash; the sample loses
+  nothing an operator acts on, since every failure still answers `err internal` and every one is
+  counted in `knit_spool_errs_total{code="internal"}`. Pinned by `GuardedTest`: five failures in one
+  window are five answers and one trace, and the next window's trace says `4 more`.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and
