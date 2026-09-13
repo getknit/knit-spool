@@ -7,6 +7,7 @@ import app.getknit.spool.protocol.Ahas
 import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
+import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
@@ -157,6 +158,35 @@ class SpecVectorTest {
                                     maxAget = 32,
                                 ),
                             powBits = 20,
+                        ),
+                    ),
+                // §7.4: a spool with a commons advertises its name and pinned bounds — never its id —
+                // and `attach` only when true, so a room without attachments is the shorter map.
+                "helloSpoolCommons" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                ),
+                            powBits = 20,
+                            commons = CommonsInfo(name = "Home", maxFrames = 500, ttlMs = 86_400_000L, maxBlob = 65_536),
+                        ),
+                    ),
+                "helloSpoolCommonsAttach" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            commons = CommonsInfo(maxFrames = 500, ttlMs = 86_400_000L, maxBlob = 65_536, attach = true),
                         ),
                     ),
                 // §7.5: the send-side moderation request, present only when the operator set it.
@@ -348,6 +378,15 @@ class SpecVectorTest {
                     "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
                     "0c84006e6d617841747461636842797465731a01000000696d6178414368756e6b19" +
                     "c045676d617841676574182067706f774269747314",
+                "helloSpoolCommons" to
+                    "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a" +
+                    "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
+                    "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
+                    "0c840067706f77426974731467636f6d6d6f6e73a4646e616d6564486f6d65696d61" +
+                    "784672616d65731901f46574746c4d731a05265c00676d6178426c6f621a00010000",
+                "helloSpoolCommonsAttach" to
+                    "a361746568656c6c6f61760167636f6d6d6f6e73a4696d61784672616d65731901f4" +
+                    "6574746c4d731a05265c00676d6178426c6f621a0001000066617474616368f5",
                 "helloSpoolModeration" to
                     "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a" +
                     "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
