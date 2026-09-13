@@ -13,8 +13,10 @@ import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
-/** The scope-creation PoW gate per spec §6.4/§8, including the shed-scope PUSH-recreate path. */
+/** The scope-creation PoW gate per spec §6.4/§8, including the shed-scope PUSH- and SUB-recreate paths. */
 class PowGateTest {
     private val bits = 8
 
@@ -119,6 +121,49 @@ class PowGateTest {
                 )
                 assertEquals(0, expectRecord<Digest>(RecordType.DIGEST).count)
                 assertEquals(4L, expectRecord<Ok>(RecordType.OK).q)
+            }
+        }
+    }
+
+    @Test
+    fun subToAShedScopeDemandsPowAndRecreates() {
+        withServer(testConfig(powBits = bits)) {
+            connect {
+                helloHandshake()
+                val scope = testScope(1)
+                val day = Pow.utcDay(clock.now)
+                subscribe(scope, pow = stampFor(scope, day))
+                store.shedOldestScope()
+                assertTrue(store.isUnknownScope(scope))
+
+                // The connection still holds its sub; the store no longer knows the scope. A re-sub
+                // is the "first SUB for an unknown scope id" of S-6.4-2, whatever this connection
+                // remembers — and without a stamp it is refused, not quietly recreated.
+                sendRecord(Sub(t = RecordType.SUB, q = 2L, subs = listOf(ScopeSub(scope = scope, bounds = testBounds()))))
+                val err = expectRecord<Err>(RecordType.ERR)
+                assertEquals(ErrCode.POW, err.code)
+                assertEquals(2L, err.q)
+                assertTrue(err.scope!!.contentEquals(scope))
+                assertTrue(store.isUnknownScope(scope), "a refused re-sub must not recreate the scope")
+
+                // With the stamp the sub recreates it, through the (scope, day) cache: no second verify.
+                assertEquals(0, subscribe(scope, q = 3L, pow = stampFor(scope, day)).count)
+                assertFalse(store.isUnknownScope(scope))
+                assertEquals(1L, spool.metrics.powVerifiedTotal.sum())
+            }
+        }
+    }
+
+    @Test
+    fun reSubscribingAKnownScopeSkipsTheGates() {
+        withServer(testConfig(powBits = bits)) {
+            connect {
+                helloHandshake()
+                val scope = testScope(1)
+                subscribe(scope, pow = stampFor(scope, Pow.utcDay(clock.now)))
+                // A bounds refresh on a scope the store still holds is not a creation: no stamp needed.
+                assertEquals(0, subscribe(scope, q = 2L).count)
+                assertEquals(1L, spool.metrics.powVerifiedTotal.sum())
             }
         }
     }

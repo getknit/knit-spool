@@ -859,7 +859,11 @@ class SpoolServer(
                     return
                 }
             }
-            if (scopeHex !in conn.subscriptions && withStore { store.isUnknownScope(scopeSub.scope) }) {
+            // The store, not this connection's table, says whether the sub creates the scope: one the
+            // connection already holds may have been shed since (S-6.2-8), and recreating it meets
+            // the creation gates exactly as the push and aput recreate paths apply them (S-6.2-9).
+            // A refresh of a scope the store still holds costs the one extra hop, and no gate.
+            if (withStore { store.isUnknownScope(scopeSub.scope) }) {
                 val gate = newScopeGates(conn, scopeSub.scope, scopeSub.pow?.d, scopeSub.pow?.n, sub.q, now, strike = !struck)
                 if (gate == Gate.CLOSED) return
                 if (gate == Gate.RATE_REFUSED) struck = true

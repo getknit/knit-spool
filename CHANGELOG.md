@@ -260,6 +260,27 @@ document:
   scoped `err rate` with the connection open afterwards, and the same twelve against a dry
   new-scope bucket strike once — all four fail against the unbounded handler.
 
+- **A `sub` for a scope the watermark has shed meets the creation gates again.** The gates — the
+  per-IP new-scope bucket and PoW — ran for a `sub` only when the scope was new to *this
+  connection*: once subscribed, a later `sub` for it skipped them even after the watermark had
+  shed the scope and the store reported it unknown, and the subscribe then recreated it. Scope
+  recreation ran at the record rate (50 a second) instead of `SPOOL_RATE_NEW_SCOPES` (6 a minute)
+  and paid no work, so a client that had paid once for a set of scopes could keep re-creating them
+  after each shed and keep the watermark shedding other people's conversations. The push and aput
+  recreate paths already asked the store, as S-6.2-9 requires. Finding F4 of the same review, and
+  the gap in the 0.1.0 line "stateless PoW on SUB and on the shed-scope PUSH-recreate path".
+
+  The `sub` path now asks the store too: a scope the store does not hold meets the gates whatever
+  the connection remembers, exactly as the push that would recreate it. A stamp already accepted
+  today for that scope still passes through the `(scope, day)` cache (S-6.4-3), so an honest client
+  re-subscribing after a shed pays nothing new; an unstamped re-sub is `err pow`, and either way
+  the new-scope bucket is charged. A bounds refresh on a scope the store still holds skips the gates
+  as before, for one extra store hop that the entry's own record token now pays for. The commons
+  is untouched: it is pinned against the watermark and never unknown. Pinned by `PowGateTest` (an
+  unstamped re-sub of a shed scope is `err pow` and recreates nothing; stamped, it recreates through
+  the cache; a still-held scope refreshes with no stamp) and `RateAndWatermarkTest` (the re-sub
+  spends a new-scope token) — the two shed cases fail against the short-circuit.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

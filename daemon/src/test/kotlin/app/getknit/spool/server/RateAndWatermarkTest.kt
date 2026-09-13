@@ -132,6 +132,33 @@ class RateAndWatermarkTest {
     }
 
     @Test
+    fun subToAShedScopeTakesFromTheNewScopeBucket() {
+        withServer(testConfig(rateNewScopesPerMin = 1)) {
+            // burst 4, spent on four scopes; the shed one is unknown to the store again, and the
+            // connection that still holds its sub gets no discount on recreating it (S-6.2-9).
+            connect {
+                helloHandshake()
+                (1..4).forEach { subscribe(testScope(it), q = it.toLong()) }
+                val shed = assertNotNull(store.shedOldestScope()).scopeId
+                assertTrue(store.isUnknownScope(shed))
+
+                sendRecord(Sub(t = RecordType.SUB, q = 5L, subs = listOf(ScopeSub(scope = shed, bounds = testBounds()))))
+                val err = expectRecord<Err>(RecordType.ERR)
+                assertEquals(ErrCode.RATE, err.code)
+                assertEquals(5L, err.q)
+                assertTrue(err.scope!!.contentEquals(shed))
+                assertTrue(err.retryMs!! > 0)
+                assertTrue(store.isUnknownScope(shed), "a rate-refused re-sub must not recreate the scope")
+
+                // It was the gate and not the scope quota: a minute buys one token and the recreation.
+                clock.advance(60_000L)
+                assertEquals(0, subscribe(shed, q = 6L).count)
+                assertFalse(store.isUnknownScope(shed))
+            }
+        }
+    }
+
+    @Test
     fun watermarkShedsTheOldestScopeAndBroadcastsAnEmptyDigest() {
         withServer(testConfig(maxBytes = 100L)) {
             connect {
