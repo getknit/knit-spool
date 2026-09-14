@@ -680,10 +680,17 @@ class SpoolServer(
             conn.out.send(binary(RecordCodec.encode(serverHello())))
             var helloed = false
             for (frame in session.incoming) {
-                val bytes = (frame as? Frame.Binary)?.readBytes() ?: continue
+                // Only data frames reach `incoming` — Ktor answers pings and consumes pongs and the
+                // close upstream — and a record is a *binary* message (B-7.1-4). A text frame is
+                // not skipped: it is malformed traffic that costs what any malformed record costs,
+                // close 4000 before hello and a record token then `err malformed` after. Skipping
+                // it meant a client could send frames of `maxRecord` at line rate, each one
+                // reassembled and dropped, without the record bucket ever seeing them.
+                val bytes = frame.readBytes()
+                val binary = frame is Frame.Binary
                 metrics.recordsTotal.increment()
                 if (!helloed) {
-                    val hello = RecordCodec.decode<Hello>(bytes)
+                    val hello = if (binary) RecordCodec.decode<Hello>(bytes) else null
                     if (hello == null || RecordCodec.peekType(bytes) != RecordType.HELLO) {
                         session.close(CloseReason(CloseCode.MALFORMED.toShort(), "hello first"))
                         return
@@ -698,6 +705,10 @@ class SpoolServer(
                 val retryMs = conn.recordBucket.take()
                 if (retryMs > 0) {
                     if (rateLimited(conn, q = null, scope = null, retryMs = retryMs)) return
+                    continue
+                }
+                if (!binary) {
+                    sendErr(conn, ErrCode.MALFORMED)
                     continue
                 }
                 if (bytes.size > config.maxRecord) {

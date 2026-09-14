@@ -164,6 +164,7 @@ fun allChecks(): List<Check> =
         subOffLengthScope(),
         subOverMaxScopes(),
         subDuplicateScope(),
+        textFrameMalformed(),
         qCorrelation(),
         // rate-limit runs before quota-scopes: the quota probe fills the scope table, after
         // which no later check can create the fresh scope it needs.
@@ -1154,6 +1155,35 @@ private fun subDuplicateScope(): Check =
             ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for a duplicated scope, got ${err.code}" }
             // Still a working connection, and the scope itself was never the problem.
             ctx.subscribeFresh(this, scope)
+        }
+    }
+
+/**
+ * B-7.1-4: a record is one CBOR record per *binary* message. A text frame is not a record, so a
+ * spool cannot process it and should not silently drop it either — dropped, it is a frame of
+ * `maxRecord` a client can send at line rate past every per-record limit. The answer is an
+ * in-band `err` with no `q` (there is no record to take one from) on a connection that keeps
+ * working (B-7.1-7). Advisory: the spec names the frame type but numbers no refusal, and which code
+ * to use is the spool's call — `malformed` is what this repo's daemon says.
+ */
+private fun textFrameMalformed(): Check =
+    Check(name = "text-frame-malformed", must = false) { ctx ->
+        ctx.client.connect {
+            hello()
+            ws.send(Frame.Text("not a record"))
+            val bytes =
+                try {
+                    receiveBytes()
+                } catch (_: TimeoutException) {
+                    throw CheckFailure("expected err for a text frame, got timeout after $timeoutMs ms: the spool dropped it")
+                }
+            val t = RecordCodec.peekType(bytes)
+            ensure(t == RecordType.ERR) { "expected err for a text frame, got '${t ?: "undecodable record"}'" }
+            val err = RecordCodec.decode<Err>(bytes) ?: throw CheckFailure("expected a decodable err, got one that does not decode")
+            ensure(err.q == null) { "expected err with no q for a frame that is not a record, got q=${err.q}" }
+            ensure(err.code == ErrCode.MALFORMED) { "expected err code=malformed for a text frame, got ${err.code}" }
+            // Still a working connection: the refusal was in-band, not a close.
+            ctx.subscribeFresh(this, ctx.randomScope())
         }
     }
 

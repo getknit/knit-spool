@@ -330,6 +330,22 @@ document:
   `ClientKeyTest` covers the spellings — compressed, uncompressed, upper-case, zoned, mapped — and
   that an unparseable string comes back as written with the lookup counters still.
 
+- **A text frame is malformed traffic and is charged as such.** A record is one CBOR record per
+  *binary* message (B-7.1-4), and the receive loop skipped any other data frame before the record
+  bucket saw it. Ktor reassembles a text frame up to the same `maxRecord + 1 KiB` cap as a binary
+  one, so a client could send frames of that size at line rate with bandwidth as the only cost —
+  200 text frames of 4 KB against a two-per-second bucket, then a `sub`, and the `sub` was served
+  with no `err rate` and no strike. Nothing was stored, so this burned CPU and allocation rather
+  than bypassing a quota. Finding F8 of the same review.
+
+  A text frame now costs what any malformed record costs: close 4000 before hello, and after it a
+  record token then `err malformed` with no `q` — there is no record to take one from — on a
+  connection that keeps working (B-7.1-7). No conforming client sends one. The conformance suite
+  gains `text-frame-malformed`, an advisory check that a text frame is answered with a single `err`
+  carrying no `q` on a connection that keeps working. Pinned by `TextFrameTest`: close 4000 before
+  hello, `err malformed` then a working `sub` after it, and eight text frames drain an eight-token
+  burst so the ninth is `err rate` — all three fail against the skip.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and
