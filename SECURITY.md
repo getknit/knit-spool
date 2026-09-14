@@ -60,8 +60,8 @@ spool is never given. This repo implements the first derivation and deliberately
 Two things a commons does move:
 
 - **The operator can count the room.** `knit_spool_commons_subscribers` is how many connections are
-  subscribed — an aggregate on an endpoint that is token-gated on private spools and 404'd by both
-  shipped proxy configs, next to a connection count the operator already had. It is not a roster,
+  subscribed — an aggregate on an endpoint that is token-gated on private spools and 404'd by every
+  shipped proxy config, next to a connection count the operator already had. It is not a roster,
   and no such count is ever offered to clients: who is in the room stays a delivery fact the spool
   does not deal in.
 - **The scope id is a weaker secret than the invite.** A member can hand out the id without the

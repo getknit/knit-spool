@@ -378,6 +378,19 @@ document:
   live connection survives the cap and still enforces `SPOOL_MAX_CONNS_PER_IP`) and `PowGateTest`
   (at a cap of one, the second scope's stamp is hashed again after a shed and the first's is not).
 
+- **The host Caddyfile seals `/metrics` like its siblings.** `deploy/Caddyfile` — the config for a
+  Caddy the operator already runs — had no `respond /metrics 404`, while `Caddyfile.compose` and
+  `nginx.conf` did and `SECURITY.md` said "both shipped proxy configs" do. The daemon token-gates
+  the endpoint only on a private spool, so a public spool behind that file served scope counts,
+  live bytes and the commons subscriber count to anyone who asked. Finding F10 of the same review.
+
+  The line is in, with the same `read_timeout 0` transport the compose file already carried for
+  idle-but-healthy subscribers, so the two Caddyfiles are the "same directives" the compose one
+  claims. `SECURITY.md` now says every shipped config, since there are three. Pinned by
+  `ProxyConfigTest`, which reads each config for its seal in its own syntax and fails on any
+  Caddyfile or `.conf` in `deploy/` it does not know — the way a promise about "the shipped
+  configs" drifts is one file at a time.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and
