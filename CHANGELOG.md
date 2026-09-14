@@ -391,6 +391,20 @@ document:
   Caddyfile or `.conf` in `deploy/` it does not know — the way a promise about "the shipped
   configs" drifts is one file at a time.
 
+- **`SPOOL_LOG_LEVEL=TRACE` no longer writes the bearer token to the log.** The variable set the
+  root level, `logback.xml` let every logger inherit it, and Ktor's websocket routing traces
+  `Starting websocket session for <uri>` — a URI that on a private spool carries `?k=<token>`. An
+  operator turning the log up to chase a problem was writing the connect credential to it, on
+  every connection, and `SECURITY.md` classes a token in this daemon's log as a finding. Finding
+  F11 of the same review.
+
+  `io.ktor` is pinned at `INFO` in the shipped `logback.xml`, so no root level reaches that line;
+  nothing Ktor says below `INFO` is about the spool, and the daemon's own loggers follow the root
+  level as before. The README's logging section says so, and says to keep the pin in an overridden
+  config. Pinned by `HelloAuthTest`, which drives the root logger to `TRACE` the way the variable
+  would, connects with a token, and reads every event that reaches the root: the token appears in
+  none of them, and did in Ktor's before the pin.
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

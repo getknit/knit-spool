@@ -5,6 +5,14 @@
             <pattern>%d{ISO8601} %-5level %logger{24} %msg%n</pattern>
         </encoder>
     </appender>
+    <!--
+        Pinned, not inherited: Ktor traces the request URI at the start of every WebSocket
+        session, and on a private spool the URI carries the bearer token in ?k=. A token in this
+        daemon's log is a reportable vulnerability (SECURITY.md), so no SPOOL_LOG_LEVEL may reach
+        that line. Nothing Ktor says below INFO is about the spool; the daemon's own loggers under
+        app.getknit.spool follow the root level as before.
+    -->
+    <logger name="io.ktor" level="INFO"/>
     <root level="${SPOOL_LOG_LEVEL:-INFO}">
         <appender-ref ref="console"/>
     </root>

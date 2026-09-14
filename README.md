@@ -510,6 +510,11 @@ drops, level up that one logger rather than the root:
 <logger name="app.getknit.spool.server.SpoolServer" level="DEBUG"/>
 ```
 
+Ktor's own loggers are pinned at `INFO` in the shipped `logback.xml` and do not follow
+`SPOOL_LOG_LEVEL`: below that, Ktor traces the request URI at the start of every WebSocket session,
+and on a private spool the URI carries the bearer token in `?k=`. Nothing Ktor says below `INFO` is
+about the spool. If you override the logging config, keep that pin.
+
 ## 🧪 Conformance
 
 Validate any spool implementation — this one or a third party's — over a live connection:

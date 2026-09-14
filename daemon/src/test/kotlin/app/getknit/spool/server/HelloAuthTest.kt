@@ -9,10 +9,13 @@ import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Pull
 import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
+import ch.qos.logback.classic.Level
+import org.slf4j.Logger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Connection establishment per spec §7.1: hello negotiation, auth, close codes. */
 class HelloAuthTest {
@@ -75,6 +78,30 @@ class HelloAuthTest {
                 awaitClose(CloseCode.AUTH)
             }
         }
+    }
+
+    /**
+     * `SPOOL_LOG_LEVEL` is the root level, and Ktor's websocket routing traces the request URI —
+     * `?k=` included — at the start of every session. `logback.xml` pins `io.ktor` so no root level
+     * reaches that line; this drives the root to TRACE the way the variable would and reads every
+     * event that propagates up to it.
+     */
+    @Test
+    fun noLogLevelWritesTheTokenToTheLog() {
+        val logged =
+            withLogCapture(Logger.ROOT_LOGGER_NAME, Level.TRACE) {
+                withServer(testConfig(token = "s3cret")) {
+                    connect(token = "s3cret") { helloHandshake() }
+                }
+            }
+        // The daemon runs no Ktor client; `io.ktor.client.*` here is this test's own connection.
+        val leaks =
+            logged
+                .filterNot { it.loggerName.startsWith("io.ktor.client.") }
+                .map { "${it.loggerName}: ${it.formattedMessage}" }
+                .filter { it.contains("s3cret") }
+        assertTrue(leaks.isEmpty(), "the token reached the log at TRACE: $leaks")
+        assertTrue(logged.isNotEmpty(), "the capture saw nothing at all, so it proves nothing")
     }
 
     @Test
