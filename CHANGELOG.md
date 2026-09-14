@@ -22,6 +22,18 @@ document:
 
 ### Added
 
+- **An `edge` image on every push to `main`.** The GitHub workflow that already ran `check` and
+  the conformance suite on a default-branch push now publishes what passed: the installDist tree
+  the suite exercised — not a second compile that merely should match — is layered onto the JRE
+  base by `Dockerfile.dist`, exactly as a release is, and pushed to GHCR and Docker Hub as `edge`
+  and as `sha-<short commit>`, multi-arch, with the same signed provenance attestation on the GHCR
+  copy. `latest` and the version tags stay the release workflow's alone, so an unpinned
+  `SPOOL_IMAGE` is never handed a development build. The daemon in an `edge` image reports its
+  `-SNAPSHOT` version and the commit at `GET /source`, and the publish job refuses a tree whose
+  stamp names any other commit. Main runs no longer cancel each other, either: a push that
+  superseded an in-flight run used to cancel it, which would now leave the older commit with no
+  image. A pull request is unaffected — it uploads nothing and pushes nothing.
+
 - **detekt, gating in `check`, with type resolution.** Static analysis alongside ktlint, on the
   `dev.detekt` 2.0 line — the first that runs on Gradle 9 — pinned to the same version as the
   Knit app so the two repos' overlays read against the same defaults. `check` runs the

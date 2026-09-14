@@ -317,15 +317,12 @@ network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 
 ## 🐳 Docker
 
-Release images go to two registries, and they are the same bytes: the release workflow builds one
-multi-arch manifest and pushes that manifest to both.
+Images go to two registries, and they are the same bytes: one multi-arch manifest, pushed to both.
 
 | Registry | Image | Notes |
 |---|---|---|
 | GHCR | `ghcr.io/getknit/knit-spool` | Carries the build provenance attestation. No anonymous pull limit. |
 | Docker Hub | `docker.io/getknit/knit-spool` | Shorter to type. Anonymous pulls are rate-limited. |
-
-Neither is populated yet; the first `v*` tag creates them. Until then, build from a checkout.
 
 Both are `linux/amd64` and `linux/arm64`, so an Ampere or Graviton box, or a 64-bit Raspberry Pi,
 pulls the same way an x86 VPS does.
@@ -340,7 +337,13 @@ Every release is tagged with its version, and a release that is not a prerelease
 `latest`. Pin the version in production, or a `@sha256:` digest for the strict form. `latest` moves
 under you, and a restart on a moved tag brings back a daemon you never tested.
 
-The GHCR copy traces back to the workflow run and the commit that built it:
+Every push to `main` publishes a development image too, once `check` and the conformance suite
+have passed on it: `edge` follows the branch, and `sha-<short commit>` (`sha-e4159fd`) is that
+commit's for good. Neither touches `latest`. An `edge` daemon reports its `-SNAPSHOT` version and
+the commit at `GET /source`, and it has cleared the same gates a release does — but nobody has run
+it in production yet. Pull it to try a fix before it ships; pin a version to run a spool on.
+
+The GHCR copy — release or `edge` — traces back to the workflow run and the commit that built it:
 
 ```sh
 gh attestation verify oci://ghcr.io/getknit/knit-spool:0.1.0 --repo getknit/knit-spool

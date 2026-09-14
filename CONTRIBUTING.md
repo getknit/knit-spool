@@ -132,9 +132,10 @@ include. Keep each pull request focused on a single change with a clear descript
 CI on a pull request runs the tests with coverage, `koverVerify`, and the conformance self-test
 against a freshly built daemon; ktlint rides along inside `check`. A separate DCO job checks that
 every commit carries a sign-off; if it fails, `git rebase --signoff origin/main` and a force-push
-fix the whole branch at once. The maintainer also runs an internal GitLab pipeline that adds
-advisory Trivy and markdownlint scans and a per-commit image build — those never gate a
-contribution.
+fix the whole branch at once. Once a change lands on `main`, the same workflow publishes it as the
+`edge` image on GHCR and Docker Hub (the README's Docker section has the tags). The maintainer also
+runs an internal GitLab pipeline that adds advisory Trivy and markdownlint scans and a per-commit
+image build for the internal registry — those never gate a contribution.
 
 ## Releases
 
@@ -155,9 +156,10 @@ and opens a **draft** GitHub Release with the distribution archives.
 - `CHANGELOG.md` carries the released ones. The workflow refuses a tag with no `## <version>`
   section — cutting a release means renaming `## Unreleased` to the version being released. That
   refusal is the whole reason a release cannot ship without notes.
-- [`Dockerfile.dist`](Dockerfile.dist) is the release image and [`Dockerfile`](Dockerfile) is the
-  from-source one. They share a byte-identical runtime stage; keep it that way, or an operator's
-  published image and their locally built one stop behaving the same.
+- [`Dockerfile.dist`](Dockerfile.dist) is the published image — release and `edge` alike — and
+  [`Dockerfile`](Dockerfile) is the from-source one. They share a byte-identical runtime stage;
+  keep it that way, or an operator's published image and their locally built one stop behaving
+  the same.
 
 ## Security
 

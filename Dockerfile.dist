@@ -1,12 +1,13 @@
-# Release image — the one .github/workflows/release.yml publishes for a v* tag.
+# Published image — what .github/workflows/release.yml pushes for a v* tag, and what ci.yml pushes
+# as `edge` for every push to main.
 #
 # The difference from ./Dockerfile is where the bytes come from. Dockerfile compiles the daemon
 # inside a JDK build stage, which is right for `docker build .` on a checkout but wrong for a
-# multi-arch release: it would run a full Kotlin compile under QEMU for every non-native platform.
+# multi-arch publish: it would run a full Kotlin compile under QEMU for every non-native platform.
 #
 # knit-spool is pure JVM, so the installDist output is architecture-independent — the same class
-# files run everywhere. The release workflow therefore compiles ONCE on the native runner and this
-# file only layers that output onto `eclipse-temurin:21-jre`, which is already multi-arch. An arm64
+# files run everywhere. Both workflows therefore compile ONCE on the native runner and this file
+# only layers that output onto `eclipse-temurin:21-jre`, which is already multi-arch. An arm64
 # image costs a base-layer pull rather than an emulated build.
 #
 # Build context: a directory holding the installDist tree at ./dist (bin/, lib/).

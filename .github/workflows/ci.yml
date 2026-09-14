@@ -1,14 +1,17 @@
 name: CI
 
 # Public CI for github.com/getknit/knit-spool. Mirrors the gating jobs of the maintainer's internal
-# .gitlab-ci.yml (test -> conformance) so pull requests opened here get the same checks. The parts
-# that are deliberately NOT mirrored: the kaniko container build and the Trivy/markdownlint scans
-# stay on the internal pipeline, because they need a registry credential and they are advisory
-# anyway — nothing there gates a contribution.
+# .gitlab-ci.yml (test -> conformance) so pull requests opened here get the same checks. The
+# Trivy/markdownlint scans are deliberately NOT mirrored: they stay on the internal pipeline
+# because they are advisory anyway — nothing there gates a contribution.
 #
 # `check` covers compile, ktlint, detekt, the §13 spec vectors, both store backends, and the
 # server integration tests, so there is no separate lint job: a style or analysis failure blocks
 # here rather than sitting advisory.
+#
+# A default-branch push additionally publishes the coverage badge and an `edge` container image
+# to GHCR and Docker Hub (the `publish` job). Release images — versioned, and the only ones that
+# move `latest` — come from release.yml on a v* tag, never from here.
 
 on:
   push:
@@ -20,7 +23,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request makes the older run moot. On main it does not: every push there
+  # publishes an image, and cancelling the run for a superseded commit would leave that commit
+  # with no `sha-` tag. So main runs queue behind each other instead.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -84,9 +90,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # Eats its own dogfood: the same wire contract an external implementation would be held to,
-      # run against the daemon this commit produces.
+      # run against the daemon this commit produces. Stamped with the commit so `publish` can prove
+      # the tree it images is this one.
       - name: Build daemon and conformance runner
-        run: ./gradlew :daemon:installDist :conformance:installDist --console=plain
+        run: ./gradlew :daemon:installDist :conformance:installDist -PspoolCommit="$GITHUB_SHA" --console=plain
 
       # `check` is what provisioning runs before starting a container, so its exit codes are a
       # contract. Cheap to assert here and expensive to discover from a container that will not boot.
@@ -144,6 +151,19 @@ jobs:
             conformance.tap
             spool-daemon.log
           if-no-files-found: ignore
+
+      # The exact tree the suite above just ran against, handed to `publish` so the image is built
+      # from bytes that passed rather than from a second compile that merely should match. Main
+      # pushes only — a pull request has no consumer for it — and only after a green suite, since
+      # the implicit success() is what a plain `if:` carries.
+      - name: Upload daemon distribution for publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-dist
+          path: daemon/build/install/knit-spool/
+          if-no-files-found: error
+          retention-days: 7
 
   badge:
     name: Publish coverage badge
@@ -203,3 +223,132 @@ jobs:
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               commit -q -m "chore(badge): coverage for ${GITHUB_SHA:0:7}" || exit 0
           git push -q origin badges
+
+  publish:
+    name: Publish edge image
+    # Default-branch pushes only, behind a green `check` and `conformance`. The image is layered
+    # from the installDist tree the conformance suite just exercised via Dockerfile.dist — the same
+    # route release.yml takes and for the same reason: knit-spool is pure JVM, so one native compile
+    # serves both platforms and arm64 costs a base-layer pull rather than a Kotlin compile under
+    # QEMU.
+    #
+    # Tags are `edge` (moves with every main push) and `sha-<7>` (immutable, one per commit).
+    # `latest` and the version tags are release.yml's alone: an operator running `SPOOL_IMAGE`
+    # unpinned must never be handed a development build.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, conformance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # sigstore signing for the provenance attestation
+      attestations: write
+    env:
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}
+      DOCKERHUB_IMAGE: docker.io/${{ github.repository }}
+    steps:
+      # The checkout is for Dockerfile.dist alone; the daemon comes from the artifact.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: daemon-dist
+          path: ctx/dist
+
+      # The daemon carries its own stamp (the resource BuildInfo reads), so the image is labelled
+      # with the version it will actually report, and the tree is proven to be this commit's rather
+      # than whatever the artifact store handed back.
+      - id: stamp
+        name: Read the build stamp
+        run: |
+          if [ ! -f ctx/dist/bin/knit-spool ]; then
+            echo "::error::artifact has no bin/knit-spool — did the installDist layout change?"
+            exit 1
+          fi
+          stamp=$(unzip -p ctx/dist/lib/daemon-*.jar app/getknit/spool/build-info.properties)
+          version=$(printf '%s\n' "$stamp" | sed -n 's/^version=//p')
+          commit=$(printf '%s\n' "$stamp" | sed -n 's/^commit=//p')
+          if [ "$commit" != "$GITHUB_SHA" ]; then
+            echo "::error::daemon is stamped with commit '$commit', not $GITHUB_SHA"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "stamp: version=$version commit=$commit"
+
+      # QEMU only so the `chmod`/`mkdir` RUN in Dockerfile.dist can execute in the arm64 stage.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub is optional, as in release.yml, so a fork publishes to GHCR with no secrets
+      # configured at all. An absent secret is a loud warning and a GHCR-only push, not a failure.
+      - id: hub
+        name: Is Docker Hub configured?
+        env:
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          if [ -n "${HUB_USER:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME is unset — publishing to GHCR only."
+          fi
+
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: tags
+        name: Compose tag list
+        run: |
+          short="${GITHUB_SHA:0:7}"
+          {
+            echo 'list<<EOF'
+            echo "$GHCR_IMAGE:edge"
+            echo "$GHCR_IMAGE:sha-$short"
+            if [ '${{ steps.hub.outputs.enabled }}' = 'true' ]; then
+              echo "$DOCKERHUB_IMAGE:edge"
+              echo "$DOCKERHUB_IMAGE:sha-$short"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      # provenance/sbom are off for the reason release.yml gives: BuildKit's own attestations add
+      # `unknown/unknown` entries to the manifest list, and the signed GitHub attestation below is
+      # the one `gh attestation verify` can actually check.
+      - id: push
+        name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ctx
+          file: ./Dockerfile.dist
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.title=knit-spool
+            org.opencontainers.image.description=Scoped, blinded store-and-forward relay for Knit's Internet plane
+            org.opencontainers.image.version=${{ steps.stamp.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      # Same verification path as a release image:
+      #   gh attestation verify oci://ghcr.io/getknit/knit-spool:edge --repo getknit/knit-spool
+      # GHCR only, as in release.yml — Docker Hub's OCI referrers support is inconsistent.
+      - name: Attest build provenance (GHCR)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.GHCR_IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
