@@ -110,11 +110,22 @@ class InMemoryScopeStore(
         scopeId: ByteArray,
         blobIds: List<ByteArray>,
         now: Long,
-    ): List<Pair<ByteArray, ByteArray>> {
+    ): List<ByteArray> {
         val scope = scopes[hex(scopeId)] ?: return emptyList()
         scope.lastActivity = now
         sweepScope(scope, now)
-        return blobIds.mapNotNull { id -> scope.live[hex(id)]?.let { id to it.blob } }
+        // Ids only; the bytes stream through `blob`, matching the SQLite store.
+        return blobIds.filter { hex(it) in scope.live }
+    }
+
+    @Synchronized
+    override fun blob(
+        scopeId: ByteArray,
+        blobId: ByteArray,
+        now: Long,
+    ): ByteArray? {
+        val scope = scopes[hex(scopeId)] ?: return null
+        return scope.live[hex(blobId)]?.blob
     }
 
     @Synchronized
@@ -196,9 +207,22 @@ class InMemoryScopeStore(
         scope.lastActivity = now
         sweepScope(scope, now)
         val held = scope.attachments[hex(aid)] ?: return emptyList()
+        // Headers only; the bytes stream through `attachmentChunk`.
         return (from until minOf(from + n, held.total)).mapNotNull { index ->
-            held.chunks[index]?.let { AttachmentChunk(idx = index, total = held.total, cid = it.cid, data = it.data) }
+            held.chunks[index]?.let { AttachmentChunk(idx = index, total = held.total, cid = it.cid) }
         }
+    }
+
+    @Synchronized
+    override fun attachmentChunk(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        now: Long,
+    ): ByteArray? {
+        val scope = scopes[hex(scopeId)] ?: return null
+        val held = scope.attachments[hex(aid)] ?: return null
+        return held.chunks[idx]?.data
     }
 
     @Synchronized

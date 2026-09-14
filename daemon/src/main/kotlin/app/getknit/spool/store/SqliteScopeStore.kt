@@ -347,19 +347,31 @@ class SqliteScopeStore private constructor(
         scopeId: ByteArray,
         blobIds: List<ByteArray>,
         now: Long,
-    ): List<Pair<ByteArray, ByteArray>> =
+    ): List<ByteArray> =
         tx {
             val row = readRow(scopeId) ?: return@tx emptyList()
             sweepScope(scopeId, row, now)
             writeRow(scopeId, row, now)
-            blobIds.mapNotNull { blobId ->
-                val select = prep("SELECT data FROM blobs WHERE scope_id = ? AND blob_id = ?")
+            // Ids only, not bytes: the data streams through `blob`, one blob at a time, so nothing
+            // here holds more than the id list.
+            blobIds.filter { blobId ->
+                val select = prep("SELECT 1 FROM blobs WHERE scope_id = ? AND blob_id = ?")
                 select.setBytes(1, scopeId)
                 select.setBytes(2, blobId)
-                select.executeQuery().use { rows ->
-                    if (rows.next()) blobId to rows.getBytes(1) else null
-                }
+                select.executeQuery().use { it.next() }
             }
+        }
+
+    override fun blob(
+        scopeId: ByteArray,
+        blobId: ByteArray,
+        now: Long,
+    ): ByteArray? =
+        tx {
+            val select = prep("SELECT data FROM blobs WHERE scope_id = ? AND blob_id = ?")
+            select.setBytes(1, scopeId)
+            select.setBytes(2, blobId)
+            select.executeQuery().use { if (it.next()) it.getBytes(1) else null }
         }
 
     @Synchronized
@@ -523,9 +535,11 @@ class SqliteScopeStore private constructor(
             totalSelect.setBytes(2, aid)
             val total = totalSelect.executeQuery().use { if (it.next()) it.getInt(1) else 0 }
             if (total <= 0) return@tx emptyList()
+            // Headers only, not bytes: the data streams through `attachmentChunk`, one chunk at a
+            // time, so nothing here holds a chunk payload.
             val select =
                 prep(
-                    "SELECT idx, cid, data FROM attachment_chunks WHERE scope_id = ? AND aid = ? " +
+                    "SELECT idx, cid FROM attachment_chunks WHERE scope_id = ? AND aid = ? " +
                         "AND idx >= ? AND idx < ? ORDER BY idx ASC",
                 )
             select.setBytes(1, scopeId)
@@ -535,12 +549,27 @@ class SqliteScopeStore private constructor(
             val out = ArrayList<AttachmentChunk>()
             select.executeQuery().use { rows ->
                 while (rows.next()) {
-                    out.add(AttachmentChunk(idx = rows.getInt(1), total = total, cid = rows.getBytes(2), data = rows.getBytes(3)))
+                    out.add(AttachmentChunk(idx = rows.getInt(1), total = total, cid = rows.getBytes(2)))
                 }
             }
             out
         }
     }
+
+    @Synchronized
+    override fun attachmentChunk(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        now: Long,
+    ): ByteArray? =
+        tx {
+            val select = prep("SELECT data FROM attachment_chunks WHERE scope_id = ? AND aid = ? AND idx = ?")
+            select.setBytes(1, scopeId)
+            select.setBytes(2, aid)
+            select.setInt(3, idx)
+            select.executeQuery().use { if (it.next()) it.getBytes(1) else null }
+        }
 
     @Synchronized
     @Suppress("ReturnCount") // one guard per §6.5 rejection reason

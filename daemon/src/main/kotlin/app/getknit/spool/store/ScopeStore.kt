@@ -48,12 +48,15 @@ class AttachmentInfo(
     val dead: Boolean,
 )
 
-/** One stored chunk returned by [ScopeStore.attachmentGet]. */
+/**
+ * One chunk's `achunk` header — everything but its bytes — as returned by [ScopeStore.attachmentGet].
+ * The bytes are fetched one at a time by [ScopeStore.attachmentChunk] so an aget range never
+ * materializes at once; a stalled reader then pins one chunk, not the whole range.
+ */
 class AttachmentChunk(
     val idx: Int,
     val total: Int,
     val cid: ByteArray,
-    val data: ByteArray,
 )
 
 sealed interface AputResult {
@@ -184,12 +187,28 @@ interface ScopeStore : AutoCloseable {
         now: Long,
     ): ListInfo?
 
-    /** Returns the requested blobs that are still live; ids the scope no longer holds are omitted. */
+    /**
+     * The requested blob ids the scope still holds, in request order, after a sweep; ids it no
+     * longer holds are omitted (they become the pull's `missing`). The bytes are fetched one at a
+     * time by [blob], so the whole pull result — up to `maxPull × maxBlob` — never materializes at
+     * once and a stalled reader pins one blob rather than all of them.
+     */
     fun pull(
         scopeId: ByteArray,
         blobIds: List<ByteArray>,
         now: Long,
-    ): List<Pair<ByteArray, ByteArray>>
+    ): List<ByteArray>
+
+    /**
+     * One live blob's bytes, or null if the scope no longer holds it. Does not sweep or touch
+     * activity — it pairs with the [pull] that just did both — so a race with a concurrent sweep
+     * simply drops the blob to null, which the caller reports as missing and the client re-heals.
+     */
+    fun blob(
+        scopeId: ByteArray,
+        blobId: ByteArray,
+        now: Long,
+    ): ByteArray?
 
     fun push(
         scopeId: ByteArray,
@@ -221,7 +240,11 @@ interface ScopeStore : AutoCloseable {
         now: Long,
     ): AttachmentInfo
 
-    /** The stored chunks in `[from, from + n)`; indices the spool lacks are simply absent. */
+    /**
+     * The `achunk` headers for the stored chunks in `[from, from + n)`, after a sweep; indices the
+     * spool lacks are simply absent. Each chunk's bytes are fetched separately by [attachmentChunk],
+     * so the range never materializes at once and a stalled reader pins one chunk, not all of them.
+     */
     fun attachmentGet(
         scopeId: ByteArray,
         aid: ByteArray,
@@ -229,6 +252,18 @@ interface ScopeStore : AutoCloseable {
         n: Int,
         now: Long,
     ): List<AttachmentChunk>
+
+    /**
+     * One chunk's bytes, or null if the attachment no longer holds that index. Does not sweep or
+     * touch activity — it pairs with the [attachmentGet] that just did both — so a race with a
+     * concurrent sweep simply drops the chunk to null, which the caller omits from the range.
+     */
+    fun attachmentChunk(
+        scopeId: ByteArray,
+        aid: ByteArray,
+        idx: Int,
+        now: Long,
+    ): ByteArray?
 
     /**
      * Stores one sealed chunk; see [AputResult] for the outcomes §6.5 requires. A `total` above

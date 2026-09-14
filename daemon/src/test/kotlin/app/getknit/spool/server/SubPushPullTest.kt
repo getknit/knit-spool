@@ -159,6 +159,34 @@ class SubPushPullTest {
     }
 
     @Test
+    fun pullStreamsSeveralBlobsInRequestOrderThenOneOk() {
+        withServer(testConfig(maxPull = 8)) {
+            connect {
+                helloHandshake()
+                subscribe(testScope(1))
+                val held = (1..3).map { testBlob(it) }
+                held.forEach { (id, data) ->
+                    pushBlob(testScope(1), id, data)
+                    expectRecord<Ok>(RecordType.OK)
+                }
+                val missingId = testBlob(9).first
+                // A known id between the held ones: the fetched-one-at-a-time loop must keep request
+                // order and drop only the absent id into `missing`.
+                val wanted = listOf(held[0].first, missingId, held[1].first, held[2].first)
+                sendRecord(Pull(t = RecordType.PULL, q = 5L, scope = testScope(1), blobIds = wanted))
+                for ((id, data) in held) {
+                    val blob = expectRecord<Blob>(RecordType.BLOB)
+                    assertTrue(blob.blobId.contentEquals(id), "blobs must arrive in request order")
+                    assertTrue(blob.data.contentEquals(data))
+                }
+                val ok = expectRecord<Ok>(RecordType.OK)
+                assertEquals(5L, ok.q)
+                assertTrue(ok.missing!!.single().contentEquals(missingId))
+            }
+        }
+    }
+
+    @Test
     fun pullTruncatesToMaxPull() {
         withServer(testConfig(maxPull = 4)) {
             connect {

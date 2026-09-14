@@ -981,12 +981,20 @@ class SpoolServer(
         if (!requireIds(conn, pull.q, pull.scope, pull.blobIds)) return
         if (!requireSub(conn, pull.scope, pull.q)) return
         val wanted = pull.blobIds.take(config.maxPull)
-        val served = withStore { store.pull(pull.scope, wanted, clock()) }
-        val servedHex = served.map { hex(it.first) }.toSet()
-        for ((blobId, data) in served) {
+        // One sweep, then one blob fetched-and-sent at a time: `out` suspends when the client stops
+        // reading, and while it is suspended this holds a single blob, not the whole result (up to
+        // maxPull × maxBlob). A blob that raced away between the sweep and its fetch drops to
+        // missing, the same answer the client would get had it never been there. F6 of the review.
+        val live = withStore { store.pull(pull.scope, wanted, clock()) }
+        val served = HashSet<String>(live.size)
+        for (blobId in live) {
+            val data = withStore { store.blob(pull.scope, blobId, clock()) } ?: continue
+            served.add(hex(blobId))
             out(conn, Blob(t = RecordType.BLOB, scope = pull.scope, blobId = blobId, data = data))
         }
-        val missing = wanted.filter { hex(it) !in servedHex }
+        // Missing is every wanted id not actually sent: not live at the sweep, or raced away before
+        // its fetch. `served` is exactly what left, so it answers both.
+        val missing = wanted.filter { hex(it) !in served }
         out(conn, Ok(t = RecordType.OK, q = pull.q, missing = missing.ifEmpty { null }))
     }
 
@@ -1020,8 +1028,13 @@ class SpoolServer(
         if (!requireAttachments(conn, aget.q, aget.scope)) return
         if (!requireSub(conn, aget.scope, aget.q)) return
         // Truncated, never an error — the `pull` rule of §7.2, reapplied.
+        // One sweep for the range's headers, then each chunk's bytes fetched-and-sent one at a time:
+        // while `out` is suspended on a stalled reader this holds one chunk, not the whole range (up
+        // to maxAget × maxAChunk). A chunk that raced away before its fetch is simply omitted, which
+        // is exactly what an absent index looks like to the client. F6 of the review.
         val chunks = withStore { store.attachmentGet(aget.scope, aget.aid, aget.from, minOf(aget.n, config.maxAget), clock()) }
         for (chunk in chunks) {
+            val data = withStore { store.attachmentChunk(aget.scope, aget.aid, chunk.idx, clock()) } ?: continue
             out(
                 conn,
                 Achunk(
@@ -1031,7 +1044,7 @@ class SpoolServer(
                     idx = chunk.idx,
                     total = chunk.total,
                     cid = chunk.cid,
-                    data = chunk.data,
+                    data = data,
                 ),
             )
         }

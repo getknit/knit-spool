@@ -268,8 +268,12 @@ abstract class ScopeStoreContractTest {
             val got = store.attachmentGet(scope, aid, from = 0, n = 3, now = 3L)
             assertEquals(listOf(0, 2), got.map { it.idx })
             assertEquals(3, got.first().total)
-            assertTrue(got.first().data.contentEquals(data0))
             assertTrue(got.first().cid.contentEquals(cid0))
+            // The header carries no bytes; the payload comes from a separate per-chunk fetch.
+            assertTrue(store.attachmentChunk(scope, aid, idx = 0, now = 3L)!!.contentEquals(data0))
+            assertTrue(store.attachmentChunk(scope, aid, idx = 2, now = 3L)!!.contentEquals(data2))
+            // An index the attachment lacks fetches null, the same as an index out of range.
+            assertNull(store.attachmentChunk(scope, aid, idx = 1, now = 3L))
         }
     }
 

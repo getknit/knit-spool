@@ -405,6 +405,34 @@ document:
   would, connects with a token, and reads every event that reaches the root: the token appears in
   none of them, and did in Ktor's before the pin.
 
+- **`pull` and `aget` stream their payloads one at a time instead of materializing the whole
+  result.** Both handlers fetched the entire result from the store before sending the first frame:
+  a `pull` up to `maxPull × maxBlob` (4 MiB at the defaults), an `aget` up to `maxAget × maxAChunk`.
+  `out` suspends the moment the client stops reading, and the fetched list stayed referenced until
+  the ping timeout closed the session about 90 seconds later — so sixteen connections per address
+  at a few MB each, refreshed every 90 seconds, could push the daemon out of a 192–256 MiB heap
+  with every configured limit respected. Measured: eight raw clients each pulling 64 × 64 KiB and
+  then not reading held ~2 MB apiece. Finding F6 of the same review.
+
+  The store now hands back the live blob ids (a `pull`) or the chunk headers (an `aget`) — 32-byte
+  ids and cids, no payloads — and the handler fetches each payload with a separate `blob` /
+  `attachmentChunk` call inside the send loop, right before it sends. Because the fetch sits after
+  the suspending `out`, a stalled reader parks the loop holding one payload, not the whole result:
+  the heap a stalled `pull` pins drops from up to 4 MiB to one blob. A payload that expired between
+  the sweep and its fetch — a race only a concurrent operation on the same scope can open — comes
+  back null and is dropped to `missing` (pull) or simply omitted (aget), which is the same answer
+  the client would get had it never been there, and self-heals on the next digest. `AttachmentChunk`
+  loses its `data` field; the SQLite store's per-blob and per-chunk lookups already existed, so this
+  adds a second small indexed read per item, not a second scan.
+
+  No wire behavior changes: the frames, their order, and the `pull` `missing` list are identical,
+  and the conformance suite's `attachment-round-trip`, `attachment-get-truncated` and pull checks
+  pass unchanged. Pinned by `StreamingReadTest` (a delegating store counts one `blob` per served id
+  and none for a missing one, and one `attachmentChunk` per chunk in the range), by a new
+  `SubPushPullTest` case (several blobs arrive in request order with the absent id alone in
+  `missing`), and by the store contract tests (a chunk header carries no bytes; the payload comes
+  from the per-index fetch, which is null for an absent index).
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and
