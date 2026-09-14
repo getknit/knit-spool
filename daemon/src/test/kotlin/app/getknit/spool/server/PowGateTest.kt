@@ -74,6 +74,34 @@ class PowGateTest {
     }
 
     @Test
+    fun aFullStampCacheVerifiesAgainInsteadOfGrowing() {
+        withServer(testConfig(powBits = bits), powCacheCap = 1) {
+            val day = Pow.utcDay(clock.now)
+            val a = testScope(1)
+            val b = testScope(2)
+            connect {
+                helloHandshake()
+                subscribe(a, pow = stampFor(a, day), q = 1L)
+                subscribe(b, pow = stampFor(b, day), q = 2L)
+            }
+            assertEquals(2L, spool.metrics.powVerifiedTotal.sum())
+            // A took the one slot; B's stamp was verified and then not cached.
+            store.shedOldestScope()
+            connect {
+                helloHandshake()
+                subscribe(a, pow = stampFor(a, day))
+            }
+            assertEquals(2L, spool.metrics.powVerifiedTotal.sum(), "a cached stamp passes without a hash")
+            store.shedOldestScope()
+            connect {
+                helloHandshake()
+                subscribe(b, pow = stampFor(b, day))
+            }
+            assertEquals(3L, spool.metrics.powVerifiedTotal.sum(), "an uncached stamp is hashed again, and passes")
+        }
+    }
+
+    @Test
     fun dayOutsideTheWindowIsRejected() {
         withServer(testConfig(powBits = bits)) {
             connect {

@@ -346,6 +346,38 @@ document:
   hello, `err malformed` then a working `sub` after it, and eight text frames drain an eight-token
   burst so the ninth is `err rate` — all three fail against the skip.
 
+- **The two client-keyed tables are bounded.** The per-client table — the connection count and
+  the new-scope bucket, keyed by address — gained an entry at every accept, before the token check,
+  and kept it ten minutes after the last connection left; with IPv6 rotation or a botnet it grew at
+  the connection rate, on a private spool too, at about 250 bytes an entry. The PoW cache gained a
+  `(scope, day)` entry at every verified stamp whether or not the scope was then created, so at
+  the scope quota it still grew at the attacker's mining rate, unbounded by `maxScopes`. Both are
+  heap, and both were slower than the fixed findings above. Finding F9 of the same review, the
+  half that keying IPv6 by /64 did not cover.
+
+  The client table holds at most 16,384 entries: an accept that finds it full sheds every entry
+  with no live connection, not just the ten-minute-old ones the sweeper takes. The live entries
+  number at most the connections (`SPOOL_MAX_CONNS` bounds those), so this always makes room, and
+  the next 16,384 new addresses cost no scan at all. What it forgets is a drained new-scope bucket
+  a client that already left would have met on its return — a client rotating through that many
+  addresses already has that many buckets. The PoW cache holds at most 4,096 entries and a full
+  one is not grown: the next stamp for an uncached pair is hashed again, which is all a miss ever
+  costs, so the cache can hold an attacker's entries without an honest client paying more than
+  one SHA-256 for it. Legitimately it holds one entry per scope created in the last two days —
+  a few hundred at any default. Neither number is a variable: both are heap bounds of about
+  4 MiB and 1 MiB, not policy.
+
+  In passing, the prune is now correct under a concurrent accept. It tested an entry's connection
+  count outside the map's lock and then removed by identity, and an accept landing between the
+  two — the sweeper ran that race once a minute — would count its connection on an entry the
+  table had dropped, with the next connection from that address on a fresh one and the
+  per-address cap counting neither against the other. The accept now counts the connection in
+  under the entry's own lock and the prune re-checks under the same lock. Pinned by
+  `ClientTableTest` (a third address at a cap of two leaves one entry; a bucket drained by one
+  address is still dry on its reconnect and refilled once the cap has shed it; an entry holding a
+  live connection survives the cap and still enforces `SPOOL_MAX_CONNS_PER_IP`) and `PowGateTest`
+  (at a cap of one, the second scope's stamp is hashed again after a shed and the first's is not).
+
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
 > The operator release. A spool can now be reloaded, drained, credential-rotated and

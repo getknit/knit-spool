@@ -94,6 +94,21 @@ private const val RATE_STRIKE_WINDOW_MS = 10_000L
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
 private const val IP_IDLE_MS = 600_000L
 
+/**
+ * Most client entries the per-IP table holds before an accept sheds every idle one. Entries with a
+ * live connection number at most the connections, so the idle ones are what a client rotating
+ * addresses could grow without bound — one per address, each held [IP_IDLE_MS] — and this bounds
+ * them. About 250 bytes each, so 4 MiB at the cap.
+ */
+private const val CLIENT_TABLE_CAP = 16_384
+
+/**
+ * Most `(scope, day)` stamps the PoW cache holds. Legitimately it holds one per scope created in
+ * the last two days, a few hundred at any default; an attacker mining stamps at 8 bits could fill
+ * heap with it. A full cache verifies instead — one SHA-256 — so what fills it changes nothing.
+ */
+private const val POW_CACHE_CAP = 4_096
+
 /** How often `guarded` writes a stack trace; the failures between two are counted, not logged. */
 private const val INTERNAL_TRACE_MS = 60_000L
 
@@ -128,6 +143,9 @@ class SpoolServer(
     config: Config,
     private val store: ScopeStore = InMemoryScopeStore(config.hardLimits),
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Test seams for the two client-keyed tables' bounds; see [CLIENT_TABLE_CAP] and [POW_CACHE_CAP]. */
+    private val clientTableCap: Int = CLIENT_TABLE_CAP,
+    private val powCacheCap: Int = POW_CACHE_CAP,
 ) {
     /**
      * The live configuration, swapped as a whole object by [reload].
@@ -349,10 +367,17 @@ class SpoolServer(
     /** scope hex → live subscriber connections (event and digest fan-out targets). */
     private val subscribers = ConcurrentHashMap<String, MutableSet<Conn>>()
 
-    /** Accepted PoW cache: "scopeHex:day" → day (spec §8); pruned by the sweeper on day rollover. */
+    /**
+     * Accepted PoW cache: "scopeHex:day" → day (spec §8); pruned by the sweeper on day rollover
+     * and never grown past [powCacheCap].
+     */
     private val powAccepted = ConcurrentHashMap<String, Long>()
 
-    /** Per-client limiter state, keyed by [clientKey]; idle entries pruned by the sweeper. */
+    /**
+     * Per-client limiter state, keyed by [clientKey]. Idle entries are pruned by the sweeper after
+     * [IP_IDLE_MS], and all at once by an accept that finds the table at [clientTableCap]; see
+     * [pruneIdleClients] for why an entry with a live connection is never dropped.
+     */
     private val ips = ConcurrentHashMap<String, IpState>()
 
     /**
@@ -643,9 +668,26 @@ class SpoolServer(
 
     private suspend fun acceptConnection(session: DefaultWebSocketServerSession) {
         val ip = clientKey(session.call.request.origin.remoteAddress)
-        val ipState = ips.computeIfAbsent(ip) { IpState(config.rateNewScopesPerMin, clock) }
-        ipState.lastSeen = clock()
-        if (ipState.connections.incrementAndGet() > config.maxConnsPerIp) {
+        val now = clock()
+        // At the cap every idle entry goes, not just the ten-minute-old ones the sweeper takes:
+        // the live entries number at most the connections, so this always makes room, and what
+        // it forgets is a drained new-scope bucket a client that already left would have met on
+        // its return. Amortised: the next `cap - live` new addresses cost no scan at all.
+        if (ips.size >= clientTableCap && !ips.containsKey(ip)) pruneIdleClients(seenBefore = Long.MAX_VALUE)
+        var connections = 0
+        // Counted in under the entry's own map lock, so a prune that saw the entry idle a moment
+        // ago cannot drop it now — it re-checks under the same lock — and this connection never
+        // runs on an entry the table no longer holds.
+        val ipState =
+            checkNotNull(
+                ips.compute(ip) { _, existing ->
+                    (existing ?: IpState(config.rateNewScopesPerMin, clock)).also {
+                        connections = it.connections.incrementAndGet()
+                        it.lastSeen = now
+                    }
+                },
+            )
+        if (connections > config.maxConnsPerIp) {
             ipState.connections.decrementAndGet()
             session.close(CloseReason(CloseCode.ABUSE.toShort(), "too many connections"))
             return
@@ -1282,9 +1324,28 @@ class SpoolServer(
         changes.forEach { broadcastDigest(it.scopeId, it.digest) }
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
-        ips.entries.removeIf { it.value.connections.get() == 0 && now - it.value.lastSeen > IP_IDLE_MS }
+        pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
     }
+
+    /**
+     * Drops every client entry with no live connection that was last seen before [seenBefore].
+     *
+     * The idle check is repeated under the entry's map lock, where [acceptConnection] counts a
+     * connection in. A plain `removeIf` tests the count outside that lock and then removes by
+     * identity, so an accept landing between the two would leave its connection on an entry the
+     * table had dropped — and the next connection from that address on a fresh one, with the
+     * per-address cap counting neither against the other.
+     */
+    private fun pruneIdleClients(seenBefore: Long) {
+        for ((key, state) in ips) {
+            if (state.connections.get() != 0 || state.lastSeen >= seenBefore) continue
+            ips.computeIfPresent(key) { _, current -> if (current.connections.get() == 0) null else current }
+        }
+    }
+
+    /** How many client entries the table holds. Exposed for tests. */
+    internal fun clientTableSize(): Int = ips.size
 
     /** One status line: gauges read from the store, counters diffed since the last line. */
     internal suspend fun statusTick() {
@@ -1354,7 +1415,10 @@ class SpoolServer(
         if (!Pow.dayInWindow(day, now)) return false
         if (!Pow.verify(scope, day, n, config.powBits)) return false
         metrics.powVerifiedTotal.increment()
-        powAccepted[cacheKey] = day
+        // A full cache is not grown: the next stamp for this pair is hashed again instead, which
+        // is all a miss ever costs, so the cache can hold an attacker's entries without an honest
+        // client paying more than one SHA-256 for it.
+        if (powAccepted.size < powCacheCap) powAccepted[cacheKey] = day
         return true
     }
 

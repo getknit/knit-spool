@@ -140,9 +140,11 @@ fun withServer(
     config: SpoolServer.Config = testConfig(),
     clock: FakeClock = FakeClock(),
     store: ScopeStore = InMemoryScopeStore(config.hardLimits),
+    clientTableCap: Int = 16_384,
+    powCacheCap: Int = 4_096,
     block: suspend TestServer.() -> Unit,
 ) = runBlocking {
-    val spool = SpoolServer(config, store, clock::now)
+    val spool = SpoolServer(config, store, clock::now, clientTableCap, powCacheCap)
     val engine = spool.start(wait = false)
     val port =
         engine.engine
