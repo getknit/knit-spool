@@ -338,9 +338,9 @@ Both are `linux/amd64` and `linux/arm64`, so an Ampere or Graviton box, or a 64-
 pulls the same way an x86 VPS does.
 
 ```sh
-docker pull ghcr.io/getknit/knit-spool:0.2.0
+docker pull ghcr.io/getknit/knit-spool:0.3.0
 docker run --name knit-spool -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 \
-    ghcr.io/getknit/knit-spool:0.2.0
+    ghcr.io/getknit/knit-spool:0.3.0
 ```
 
 Every release is tagged with its version, and a release that is not a prerelease also moves
@@ -356,7 +356,7 @@ it in production yet. Pull it to try a fix before it ships; pin a version to run
 The GHCR copy — release or `edge` — traces back to the workflow run and the commit that built it:
 
 ```sh
-gh attestation verify oci://ghcr.io/getknit/knit-spool:0.2.0 --repo getknit/knit-spool
+gh attestation verify oci://ghcr.io/getknit/knit-spool:0.3.0 --repo getknit/knit-spool
 ```
 
 There is no equivalent command for the Docker Hub copy. The attestation travels over the OCI

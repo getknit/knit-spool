@@ -25,7 +25,7 @@ allprojects {
     // `0.1.0-SNAPSHOT` on a main build cut after 0.2.0 reads as *older* than the release it
     // supersedes — backwards for the one question `GET /source` exists to answer. BuildInfoTest
     // pins it against CHANGELOG.md so the bump fails the build instead of being forgotten.
-    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.3.0-SNAPSHOT"
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-SNAPSHOT"
 }
 
 // ---- coverage ----

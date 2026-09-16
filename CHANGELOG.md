@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-09-16T20:38:38Z
+  updated: 2026-09-16T20:56:18Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -19,6 +19,24 @@ document:
 # knit-spool changelog
 
 ## Unreleased
+
+Nothing yet.
+
+## [0.3.0](https://github.com/getknit/knit-spool/releases/tag/v0.3.0) — 2026-09-16T20:56:18Z
+
+> The hardening release. Every finding of the 2026-09-13 security review is closed: a wire id is
+> checked for length before it touches anything, an attachment chunk is charged for the row it
+> costs, a `sub` is bounded and metered per scope, a scope the watermark shed meets the creation
+> gates again, a client is keyed by its address (IPv6 by /64) in tables that cannot grow without
+> bound, `pull` and `aget` stream one payload at a time, and no log level writes the bearer token.
+> Operators also gain `SPOOL_REQUIRE_MODERATION`, an `edge` image on every push to `main`, and
+> compose files that pass every variable through. Pre-1.0, so every interface below is still
+> subject to change. The wire is additive only — one optional `hello` field, nothing removed or
+> changed — so a 0.2.0 client talks to a 0.3.0 spool unchanged; the two shapes that now answer
+> differently are ones no conforming client ever sent. **A persistent store is re-derived on the
+> first boot**: attachment bytes are recounted under the 512-byte floor, and an attachment
+> declaring more chunks than the quota could hold is dropped. Read the *Security* entries before
+> upgrading a spool with a `SPOOL_DATA_DIR`.
 
 ### Added
 
