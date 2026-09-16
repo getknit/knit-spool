@@ -123,9 +123,11 @@ Implements the full **v1** protocol:
   `SPOOL_MAX_ATTACH_BYTES / 512` chunks. An `aput` declaring more chunks than the quota could hold
   at the structural 48 KiB each is refused `quota` before its first chunk is stored. Set
   `SPOOL_MAX_ATTACH_BYTES=0` and the family disappears from `hello`.
-- **Abuse control** — stateless PoW (SUB *and* the shed-scope PUSH-recreate path) with the
-  per-`(scope, day)` cache, per-connection and per-IP rate limits (`rate` + `retryMs`, escalating
-  to close 4003), a global storage watermark with oldest-scope shedding.
+- **Abuse control** — stateless PoW on every path that creates a scope (a `sub` for one the spool
+  does not hold, including one the watermark has since shed, and the shed-scope `push`-recreate
+  path) with the per-`(scope, day)` cache; per-connection and per-IP rate limits (`rate` +
+  `retryMs`, escalating to close 4003), an IPv6 client keyed by its /64; and a global storage
+  watermark that sheds the least-recently-active scope.
 - **Commons** (§7.4) — one optional shared scope per spool, off unless `SPOOL_COMMONS_ID` is set.
   Ordinary records on the data path; what is added is the policy a *shared* scope needs. See
   [the commons](#-the-commons).
@@ -141,6 +143,10 @@ Implements the full **v1** protocol:
   contract, plus a periodic sweeper.
 - **Ops** — `/healthz`, `/source` (build stamp and the §13 source offer), `/metrics` (Prometheus
   text), a periodic status log line, graceful shutdown.
+- **Operator controls** — `SIGHUP` reloads quotas and credentials from a file while connections
+  stay up, `SIGUSR1` drains for a rolling upgrade, `SPOOL_TOKEN_NEXT` rotates the bearer token
+  with nothing refused mid-rotation, and `knit-spool check` validates a configuration before a
+  container starts. See [operating](#-operating).
 
 ## 🚀 Run
 
@@ -154,10 +160,14 @@ opening a store, or creating a directory — for confirming a configuration befo
 
 ```sh
 $ knit-spool check
-port=9470 token=unset metricsToken=unset pow=0 maxRecord=131072 … store=memory
+port=9470 maxBlob=65536 maxFrames=1000 … commons=off source=https://github.com/getknit/knit-spool \
+token=unset tokenNext=unset metricsToken=unset pow=0 maxRecord=131072 … moderation=false store=memory
 $ echo $?
 0
 ```
+
+(Wrapped here; in the terminal it is one line. The boot-only half prints first, then the half a
+`SIGHUP` can move — the same split as the [reload table](#reloading-configuration).)
 
 Exit **0** valid, **1** invalid (with the reason on stderr), **2** unknown command. The resolved
 config goes to stdout and warnings to stderr, so one can be parsed without filtering the other. It
@@ -328,9 +338,9 @@ Both are `linux/amd64` and `linux/arm64`, so an Ampere or Graviton box, or a 64-
 pulls the same way an x86 VPS does.
 
 ```sh
-docker pull ghcr.io/getknit/knit-spool:0.1.0
+docker pull ghcr.io/getknit/knit-spool:0.2.0
 docker run --name knit-spool -p 9470:9470 -v spool-data:/data -e SPOOL_POW_BITS=20 \
-    ghcr.io/getknit/knit-spool:0.1.0
+    ghcr.io/getknit/knit-spool:0.2.0
 ```
 
 Every release is tagged with its version, and a release that is not a prerelease also moves
@@ -346,7 +356,7 @@ it in production yet. Pull it to try a fix before it ships; pin a version to run
 The GHCR copy — release or `edge` — traces back to the workflow run and the commit that built it:
 
 ```sh
-gh attestation verify oci://ghcr.io/getknit/knit-spool:0.1.0 --repo getknit/knit-spool
+gh attestation verify oci://ghcr.io/getknit/knit-spool:0.2.0 --repo getknit/knit-spool
 ```
 
 There is no equivalent command for the Docker Hub copy. The attestation travels over the OCI
@@ -375,9 +385,11 @@ access logs; do the same in any proxy of your own.
 
 Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying version and commit —
 `count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
-(current + total), records, pushes, events, PoW verifications, rate-limit
-hits, upgrades refused for capacity and for draining (counted apart), sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by
-code.
+(current + total) and the `SPOOL_MAX_CONNS` cap they are measured against, records, pushes, events,
+PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
+sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by code.
+A spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
+and how often its spool-wide push budget throttled.
 
 > [!NOTE]
 > **On a metered link, watch `knit_spool_egress_bytes_total`.** Fan-out means one push leaves as
@@ -526,7 +538,8 @@ Validate any spool implementation — this one or a third party's — over a liv
 ./gradlew :conformance:installDist
 conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
     wss://spool.example.com/spool/v1 \
-    [--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive]
+    [--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive] \
+    [--commons-invite knit-commons:v1:…]
 ```
 
 TAP on stdout, a MUST tally on stderr. Exit **0** = every MUST check passed (skips and advisory
@@ -535,8 +548,11 @@ at all, **3** = nothing failed but something could not be judged, because the tr
 this tool hit a bug. An inconclusive run is not a passing one, so treat **3** the way you treat
 **1** in CI. The attachment checks skip themselves against a spool that advertised no §7.3 limits —
 which is exactly the client behaviour the spec requires. `--destructive` enables the quota and
-rate-limit checks; they fill real capacity, so run them against spools you operate. CI runs the
-whole suite against the freshly built daemon on every pipeline (`conformance-selftest`).
+rate-limit checks; they fill real capacity, so run them against spools you operate.
+`--commons-invite` takes the room's invite and enables the two checks that need to be in it —
+that the operator's bounds are pinned and that a push fans out — which otherwise skip; the
+advertisement check needs no invite and always runs. CI runs the whole suite against the freshly
+built daemon on every pipeline (`conformance-selftest`).
 
 > [!WARNING]
 > Prefer `--token-file` against a spool you care about. `--token` puts the bearer token in argv,

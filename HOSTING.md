@@ -20,6 +20,8 @@ somewhere else, not a bigger box.
 - [Poor fits](#poor-fits)
 - [Home and self-hosted](#home-and-self-hosted)
 - [Architecture](#architecture)
+- [What a commons costs](#what-a-commons-costs)
+- [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
 

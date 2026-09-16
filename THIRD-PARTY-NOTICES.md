@@ -56,6 +56,10 @@ time from upstream layers.
   [Gradle](https://github.com/gradle/gradle), Apache-2.0.
 - **ktlint** and the `org.jlleitschuh.gradle.ktlint` plugin — [pinterest/ktlint](https://github.com/pinterest/ktlint)
   (MIT) and [JLLeitschuh/ktlint-gradle](https://github.com/JLLeitschuh/ktlint-gradle) (MIT).
+- **detekt** and its `dev.detekt` Gradle plugin — [detekt/detekt](https://github.com/detekt/detekt),
+  Apache-2.0.
+- **Kover** (`org.jetbrains.kotlinx.kover`), the coverage plugin —
+  [Kotlin/kotlinx-kover](https://github.com/Kotlin/kotlinx-kover), Apache-2.0.
 - **kotlin-test** / JUnit Platform, used by the test suites only.
 - CI-only images referenced from [`.gitlab-ci.yml`](.gitlab-ci.yml), the maintainer's internal
   pipeline: kaniko (Apache-2.0), Trivy (Apache-2.0), `mdl` (MIT), and GitLab's release-cli (MIT).

@@ -7,7 +7,8 @@ no warranty or guaranteed response** (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
 ## Supported versions
 
 Pre-1.0. Only `main` is supported — fixes land there, and there are no backports to earlier tags.
-If you run a spool, track `main` or a tagged image built from it.
+If you run a spool, run the newest release; a fix that has not been released yet is on the `edge`
+image, which every `main` push publishes once it has passed the same gates a release does.
 
 ## Reporting a vulnerability
 
