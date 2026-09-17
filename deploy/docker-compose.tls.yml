@@ -1,4 +1,4 @@
-# Self-contained deploy: Caddy terminates TLS in front of the spool and obtains/renews
+# Self-contained deploy: Caddy terminates TLS in front of the Spool and obtains/renews
 # the certificate itself (ACME, Let's Encrypt by default). Only 80/443 are published —
 # the daemon is reachable solely over the compose network.
 #
@@ -40,7 +40,7 @@ services:
       # Overlay order matters: docker-compose.tiny.yml re-pins several of these for 1 GB boxes
       # and the last -f wins, so always -f docker-compose.tls.yml -f docker-compose.tiny.yml.
       SPOOL_POW_BITS: "${SPOOL_POW_BITS:-20}" # spec §12 recommended difficulty
-      SPOOL_TOKEN: "${SPOOL_TOKEN:-}" # empty = public spool
+      SPOOL_TOKEN: "${SPOOL_TOKEN:-}" # empty = public Spool
       # The second accepted credential. Rotation is add-new, migrate clients, promote, retire —
       # both are accepted while both are set, so no client is locked out mid-cutover. Setting
       # this without SPOOL_TOKEN refuses to boot: alone it is never what anyone meant.
@@ -76,11 +76,11 @@ services:
       SPOOL_RATE_RECORDS:
       SPOOL_RATE_PUSHES:
       SPOOL_RATE_NEW_SCOPES:
-      # Send-side moderation (spec §7.5). "true" asks every client on this spool to run its
+      # Send-side moderation (spec §7.5). "true" asks every client on this Spool to run its
       # on-device content screen before sending and to refuse what it flags, with no "send
-      # anyway". A request the spool cannot check — it holds ciphertext — and off by default.
+      # anyway". A request the Spool cannot check — it holds ciphertext — and off by default.
       SPOOL_REQUIRE_MODERATION:
-      # The commons (spec §7.4), one shared scope per spool. No SPOOL_COMMONS_ID = no commons,
+      # The commons (spec §7.4), one shared scope per Spool. No SPOOL_COMMONS_ID = no commons,
       # and the rest are then never read. SPOOL_COMMONS_MAX_BLOB deliberately gets no default
       # here: the daemon falls back to SPOOL_MAX_BLOB, and a literal would break that link and
       # refuse to boot under the tiny overlay, which lowers SPOOL_MAX_BLOB to 32 KiB.

@@ -1,18 +1,18 @@
-# Hosting a spool
+# Hosting a Spool
 
-Where to run one. This is the host-shopping half: what a spool needs from a box, what your bill
+Where to run one. This is the host-shopping half: what a Spool needs from a box, what your bill
 actually depends on, and which providers fit. The commands are in [`README.md`](README.md#-deploy).
 
-A spool is a small favour you do for a handful of people. It holds sealed frames it can't read, for
+A Spool is a small favour you do for a handful of people. It holds sealed frames it can't read, for
 scope ids it can't map to anyone, and forgets them on a timer. Clients multi-home across several
-spools and union what comes back, so nothing is riding on yours in particular: if it dies, any
+Spools and union what comes back, so nothing is riding on yours in particular: if it dies, any
 member who still has the frames re-pushes them somewhere else. Buy accordingly. The cheapest tier
-that stays up is usually the right one, and if you want redundancy the answer is a second spool
+that stays up is usually the right one, and if you want redundancy the answer is a second Spool
 somewhere else, not a bigger box.
 
 ## Contents
 
-- [What a spool needs from a host](#what-a-spool-needs-from-a-host)
+- [What a Spool needs from a host](#what-a-spool-needs-from-a-host)
 - [What a 1 GB box actually holds](#what-a-1-gb-box-actually-holds)
 - [What your bill depends on](#what-your-bill-depends-on)
 - [Providers](#providers)
@@ -25,7 +25,7 @@ somewhere else, not a bigger box.
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
 
-## What a spool needs from a host
+## What a Spool needs from a host
 
 | Need | Figure | Why |
 |---|---|---|
@@ -34,7 +34,7 @@ somewhere else, not a bigger box.
 | Disk | 10–25 GB | Payload is bounded by `SPOOL_MAX_BYTES` (256 MB default) and the image is ~150 MB. The rest is logs, so cap them. |
 | Transfer | 1 TB/month, minimum | The one to shop on. See below. |
 | Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. |
-| Uptime | Whatever the tier gives you | Clients treat a missing spool as a missing spool. Don't buy an SLA for this. |
+| Uptime | Whatever the tier gives you | Clients treat a missing Spool as a missing Spool. Don't buy an SLA for this. |
 
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
 caveats [below](#home-and-self-hosted).
@@ -67,7 +67,7 @@ at a time, which looks like a network problem and is not one. Both are why
 [`deploy/docker-compose.tiny.yml`](deploy/docker-compose.tiny.yml) splits the box's ~640 MB of
 container budget 352/288 and targets ~2,000 rather than the ~2,400 the hardware will technically do.
 
-Neither failure announces itself, which is what `SPOOL_MAX_CONNS` is for. Set it and the spool
+Neither failure announces itself, which is what `SPOOL_MAX_CONNS` is for. Set it and the Spool
 stops accepting at the number you chose: the WebSocket upgrade is refused `503` with a
 `Retry-After` instead of becoming the connection that tips the box over. That is a limit on the
 box, not in the protocol — §7.1 has four close codes and none of them means "later" — so it lands
@@ -75,7 +75,7 @@ at the transport, where a client that multi-homes already knows what to do with 
 the status line and `knit_spool_conns_refused_total` are how you find out it is happening; the
 overlay sets it to 2000.
 
-Reach for a second spool before a bigger box. Two $5 boxes in different regions are worth more to
+Reach for a second Spool before a bigger box. Two $5 boxes in different regions are worth more to
 the people using them than one box with twice the RAM, because the failure they protect against is
 the box being gone, not the box being full.
 
@@ -109,7 +109,7 @@ quote.
 
 | Provider | Entry tier | Transfer | Notes |
 |---|---|---|---|
-| [Linode (Akamai)](https://www.linode.com/lp/refer/?r=9ff78b194fe5bdf1caebb29664229d5cdbe821af) | Nanode 1 GB, ~$5/mo | 1 TB | Where the canonical spool runs; see [below](#linode-where-the-canonical-instance-runs). |
+| [Linode (Akamai)](https://www.linode.com/lp/refer/?r=9ff78b194fe5bdf1caebb29664229d5cdbe821af) | Nanode 1 GB, ~$5/mo | 1 TB | Where the canonical Spool runs; see [below](#linode-where-the-canonical-instance-runs). |
 | Hetzner Cloud | CX22, ~€4/mo | 20 TB | Far more transfer per euro than anything else here, and 4 GB of RAM at the entry price. EU and US locations; the US regions bill IPv4 separately. |
 | DigitalOcean | 1 GB droplet, ~$6/mo | 1 TB | Good docs, no surprises. The $4 512 MB tier is under spec, so skip it. |
 | Vultr | 1 GB, ~$5/mo | 1–2 TB | The widest region list of the group, including places the others don't sell. |
@@ -119,14 +119,14 @@ quote.
 All of them work. If you'd rather have it decided for you: Hetzner for the most headroom per euro,
 Linode if you want to run what the reference deployment runs.
 
-Region matters more than which company you pick. A spool exists to be reachable when two phones
+Region matters more than which company you pick. A Spool exists to be reachable when two phones
 can't reach each other directly, so put it somewhere with a decent path to the people using it — and
-if the group already has one spool, put yours on a different provider or in a different region.
+if the group already has one Spool, put yours on a different provider or in a different region.
 Overlap without agreement is the whole redundancy story.
 
 ## Linode, where the canonical instance runs
 
-The reference spool, `wss://lax.spool.getknit.app/spool/v1`, is a $5 Linode Nanode (1 GB, 1 TB
+The reference Spool, `wss://lax.spool.getknit.app/spool/v1`, is a $5 Linode Nanode (1 GB, 1 TB
 transfer) in `us-lax`, behind Caddy with an automatic Let's Encrypt certificate. Every sizing figure
 above came off that box, as did
 [`deploy/docker-compose.tiny.yml`](deploy/docker-compose.tiny.yml), which exists because the box has
@@ -137,17 +137,17 @@ If you're signing up for Linode anyway, this project has a referral link:
 <https://www.linode.com/lp/refer/?r=9ff78b194fe5bdf1caebb29664229d5cdbe821af>
 
 New accounts get $100 in credit through it, and once an account has been active for a while the same
-program credits the one that pays for the canonical spool's hosting. Both halves are Linode's
+program credits the one that pays for the canonical Spool's hosting. Both halves are Linode's
 program rather than something this project negotiated, and the amounts and time windows are theirs
 to change, so the linked page is the authority on the current terms.
 
 Using it costs you nothing over the normal price and it covers a $5/month box that anyone can point
-a client at. Nothing in knit-spool works better on Linode, though, and a spool you run somewhere
+a client at. Nothing in Knit Spool works better on Linode, though, and a Spool you run somewhere
 else is worth more to this project than a referral is.
 
 ## Poor fits
 
-Not everything that runs containers runs a spool. The protocol wants one long-lived WebSocket per
+Not everything that runs containers runs a Spool. The protocol wants one long-lived WebSocket per
 client, held open for hours, plus a durable disk. That rules out a fair amount of the modern hosting
 market:
 
@@ -175,21 +175,21 @@ resources isn't hard to find at home. What you take on:
   connections. Check both before planning around it.
 - A dynamic IP needs dynamic DNS, and clients holding the old address reconnect the slow way.
 - Uptime is yours: power cuts, the reboot you forgot, the router firmware update. That's survivable,
-  since clients treat a missing spool as a missing spool, but be straight about it with whoever else
+  since clients treat a missing Spool as a missing Spool, but be straight about it with whoever else
   is relying on the box.
 - Exposing :443 from your home network deserves some thought. The daemon serves plain WebSocket and
   expects TLS at a reverse proxy, so put the proxy on the box rather than forwarding the port
   straight through.
 
 Worth weighing first: the usual reason to self-host is keeping your data off someone else's disk,
-and a spool doesn't hold your data. It holds ciphertext it can't open, for scope ids it can't map to
-anyone, and drops it on a timer. The design already assumes the spool is untrusted, so hosting it
+and a Spool doesn't hold your data. It holds ciphertext it can't open, for scope ids it can't map to
+anyone, and drops it on a timer. The design already assumes the Spool is untrusted, so hosting it
 yourself buys less privacy here than it would for nearly anything else you'd run at home.
 
 ## Architecture
 
 Published images are multi-arch — `linux/amd64` and `linux/arm64` — so Oracle's Ampere, Graviton,
-and a 64-bit Raspberry Pi pull and run without building anything. knit-spool is pure JVM, so both
+and a 64-bit Raspberry Pi pull and run without building anything. Knit Spool is pure JVM, so both
 architectures carry the same bytecode over the matching `eclipse-temurin` JRE base.
 
 If you build from source instead, the Gradle build stage wants more memory than a 1 GB box has:
@@ -197,7 +197,7 @@ build on a machine with room and move the result over. The README covers how.
 
 ## What a commons costs
 
-A commons (`SPOOL_COMMONS_ID`, see the README) changes a spool's load shape more than any other
+A commons (`SPOOL_COMMONS_ID`, see the README) changes a Spool's load shape more than any other
 single setting, because it is the one scope everybody is subscribed to at once.
 
 Fan-out is the whole story. An ordinary conversation scope has two to eight subscribers, so a push
@@ -220,15 +220,15 @@ to back everyone else up.
 
 ## Upgrading without a reconnect storm
 
-Stopping a spool closes every session at once, and a few thousand clients then redial together.
+Stopping a Spool closes every session at once, and a few thousand clients then redial together.
 `docker exec knit-spool kill -USR1 1` puts it in drain instead: new upgrades are refused `503`
 with a `Retry-After`, live connections keep being served, and a multi-homing client quietly uses
-its other spools. Drain, watch `knit_spool_connections_current` fall, then stop and upgrade.
+its other Spools. Drain, watch `knit_spool_connections_current` fall, then stop and upgrade.
 Sending the signal again lifts the drain if you change your mind.
 
 Use `docker exec`, never `docker kill --signal=USR1`: any `docker kill` marks the container
 manually stopped whatever signal it sends, and `restart: unless-stopped` then skips it on the next
-reboot — so the command you run to make an upgrade graceful is the one that quietly stops the spool
+reboot — so the command you run to make an upgrade graceful is the one that quietly stops the Spool
 coming back. The README's reload section has the detail.
 
 ## Before you commit
@@ -239,12 +239,12 @@ coming back. The README's reload section has the detail.
       fails otherwise.
 - [ ] A persistent volume for `SPOOL_DATA_DIR`, or a deliberate choice to run in memory.
 - [ ] A region with a sane path to the people who'll use it, and ideally not the region their other
-      spool is in.
+      Spool is in.
 - [ ] Log rotation capped, so an access log can't fill a 25 GB disk.
 
 ## If you modify it
 
-knit-spool is AGPL-3.0-or-later. Running it unmodified imposes nothing on you. Running a modified
+Knit Spool is AGPL-3.0-or-later. Running it unmodified imposes nothing on you. Running a modified
 version that other people's clients connect to obliges you to offer those users the source of your
 version, so publish the fork and point `SPOOL_SOURCE_URL` at it — `GET /source` then offers your
 source instead of upstream's, and the offer stays correct without you having to remember it. The

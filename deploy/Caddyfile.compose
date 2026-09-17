@@ -16,7 +16,7 @@
 
 {$SPOOL_DOMAIN} {
 	# /metrics leaks no ciphertext but does expose scope counts and traffic shape, and
-	# the daemon only token-gates it on private spools. Sealed at the edge by default;
+	# the daemon only token-gates it on private Spools. Sealed at the edge by default;
 	# scrape http://spool:9470/metrics from inside the compose network instead.
 	respond /metrics 404
 
@@ -32,7 +32,7 @@
 		}
 	}
 
-	# A spool is blinded by design — do not let the proxy log undo that. Caddy logs
+	# A Spool is blinded by design — do not let the proxy log undo that. Caddy logs
 	# access by default, and the default fields would record the bearer token (it
 	# rides in ?k=), the exact client address, and a fingerprintable User-Agent.
 	log {

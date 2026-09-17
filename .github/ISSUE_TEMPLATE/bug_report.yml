@@ -1,5 +1,5 @@
 name: 🐛 Bug report
-description: Report a defect in knit-spool, the reference store-and-forward relay daemon.
+description: Report a defect in Knit Spool, the reference store-and-forward relay daemon.
 title: "[Bug]: "
 labels: ["bug", "needs-triage"]
 body:
@@ -8,10 +8,10 @@ body:
       value: |
         Thanks for taking the time to file a bug. **Please search existing issues before opening a new one.**
 
-        - knit-spool is a **best-effort hobby project shipped as-is** — issues are welcome but may
+        - Knit Spool is a **best-effort hobby project shipped as-is** — issues are welcome but may
           not be triaged, answered, or fixed on any timeline (see `CONTRIBUTING.md`).
         - **Do not report security vulnerabilities here.** See `SECURITY.md` for private disclosure —
-          public disclosure before a fix exists puts the people relying on running spools at risk.
+          public disclosure before a fix exists puts the people relying on running Spools at risk.
         - **The spec is the product.** If the daemon disagrees with
           [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md),
           quote the section: the spec wins, and that makes this a bug here. If the *spec* is what
@@ -51,7 +51,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: knit-spool version / commit
+      label: Knit Spool version / commit
       description: The commit SHA you built from, or the image tag plus digest.
     validations:
       required: true
@@ -98,7 +98,7 @@ body:
       options:
         - The Knit app
         - The conformance runner (:conformance)
-        - My own spool client implementation
+        - My own Spool client implementation
         - Not sure
     validations:
       required: true
@@ -131,5 +131,5 @@ body:
           required: true
         - label: This is not a security vulnerability (those go to SECURITY.md privately).
           required: true
-        - label: I understand knit-spool is a best-effort hobby project with no support guarantee.
+        - label: I understand Knit Spool is a best-effort hobby project with no support guarantee.
           required: true

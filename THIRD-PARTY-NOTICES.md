@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-knit-spool is licensed under the **GNU Affero General Public License v3.0 or later** (see
+Knit Spool is licensed under the **GNU Affero General Public License v3.0 or later** (see
 [`LICENSE`](LICENSE)). It depends on, and redistributes in its distribution archives and container
 image, the third-party open-source components listed below. Every component is under an
 **AGPL-compatible** license.
@@ -46,7 +46,7 @@ relied on here.
 The [`Dockerfile`](Dockerfile) builds on **[Eclipse Temurin](https://adoptium.net/)** — `21-jdk` for
 the throwaway build stage, `21-jre` for the shipped runtime stage. Temurin's OpenJDK binaries are
 distributed under the **GPL-2.0 with the Classpath Exception**, which is what makes it correct to
-run knit-spool's own AGPL bytecode on them; the surrounding Ubuntu userland carries its own
+run Knit Spool's own AGPL bytecode on them; the surrounding Ubuntu userland carries its own
 per-package licenses. Neither is redistributed by this repository — the image is assembled at build
 time from upstream layers.
 
@@ -78,7 +78,7 @@ by its AGPL license. The servers they configure are not part of this repository 
 from their own upstreams: **[Caddy](https://github.com/caddyserver/caddy)** (Apache-2.0) and
 **[nginx](https://nginx.org/)** (BSD-2-Clause).
 
-The spool wire protocol is specified in
+The Spool wire protocol is specified in
 [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md) in the
 [Knit](https://github.com/getknit/knit) repository, a separate GPL-3.0-or-later codebase. The two
 share a protocol spec and no code.

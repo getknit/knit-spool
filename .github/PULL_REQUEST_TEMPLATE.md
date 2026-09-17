@@ -1,5 +1,5 @@
 <!--
-Thanks for contributing to knit-spool! Keep each pull request focused on a single change.
+Thanks for contributing to Knit Spool! Keep each pull request focused on a single change.
 By submitting, you agree your contribution is licensed under AGPL-3.0-or-later (see CONTRIBUTING.md)
 and that every commit is signed off under the DCO (`git commit -s`).
 -->
@@ -26,7 +26,7 @@ and that every commit is signed off under the DCO (`git commit -s`).
       (updated [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) if a shipped dependency changed)
 - [ ] The §13 spec vectors still pass **unmodified** — a failing vector means the change is wrong,
       not the test
-- [ ] `:conformance` still depends only on `:protocol`, and any new check is one a third-party spool
+- [ ] `:conformance` still depends only on `:protocol`, and any new check is one a third-party Spool
       could pass
 - [ ] New/changed `SPOOL_*` variables refuse to start on an invalid value and are in the README's
       configuration table

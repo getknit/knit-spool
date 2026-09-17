@@ -1,20 +1,20 @@
-# Contributing to knit-spool
+# Contributing to Knit Spool
 
-Thanks for your interest in knit-spool — the reference *spool*, a scoped, blinded store-and-forward
+Thanks for your interest in Knit Spool — the reference Spool, a scoped, blinded store-and-forward
 relay for [Knit](https://github.com/getknit/knit)'s Internet plane. Contributions are welcome, within
 the expectations below.
 
 ## Support expectations (read this first)
 
-knit-spool is released **as-is** under the [GNU AGPL v3.0-or-later](LICENSE). It is developed on a
+Knit Spool is released **as-is** under the [GNU AGPL v3.0-or-later](LICENSE). It is developed on a
 **best-effort, hobby basis**, with **no support, warranty, or response-time guarantee** of any kind —
 this is the "NO WARRANTY" clause of the AGPL, stated plainly:
 
 - Issues and pull requests are welcome, but may not be triaged, answered, or accepted.
 - There is **no commitment** to fix bugs, review contributions on any timeline, or keep any
   interface stable beyond the wire protocol's own compatibility rules.
-- Do not depend on any spool where failure matters. By design no spool is load-bearing: clients
-  multi-home across several and union them, and a wiped spool is refilled by any one conversation
+- Do not depend on any Spool where failure matters. By design no Spool is load-bearing: clients
+  multi-home across several and union them, and a wiped Spool is refilled by any one conversation
   member.
 
 If that works for you, read on.
@@ -32,7 +32,7 @@ consequences for contributions:
   that makes those vectors fail is a bug in the change, not in the test — do not re-record them to
   make a diff pass.
 
-Third-party spool implementations are first-class. `:conformance` deliberately depends only on
+Third-party Spool implementations are first-class. `:conformance` deliberately depends only on
 `:protocol`, never on `:daemon`, so it tests the wire contract rather than this repo's internals; a
 check that can only pass against this server does not belong in it.
 
@@ -54,7 +54,7 @@ check that can only pass against this server does not belong in it.
   kotlinx, SLF4J/Logback, sqlite-jdbc, and nothing else. Do not add a dependency whose license is
   AGPL-incompatible or unverified, and update
   [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) when you add or remove a shipped one.
-- **Keep the blindness property.** A spool sees scope ids, blob ids, ciphertext, sizes, and timing —
+- **Keep the blindness property.** A Spool sees scope ids, blob ids, ciphertext, sizes, and timing —
   and must never be able to learn node ids, plaintext, rosters, or delivery facts. A change that
   logs, persists, exports, or derives anything outside that set needs a very good reason and a note
   in the pull request. The same goes for the bearer token: it rides in the query string, so it must
@@ -93,7 +93,7 @@ conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
 ```
 
 `--destructive` enables the quota and rate-limit checks; they fill real capacity, so run them only
-against spools you operate.
+against Spools you operate.
 
 ### Coverage
 
@@ -166,7 +166,7 @@ and opens a **draft** GitHub Release with the distribution archives.
 **Do not** report security vulnerabilities through public issues or pull requests. See
 [`SECURITY.md`](SECURITY.md) for private disclosure.
 
-## Running a modified spool (AGPL §13)
+## Running a modified Spool (AGPL §13)
 
 If you run a modified version of this daemon and let anyone else's client talk to it over a network,
 the AGPL's §13 obliges you to offer those users the corresponding source of *your* version. Publish

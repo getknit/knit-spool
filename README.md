@@ -1,43 +1,45 @@
 <div align="center">
 
-<img src="assets/icon-256.png" width="128" height="128" alt="knit-spool">
+<img src="assets/icon-256.png" width="128" height="128" alt="Knit Spool">
 
-# knit-spool
+# Knit Spool
 
-**The reference *spool* — a scoped, blinded store-and-forward relay for
+**The reference Spool — a scoped, blinded store-and-forward relay for
 [Knit](https://github.com/getknit/knit)'s Internet plane.**
 
-It holds sealed frames for scope ids it cannot map to anyone, and forgets everything else.
+A Spool keeps a Knit conversation moving when its members are out of each other's range: sealed
+frames wait there for whoever has not connected yet. It holds them for scope ids it cannot map to
+anyone, and forgets everything else.
 
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4.0-7F52FF?logo=kotlin&logoColor=white)
 ![Ktor](https://img.shields.io/badge/Ktor-3.3.0%20CIO-087CFA?logo=ktor&logoColor=white)
 ![JDK](https://img.shields.io/badge/JDK-21-orange?logo=openjdk&logoColor=white)
-![Protocol](https://img.shields.io/badge/spool%20protocol-v1%20(%C2%A713%20vectors%20pinned)-2EA043)
+![Protocol](https://img.shields.io/badge/Spool%20protocol-v1%20(%C2%A713%20vectors%20pinned)-2EA043)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fgetknit%2Fknit-spool%2Fbadges%2Fcoverage.json)](https://github.com/getknit/knit-spool/actions/workflows/ci.yml)
 ![Footprint](https://img.shields.io/badge/RSS-~128%E2%80%93256%20MB-00BCD4)
 ![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
-[![knit-spool changelog on whatsnew.fyi](https://whatsnew.fyi/product/knit-spool/badge.svg)](https://whatsnew.fyi/product/knit-spool)
+[![Knit Spool changelog on whatsnew.fyi](https://whatsnew.fyi/product/knit-spool/badge.svg)](https://whatsnew.fyi/product/knit-spool)
 
 </div>
 
 ---
 
-## What a spool is
+## What a Spool is
 
-A spool holds, per conversation **scope**, a bounded set of end-to-end-sealed frames and a digest
+A Spool holds, per conversation **scope**, a bounded set of end-to-end-sealed frames and a digest
 over them, streams new arrivals to connected subscribers, and heals divergence by digest
 anti-entropy.
 
 It never learns node ids, message content, rosters, or delivery facts — it stores ciphertext for
 scope ids it cannot map to anyone. Spools never talk to each other: clients multi-home across
-several spools and union them, so **no spool is load-bearing** and a wiped spool is refilled by any
+several Spools and union them, so **no Spool is load-bearing** and a wiped Spool is refilled by any
 one conversation member.
 
 > [!IMPORTANT]
 > **The protocol spec is the product.** The normative spec lives in the Knit repo:
 > [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md).
 > This daemon implements the spec — never the other way around — and `SpecVectorTest` pins this
-> implementation to the spec's §13 vectors byte-for-byte. Third-party spool implementations are
+> implementation to the spec's §13 vectors byte-for-byte. Third-party Spool implementations are
 > first-class; this repo exists so nobody *has* to write one, and ships the conformance suite that
 > validates any implementation.
 
@@ -46,10 +48,10 @@ one conversation member.
 | | |
 |---|---|
 | **What** | Store-and-forward relay daemon for Knit's optional Internet plane |
-| **Wire** | CBOR records over one WebSocket, `wss://host/spool/v1` (`?k=` token on private spools) |
+| **Wire** | CBOR records over one WebSocket, `wss://host/spool/v1` (`?k=` token on private Spools) |
 | **Stack** | Kotlin 2.4.0 · Ktor 3.3.0 (CIO) · kotlinx-serialization CBOR · SQLite (WAL) · JDK 21 |
 | **Sees** | Scope ids, blob ids, ciphertext, sizes, timing |
-| **Never sees** | Node ids, plaintext, rosters, who read what, which spools a client also uses |
+| **Never sees** | Node ids, plaintext, rosters, who read what, which Spools a client also uses |
 | **Config** | Environment variables only; invalid values refuse to start |
 | **Ops** | `GET /healthz`, `GET /source`, `GET /metrics` (Prometheus text) |
 | **Footprint** | Idles in ~128–256 MB on the cheapest VPS tier (`-Xmx256m` default) |
@@ -78,18 +80,18 @@ one conversation member.
 
 ```
    ┌─────────┐   push   ┌────────────┐   event   ┌─────────┐
-   │ Phone A │─────────►│  spool-1   │──────────►│ Phone B │
+   │ Phone A │─────────►│  Spool 1   │──────────►│ Phone B │
    │  seals  │          └────────────┘           │ unions  │
    │  frame  │   push   ┌────────────┐   pull    │ + opens │
-   │  once   │─────────►│  spool-2   │◄──────────│         │
+   │  once   │─────────►│  Spool 2   │◄──────────│         │
    └─────────┘          └────────────┘           └─────────┘
-                  no spool-to-spool link, ever
+                  no Spool-to-Spool link, ever
 ```
 
-The sender seals a frame once and pushes the same bytes to each spool it knows. Every member
-subscribes to the scope on the spools *it* knows and unions what comes back, so overlap is the only
-thing two members need — not agreement on a spool list. Each spool sees an opaque 32-byte scope id,
-a blob id, ciphertext, and timing; a spool that vanishes takes nothing with it that another member
+The sender seals a frame once and pushes the same bytes to each Spool it knows. Every member
+subscribes to the scope on the Spools *it* knows and unions what comes back, so overlap is the only
+thing two members need — not agreement on a Spool list. Each Spool sees an opaque 32-byte scope id,
+a blob id, ciphertext, and timing; a Spool that vanishes takes nothing with it that another member
 can't re-push.
 
 A client that has been away sends its scope digest instead of a full pull. Same digest, nothing to
@@ -101,7 +103,7 @@ do — an idle conversation costs one round trip.
 |---|---|---|
 | `:protocol` | library | Records, PoW (verify + mine), digest — spec §2/§6.3/§7/§8, no server code |
 | `:daemon` | `knit-spool` | The reference daemon: WSS server, in-memory + SQLite stores, rate limits, ops |
-| `:conformance` | `knit-spool-conformance` | CLI that validates **any** live spool over WebSocket (TAP output) |
+| `:conformance` | `knit-spool-conformance` | CLI that validates **any** live Spool over WebSocket (TAP output) |
 
 `:conformance` depends only on `:protocol` — it tests the wire contract, not this repo's
 internals.
@@ -112,7 +114,7 @@ Implements the full **v1** protocol:
 
 - **Record layer** — CBOR `hello`/`sub`/`digest`/`list`/`pull`/`blob`/`push`/`event`/`ok`/`err`,
   with spec-vector conformance and forward-compatible tolerance of unknown records and fields.
-- **Handshake** — version negotiation, advertised limits, bearer-token private spools.
+- **Handshake** — version negotiation, advertised limits, bearer-token private Spools.
 - **Fan-out** — live `event` delivery to every other subscriber of the scope, `q`-correlated
   replies, idempotent duplicate pushes.
 - **Retention** — oldest-by-arrival eviction, count-bounded tombstones, per-scope digests with
@@ -123,22 +125,22 @@ Implements the full **v1** protocol:
   `SPOOL_MAX_ATTACH_BYTES / 512` chunks. An `aput` declaring more chunks than the quota could hold
   at the structural 48 KiB each is refused `quota` before its first chunk is stored. Set
   `SPOOL_MAX_ATTACH_BYTES=0` and the family disappears from `hello`.
-- **Abuse control** — stateless PoW on every path that creates a scope (a `sub` for one the spool
+- **Abuse control** — stateless PoW on every path that creates a scope (a `sub` for one the Spool
   does not hold, including one the watermark has since shed, and the shed-scope `push`-recreate
   path) with the per-`(scope, day)` cache; per-connection and per-IP rate limits (`rate` +
   `retryMs`, escalating to close 4003), an IPv6 client keyed by its /64; and a global storage
   watermark that sheds the least-recently-active scope.
-- **Commons** (§7.4) — one optional shared scope per spool, off unless `SPOOL_COMMONS_ID` is set.
+- **Commons** (§7.4) — one optional shared scope per Spool, off unless `SPOOL_COMMONS_ID` is set.
   Ordinary records on the data path; what is added is the policy a *shared* scope needs. See
   [the commons](#-the-commons).
 - **Send-side moderation** (§7.5) — one optional `hello` bool, off unless
   `SPOOL_REQUIRE_MODERATION` is set, asking clients to run their on-device content screen before
-  sending. A request the spool cannot check, and nothing on the data path. See
+  sending. A request the Spool cannot check, and nothing on the data path. See
   [send-side moderation](#-send-side-moderation).
 - **Capacity** — an optional total-connection cap that refuses the upgrade with `503` and a
   `Retry-After` rather than letting the box degrade into GC thrash. Not a protocol limit: a full
-  spool is a property of the hardware, and a multi-homing client treats it as one more unreachable
-  spool.
+  Spool is a property of the hardware, and a multi-homing client treats it as one more unreachable
+  Spool.
 - **Persistence** — SQLite (WAL, self-healing boot recompute) or in-memory, behind one store
   contract, plus a periodic sweeper.
 - **Ops** — `/healthz`, `/source` (build stamp and the §13 source offer), `/metrics` (Prometheus
@@ -152,7 +154,7 @@ Implements the full **v1** protocol:
 
 ```sh
 ./gradlew :daemon:run                      # listens on :9470, PoW off, public, in-memory
-SPOOL_TOKEN=s3cret ./gradlew :daemon:run   # private spool: wss://host/spool/v1?k=s3cret
+SPOOL_TOKEN=s3cret ./gradlew :daemon:run   # private Spool: wss://host/spool/v1?k=s3cret
 ```
 
 `knit-spool check` validates the environment and prints what it resolved to, without binding a port,
@@ -182,10 +184,10 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SPOOL_PORT` | `9470` | listen port |
-| `SPOOL_TOKEN` | unset | bearer token; unset = public spool |
+| `SPOOL_TOKEN` | unset | bearer token; unset = public Spool |
 | `SPOOL_TOKEN_NEXT` | unset | a second accepted token, for rotating without a cutover: set it, let clients migrate, promote it into `SPOOL_TOKEN`, unset it. Requires `SPOOL_TOKEN`, and must differ from it |
 | `SPOOL_RELOAD_FILE` | unset | a `KEY=value` file `SIGHUP` re-reads, layered over the environment. Unset means `SIGHUP` has nothing to read and says so |
-| `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
+| `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the Spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
 | `SPOOL_DATA_DIR` | unset | unset = in-memory; set = SQLite at `$DIR/spool.db` |
 | `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
 | `SPOOL_POW_BITS` | `0` | PoW difficulty for unknown scopes (spec suggests 20; 0 = off) |
@@ -208,25 +210,25 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×); a `sub` spends one token per scope it names, and once the bucket is dry the rest of its scopes answer `err rate` |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per client address (IPv6: per /64; burst 4×); a `sub` naming more new scopes than the burst has its tail answered `err rate`, and a record refused for rate strikes the abuse window once, not once per scope |
-| `SPOOL_REQUIRE_MODERATION` | `false` | ask clients to run their on-device content screen before sending and refuse what it flags; advertised as `moderation: true` in `hello`, omitted when off. A request the spool cannot verify (§7.5) |
+| `SPOOL_REQUIRE_MODERATION` | `false` | ask clients to run their on-device content screen before sending and refuse what it flags; advertised as `moderation: true` in `hello`, omitted when off. A request the Spool cannot verify (§7.5) |
 | `SPOOL_COMMONS_ID` | unset | the commons scope id, 64 hex chars from `knit-spool commons-invite`; **unset = no commons** |
 | `SPOOL_COMMONS_NAME` | unset | display label advertised in `hello` |
 | `SPOOL_COMMONS_MAX_FRAMES` | `500` | commons frame cap — pinned, not client-declared |
 | `SPOOL_COMMONS_TTL_MS` | `86400000` | commons frame TTL (24 h) |
 | `SPOOL_COMMONS_MAX_BLOB` | `SPOOL_MAX_BLOB` | commons per-blob cap |
 | `SPOOL_COMMONS_ATTACH` | `false` | allow attachments in the commons |
-| `SPOOL_COMMONS_RATE_PUSHES` | `20` | **spool-wide** pushes/s into the commons (burst 4×) |
+| `SPOOL_COMMONS_RATE_PUSHES` | `20` | **Spool-wide** pushes/s into the commons (burst 4×) |
 
-The commons bounds must fit the spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
+The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
 fit is refused at startup rather than discovered at 3am.
 
 ## 🏛 The commons
 
-A spool is normally pure infrastructure: it relays between clients that already paired out of band
-and never introduces anybody. Set `SPOOL_COMMONS_ID` and it also runs **one shared scope** — a room
-where everyone on that spool who holds the invite can talk to everyone else, still sealed end to
-end.
+Set `SPOOL_COMMONS_ID` and a Spool also runs **one shared scope** — a room where everyone on that
+Spool who holds the invite can talk to everyone else, still sealed end to end. Without it a Spool is
+pure infrastructure: it relays between clients that already paired out of band and never introduces
+anybody.
 
 Mint an invite, which never touches disk or the log:
 
@@ -237,26 +239,26 @@ spool config (put in env):      SPOOL_COMMONS_ID=bf92a00e…cf4df842
 ```
 
 The two halves go to different places. The **invite** goes to your members; the **id**, which is
-`SHA-256("knit/spool/v1/commons" ‖ secret)`, goes in the spool's environment. The spool is never
+`SHA-256("knit/spool/v1/commons" ‖ secret)`, goes in the Spool's environment. The Spool is never
 given the secret, so it relays a room it cannot read — and this repo implements no content-key
 derivation at all, which makes that structural rather than a promise.
 
 On the wire a commons is an ordinary scope: `sub`, `push`, `event`, `digest`, `list`, `pull` all
 behave exactly as they do for a private conversation, and no new record types or error codes exist.
-What the spool adds is the policy a *shared* scope needs:
+What the Spool adds is the policy a *shared* scope needs:
 
 | | |
 |---|---|
 | **Bounds are pinned** | The store applies whatever the most recent subscriber declared. In a room shared with strangers that would let one member subscribe with `maxFrames = 1` and evict everyone's history, so a commons `sub` ignores what the client declares and answers with the truth in its `digest`. |
 | **No PoW to join** | The scope is created at boot, so it is never an unknown scope and the §6.4 creation gates never fire — members join with a plain `sub` even at 20 bits. |
 | **Never shed** | The storage watermark may not take the room away to make space for one client's conversation. |
-| **A spool-wide push budget** | `SPOOL_COMMONS_RATE_PUSHES` bounds the room as a whole; 200 members at the per-connection 10/s would be 2,000 pushes/s into one scope. It throttles with `err rate` + `retryMs` but never strikes the connection — congestion on a shared room is not evidence any one member misbehaved. |
+| **A Spool-wide push budget** | `SPOOL_COMMONS_RATE_PUSHES` bounds the room as a whole; 200 members at the per-connection 10/s would be 2,000 pushes/s into one scope. It throttles with `err rate` + `retryMs` but never strikes the connection — congestion on a shared room is not evidence any one member misbehaved. |
 | **Attachments off by default** | A public room is where a 16 MiB upload costs the operator most and is worth least. `SPOOL_COMMONS_ATTACH=true` if you want them. |
 
 `hello` carries the room's bounds, an optional name, and whether attachments are on — but **never
-the scope id**. The id comes from the invite; a spool that published it would turn a room only
+the scope id**. The id comes from the invite; a Spool that published it would turn a room only
 invite holders can find into one anybody who connects could subscribe to and flood. A client with no
-invite learns only that the spool has a commons.
+invite learns only that the Spool has a commons.
 
 > [!NOTE]
 > Every member shares one key, so a commons is exactly as private as its invite, and there is no
@@ -268,9 +270,10 @@ invite learns only that the spool has a commons.
 
 ## 🛡 Send-side moderation
 
-A spool holds ciphertext, so it cannot screen a message and never will. What an operator who answers
-for the people on their spool — a school, a workplace, a household — *can* do is ask the clients to.
-Set `SPOOL_REQUIRE_MODERATION=true` and `hello` carries one more field:
+An operator who answers for the people on their Spool — a school, a workplace, a household — can
+ask every client on it to screen what it sends. The Spool itself holds ciphertext, so it cannot
+screen a message and never will; asking is the lever it has. Set `SPOOL_REQUIRE_MODERATION=true`
+and `hello` carries one more field:
 
 ```
 { t: "hello", v: 1, min: 1, limits: {…}, powBits: 20, moderation: true }
@@ -278,20 +281,20 @@ Set `SPOOL_REQUIRE_MODERATION=true` and `hello` carries one more field:
 
 A conforming client (spec §7.5) then runs its on-device content screen — the same text and image
 classifier it already runs on everything it receives — on what its user *sends* into any scope this
-spool carries, and refuses what the screen flags, with no "send anyway". Off, or unset, the field is
+Spool carries, and refuses what the screen flags, with no "send anyway". Off, or unset, the field is
 omitted and nothing changes: clients still screen on receive and blur or collapse flagged content
 behind tap-to-reveal, as their own setting says.
 
 | | |
 |---|---|
-| **A request, not an enforcement** | The spool sees sealed bytes and can neither check nor punish. A modified client can ignore the flag exactly as it can skip any sender-side check; what the flag buys is that every *conforming* client on the spool refuses the same content the same way. Receive-side screening is what survives a hostile sender, and it stays the recipient's own — the flag never touches it. |
-| **Strictest wins** | A sender seals a frame once and pushes identical bytes to every spool it knows. If *any* spool of a conversation asks for moderation, a conforming client withholds flagged content from all of them rather than fork the conversation by operator. |
-| **Nothing on the data path** | No record, error code, close code or bound is added. An off spool's `hello` is byte-identical to before this existed. |
+| **A request, not an enforcement** | The Spool sees sealed bytes and can neither check nor punish. A modified client can ignore the flag exactly as it can skip any sender-side check; what the flag buys is that every *conforming* client on the Spool refuses the same content the same way. Receive-side screening is what survives a hostile sender, and it stays the recipient's own — the flag never touches it. |
+| **Strictest wins** | A sender seals a frame once and pushes identical bytes to every Spool it knows. If *any* Spool of a conversation asks for moderation, a conforming client withholds flagged content from all of them rather than fork the conversation by operator. |
+| **Nothing on the data path** | No record, error code, close code or bound is added. An off Spool's `hello` is byte-identical to before this existed. |
 | **Reloadable** | Announced in `hello`, so like `SPOOL_POW_BITS` a `SIGHUP` moves it for the next connection; a live client keeps the hello it negotiated. |
 
 ## 🌐 Deploy
 
-Picking a host first? [`HOSTING.md`](HOSTING.md) covers what a spool needs from a box, which
+Picking a host first? [`HOSTING.md`](HOSTING.md) covers what a Spool needs from a box, which
 providers fit, and which container platforms are the wrong shape for a long-lived WebSocket.
 
 The daemon serves plain WebSocket; **TLS terminates at a reverse proxy**. Either one you already
@@ -351,7 +354,7 @@ Every push to `main` publishes a development image too, once `check` and the con
 have passed on it: `edge` follows the branch, and `sha-<short commit>` (`sha-e4159fd`) is that
 commit's for good. Neither touches `latest`. An `edge` daemon reports its `-SNAPSHOT` version and
 the commit at `GET /source`, and it has cleared the same gates a release does — but nobody has run
-it in production yet. Pull it to try a fix before it ships; pin a version to run a spool on.
+it in production yet. Pull it to try a fix before it ships; pin a version to run a Spool on.
 
 The GHCR copy — release or `edge` — traces back to the workflow run and the commit that built it:
 
@@ -379,7 +382,7 @@ image avoids an emulated compile.
 ## 📊 Operating
 
 `GET /healthz` (liveness) and `GET /metrics` (Prometheus text; token-gated with `?k=` on private
-spools — the shipped proxy configs seal it off from the internet, so scrape it from inside your
+Spools — the shipped proxy configs seal it off from the internet, so scrape it from inside your
 network). The bearer token rides in the query string, so those configs also keep it out of proxy
 access logs; do the same in any proxy of your own.
 
@@ -388,8 +391,8 @@ Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying ve
 (current + total) and the `SPOOL_MAX_CONNS` cap they are measured against, records, pushes, events,
 PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
 sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by code.
-A spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
-and how often its spool-wide push budget throttled.
+A Spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
+and how often its Spool-wide push budget throttled.
 
 > [!NOTE]
 > **On a metered link, watch `knit_spool_egress_bytes_total`.** Fan-out means one push leaves as
@@ -401,7 +404,7 @@ and how often its spool-wide push budget throttled.
 ### Rotating the token
 
 `SPOOL_TOKEN` alone makes rotation a cutover: change it and every client is locked out until it
-updates. `SPOOL_TOKEN_NEXT` is a second credential the spool accepts alongside the first, so the
+updates. `SPOOL_TOKEN_NEXT` is a second credential the Spool accepts alongside the first, so the
 rotation becomes four steps with nothing refused at any point:
 
 ```sh
@@ -412,7 +415,7 @@ SPOOL_TOKEN=new                        # 3. promote; `old` stops working here
 ```
 
 Both are accepted for as long as both are set, and anything that is neither is still refused — a
-spool mid-rotation accepts two secrets, not any secret. Step 3 is the one that ends the rotation,
+Spool mid-rotation accepts two secrets, not any secret. Step 3 is the one that ends the rotation,
 so do not leave `SPOOL_TOKEN_NEXT` set indefinitely: a credential you have stopped tracking is
 still a credential that works.
 
@@ -437,9 +440,9 @@ docker exec knit-spool kill -HUP 1     # compose: docker compose exec -T spool k
 `docker kill` marks the container manually stopped, whatever signal it carries and even when the
 process keeps running. Under `restart: unless-stopped` — which every compose file here ships —
 Docker then declines to start it after a reboot, silently, with `RestartCount=0` to show it never
-tried. The spool that reloaded perfectly is simply missing the next morning. `restart: always` is
+tried. The Spool that reloaded perfectly is simply missing the next morning. `restart: always` is
 not a fix either: it ignores that flag at boot, but a `docker kill` still suppresses the ordinary
-restart-on-exit, so a signal that did stop the process would leave the spool down until the next
+restart-on-exit, so a signal that did stop the process would leave the Spool down until the next
 reboot rather than back in seconds.
 
 `docker exec … kill` sends the signal and touches none of that bookkeeping. It reaches PID 1
@@ -458,7 +461,7 @@ this feature exists to avoid.
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
-| `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the spool has not seen recently |
+| `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope
 limits, the sweeper and status line from their cadences, the commons scope from its id, the
@@ -468,7 +471,7 @@ listener from the port: `SPOOL_PORT`, `SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPO
 
 Naming one of those in the file is not fatal — it is logged as ignored and everything else still
 applies, so a stale line cannot block a later change. A file that is missing, unreadable or invalid
-leaves the running configuration untouched and logs why; reloads are retryable, and a spool that
+leaves the running configuration untouched and logs why; reloads are retryable, and a Spool that
 dropped its quotas to a half-written file would not be.
 
 ### Draining
@@ -486,7 +489,7 @@ docker exec knit-spool kill -USR1 1   # again to lift it
 `docker kill` of any kind is what stops the container coming back after a reboot, and drain is
 exactly the thing you reach for right before one.
 
-Shift traffic to a sibling spool, wait for the connection count to fall, then stop. `/healthz`
+Shift traffic to a sibling Spool, wait for the connection count to fall, then stop. `/healthz`
 deliberately keeps answering `200` throughout — the container HEALTHCHECK and compose's
 `service_healthy` gate both probe it, and a drain that failed it would restart the container in
 the middle of the drain. Watch `knit_spool_drain_refused_total`, which is counted apart from
@@ -496,7 +499,7 @@ the middle of the drain. Watch `knit_spool_drain_refused_total`, which is counte
 ### The status line
 
 Every `SPOOL_STATUS_MS` (5 min by default; `0` switches it off) the daemon logs one line — the
-`docker logs -f` view of a spool with no Prometheus in front of it:
+`docker logs -f` view of a Spool with no Prometheus in front of it:
 
 ```text
 2026-08-17 14:05:00,123 INFO  a.getknit.spool.Status up=2h14m conns=3/2000 accepted=+12 \
@@ -527,12 +530,12 @@ drops, level up that one logger rather than the root:
 
 Ktor's own loggers are pinned at `INFO` in the shipped `logback.xml` and do not follow
 `SPOOL_LOG_LEVEL`: below that, Ktor traces the request URI at the start of every WebSocket session,
-and on a private spool the URI carries the bearer token in `?k=`. Nothing Ktor says below `INFO` is
-about the spool. If you override the logging config, keep that pin.
+and on a private Spool the URI carries the bearer token in `?k=`. Nothing Ktor says below `INFO` is
+about the Spool. If you override the logging config, keep that pin.
 
 ## 🧪 Conformance
 
-Validate any spool implementation — this one or a third party's — over a live connection:
+Validate any Spool implementation — this one or a third party's — over a live connection:
 
 ```sh
 ./gradlew :conformance:installDist
@@ -546,16 +549,16 @@ TAP on stdout, a MUST tally on stderr. Exit **0** = every MUST check passed (ski
 shortfalls don't fail the run), **1** = a MUST check failed, **2** = bad arguments or no handshake
 at all, **3** = nothing failed but something could not be judged, because the transport broke or
 this tool hit a bug. An inconclusive run is not a passing one, so treat **3** the way you treat
-**1** in CI. The attachment checks skip themselves against a spool that advertised no §7.3 limits —
+**1** in CI. The attachment checks skip themselves against a Spool that advertised no §7.3 limits —
 which is exactly the client behaviour the spec requires. `--destructive` enables the quota and
-rate-limit checks; they fill real capacity, so run them against spools you operate.
+rate-limit checks; they fill real capacity, so run them against Spools you operate.
 `--commons-invite` takes the room's invite and enables the two checks that need to be in it —
 that the operator's bounds are pinned and that a push fans out — which otherwise skip; the
 advertisement check needs no invite and always runs. CI runs the whole suite against the freshly
 built daemon on every pipeline (`conformance-selftest`).
 
 > [!WARNING]
-> Prefer `--token-file` against a spool you care about. `--token` puts the bearer token in argv,
+> Prefer `--token-file` against a Spool you care about. `--token` puts the bearer token in argv,
 > where every local user can read it out of `ps` for the life of the run, and most shells record it
 > in history. The file is read once and may be mode 0600.
 
@@ -610,32 +613,33 @@ this repo follows, not leads.
 ## 🔐 Security
 
 To report a vulnerability, see [`SECURITY.md`](SECURITY.md) — please **do not** open a public issue
-for security problems. That file also documents what a spool is trusted with, and which properties
+for security problems. That file also documents what a Spool is trusted with, and which properties
 are intentional trade-offs (visible traffic metadata, TLS terminating at a proxy, PoW off by
 default) rather than findings.
 
 ## 💛 Support
 
-knit-spool is free and open source, with no ads, no tracking, and nothing to sell you — it's funded
-entirely by tips. If you run a spool and it's been useful, you can leave a one-off tip on Ko-fi or set
+Knit Spool is free and open source, with no ads, no tracking, and nothing to sell you — it's funded
+entirely by tips. If you run a Spool and it's been useful, you can leave a one-off tip on Ko-fi or set
 up a recurring one on Liberapay:
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-leave%20a%20tip-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/zaventh)
 [![Support on Liberapay](https://img.shields.io/badge/Liberapay-give%20recurring-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/zaventh/)
 
-Tips are optional and buy no special treatment — knit-spool is AGPLv3 and stays that way. Reporting
-bugs, running a public spool, and telling people it exists help just as much.
+Tips are optional and buy no special treatment — Knit Spool is AGPLv3 and stays that way. Reporting
+bugs, running a public Spool, and telling people it exists help just as much.
 
 ## 📄 License
 
-knit-spool is free software, licensed under the **GNU Affero General Public License v3.0 or later**
+Knit Spool is free software, licensed under the **GNU Affero General Public License v3.0 or later**
 ([`LICENSE`](LICENSE)).
 
-§13 obliges anyone running a modified version that other people's clients connect to to offer
+AGPL rather than GPL because a Spool is a network service handling other people's ciphertext:
+§13 obliges anyone running a **modified** version that other people's clients connect to to offer
 those users the source of *their* version. The daemon serves that offer itself, so it cannot go
 stale: `GET /source` returns the running version, its commit, and a source URL. Run a fork and you
 set [`SPOOL_SOURCE_URL`](#-configuration) to your own repository — the endpoint is unauthenticated
-on purpose, because an offer nobody can read is not an offer.
+on purpose, because an offer nobody can read is not an offer. Publish your fork and say where it is.
 
 ```
 Copyright (C) 2026 Jeffrey Walter Mixon
@@ -652,11 +656,7 @@ You should have received a copy of the GNU Affero General Public License along w
 If not, see <https://www.gnu.org/licenses/>.
 ```
 
-AGPL rather than GPL because a spool is a network service handling other people's ciphertext: under
-§13, running a **modified** version that other people's clients connect to obliges you to offer
-those users the source of your version. Publish your fork and say where it is.
-
-knit-spool depends on third-party open-source libraries, all under AGPL-compatible licenses; see
+Knit Spool depends on third-party open-source libraries, all under AGPL-compatible licenses; see
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) for the component list and their licenses.
 
 The Knit app is a separate GPL-3.0-or-later codebase; the two share a protocol spec and no code.

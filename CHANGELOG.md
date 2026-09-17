@@ -1,7 +1,7 @@
 ---
 changelog: "0.1"
 product:
-  name: knit-spool
+  name: Knit Spool
   vendor: Knit
   homepage: https://github.com/getknit/knit-spool
   id: knit-spool
@@ -16,7 +16,7 @@ document:
   locale: en
 ---
 
-# knit-spool changelog
+# Knit Spool changelog
 
 ## Unreleased
 
@@ -32,11 +32,11 @@ Nothing yet.
 > Operators also gain `SPOOL_REQUIRE_MODERATION`, an `edge` image on every push to `main`, and
 > compose files that pass every variable through. Pre-1.0, so every interface below is still
 > subject to change. The wire is additive only — one optional `hello` field, nothing removed or
-> changed — so a 0.2.0 client talks to a 0.3.0 spool unchanged; the two shapes that now answer
+> changed — so a 0.2.0 client talks to a 0.3.0 Spool unchanged; the two shapes that now answer
 > differently are ones no conforming client ever sent. **A persistent store is re-derived on the
 > first boot**: attachment bytes are recounted under the 512-byte floor, and an attachment
 > declaring more chunks than the quota could hold is dropped. Read the *Security* entries before
-> upgrading a spool with a `SPOOL_DATA_DIR`.
+> upgrading a Spool with a `SPOOL_DATA_DIR`.
 
 ### Added
 
@@ -70,20 +70,20 @@ Nothing yet.
   `@Suppress` with a reason beside the code. Both CI pipelines already ran `check`, so it gates
   there without a new job; the reports ride along as artifacts.
 
-- **`SPOOL_REQUIRE_MODERATION`, a send-side moderation request in `hello`.** A spool holds
-  ciphertext and cannot screen a message, so an operator who answers for the people on their spool
+- **`SPOOL_REQUIRE_MODERATION`, a send-side moderation request in `hello`.** A Spool holds
+  ciphertext and cannot screen a message, so an operator who answers for the people on their Spool
   had no moderation lever at all. This is the one the design allows: set the flag and `hello`
   carries `moderation: true`, asking every conforming client to run its on-device content screen —
   the text and image classifier it already runs on what it receives — on what its user *sends* into
-  any scope this spool carries, and to refuse what the screen flags with no "send anyway". Spec
-  §7.5. The spool checks nothing and must not try; a modified client can ignore the field exactly as
+  any scope this Spool carries, and to refuse what the screen flags with no "send anyway". Spec
+  §7.5. The Spool checks nothing and must not try; a modified client can ignore the field exactly as
   it can skip any sender-side check, and what the flag buys is that every conforming client on the
-  spool refuses the same content the same way. Receiving is untouched: what a member hides or reveals
+  Spool refuses the same content the same way. Receiving is untouched: what a member hides or reveals
   stays their own setting.
 
   Strictest wins across a multi-homed conversation, because a sender seals once and pushes identical
-  bytes to every spool it knows — a per-spool split would fork the conversation by operator. Off by
-  default, and off is the absence of the field, never `false`: an unset spool's `hello` is
+  bytes to every Spool it knows — a per-Spool split would fork the conversation by operator. Off by
+  default, and off is the absence of the field, never `false`: an unset Spool's `hello` is
   byte-identical to before, the §13 vectors are untouched, and one new vector pins the on state.
   Reloadable on `SIGHUP` for the next connection, like `SPOOL_POW_BITS`. The conformance suite
   gains an advisory `moderation-advertisement` check, and the compose files declare the variable.
@@ -98,7 +98,7 @@ Nothing yet.
   they said `docker exec spool`, a name nothing created. Pinning costs `--scale`, meaningless for
   one SQLite store on one volume, and makes the name host-global, so a second stack on one host
   needs its own. The project name is deliberately unchanged: it is also the volume prefix, and
-  renaming it would leave an existing `knit-spool_spool-data` orphaned and start the spool on an
+  renaming it would leave an existing `knit-spool_spool-data` orphaned and start the Spool on an
   empty store. Existing deployments need `docker compose up -d` to pick the name up; the volume,
   and everything in it, is untouched.
 
@@ -129,7 +129,7 @@ Nothing yet.
   it. A tag build is unaffected: it carries the tag's own version, which the release workflow
   already refuses to ship without a section here.
 
-- **The documented way to drain or reload stopped the spool coming back after a reboot.** Both
+- **The documented way to drain or reload stopped the Spool coming back after a reboot.** Both
   `README.md` and `HOSTING.md` said `docker kill --signal=USR1|HUP <container>`, and *any*
   `docker kill` marks a container manually stopped — whatever signal it carries, and even when the
   process keeps running and the reload succeeds. `restart: unless-stopped`, which every compose
@@ -139,13 +139,13 @@ Nothing yet.
 
   The two operations that exist to *avoid* disruption were the two that armed it, and the damage
   was invisible until a reboot that might be weeks later and look unrelated. It cost this project's
-  own reference spool 1h23m of downtime on an unattended-upgrades reboot, with Caddy up in front of
+  own reference Spool 1h23m of downtime on an unattended-upgrades reboot, with Caddy up in front of
   it returning `502` the whole time.
 
   Both now document `docker exec <container> kill -HUP 1` (or `-USR1`), which delivers the same
   signal and touches none of Docker's stop bookkeeping. `restart: always` is deliberately **not**
   the advice: it ignores the flag at boot, but a `docker kill` still suppresses the ordinary
-  restart-on-exit, so a signal that did stop the process would leave the spool down until the next
+  restart-on-exit, so a signal that did stop the process would leave the Spool down until the next
   reboot rather than back in seconds. The signal reaches PID 1 because the daemon installs handlers
   for `HUP`, `USR1` and `TERM` — a namespace init ignores a signal raised inside it unless there is
   a handler, which is why `kill -KILL 1` from in there does nothing.
@@ -217,7 +217,7 @@ Nothing yet.
 
   Every chunk is now charged `max(size, 512)` at the put, the drop and the boot recompute, in both
   stores, which bounds a scope at `SPOOL_MAX_ATTACH_BYTES / 512` chunk rows (32,768 at the default)
-  and the spool at `SPOOL_MAX_BYTES / 512`, without a new variable. A conforming client never
+  and the Spool at `SPOOL_MAX_BYTES / 512`, without a new variable. A conforming client never
   notices: only an attachment's last chunk can be shorter than the structural 48 KiB, so the charge
   moves by at most 511 bytes per attachment, never for a full chunk, and two maximal 8 MiB
   attachments still fit the default.
@@ -225,7 +225,7 @@ Nothing yet.
   **This changes what the store counts, not its schema.** There is no migration: the first boot
   after the upgrade re-derives every scope's `attach_bytes` under the new rule, and the `live=`
   figure in the status line and `knit_spool_live_bytes` move with it — by at most 511 bytes per
-  stored attachment on a spool that has only ever seen conforming clients. If that carries the
+  stored attachment on a Spool that has only ever seen conforming clients. If that carries the
   total over `SPOOL_MAX_BYTES`, the watermark sheds at the first sweep exactly as it would for any
   other growth. Pinned by the store contract tests on both backends (a one-byte chunk charges 512;
   tiny attachments evict and refuse at the row cap; expiry, refusal and shed release the charged
@@ -252,7 +252,7 @@ Nothing yet.
   is 43,691 even at a quota of `Int.MAX_VALUE`, so `(total + 7) / 8` cannot wrap. No conforming
   client is touched: its `total` is at most the bound by definition.
 
-  **This changes what an upgraded SQLite store holds.** A spool that ran before this fix may hold a
+  **This changes what an upgraded SQLite store holds.** A Spool that ran before this fix may hold a
   header carrying whatever `total` a client chose; on its first boot the daemon drops every
   attachment declaring more than `maxATotal` chunks — header and chunks, no tombstone, since nothing
   conforming wrote it and `ahave` should answer absent rather than dead — logs one WARN naming the
@@ -260,7 +260,7 @@ Nothing yet.
   `SPOOL_MAX_ATTACH_BYTES` below an existing attachment's chunk count: it could never complete. The
   conformance suite gains `aput-total-over-quota`, an advisory check that an `aput` declaring
   `2³¹−1` chunks is answered with an `err` carrying `q` on a connection that keeps working, and
-  `attachment-get-truncated` skips itself on a spool whose quota cannot admit the `maxAget + 2`
+  `attachment-get-truncated` skips itself on a Spool whose quota cannot admit the `maxAget + 2`
   chunks it declares. Pinned by `AttachmentTotalTest` (each refused `total` answers `quota`, leaves
   presence absent and the store empty, and never reaches the guarded catch-all), the store contract
   tests on both backends, `HardLimitsTest` for the derivation, and a SQLite test that a header set
@@ -283,14 +283,14 @@ Nothing yet.
   time per second, and every other connection's pushes, pulls and health checks queued behind it.
   No PoW involved: the scopes already existed. Finding F3 of the same review.
 
-  A `sub` naming more scopes than `maxScopes` — the spool's advertised total, which a conforming
+  A `sub` naming more scopes than `maxScopes` — the Spool's advertised total, which a conforming
   client batches under — or naming a scope twice, which leaves S-6.2-2 no "most recent declaration"
   to apply, is now `malformed`, refused whole ahead of any token or store hop exactly as an
   off-length id is. Within the bound, every scope past the first spends a record token before its
   store work, so a record's cost is its entry count; once the bucket is dry the rest of the record
   answers `err rate` per scope with `retryMs`, and the scopes before it stand. Partial on purpose: a
   client drops a scope from its table on a scoped `err` and re-subs it on its next round, so it
-  converges even on a spool whose burst is below its batch, where a whole-record `rate` would loop
+  converges even on a Spool whose burst is below its batch, where a whole-record `rate` would loop
   for ever. No conforming client notices: its batch is at most `maxScopes` entries, under the burst
   of 4 × `SPOOL_RATE_RECORDS` at every default.
 
@@ -336,7 +336,7 @@ Nothing yet.
   connection before its session was served. Accept latency was tied to the operator's resolver, a
   client whose reverse zone black-holes queries could make each of its connections cost a resolver
   timeout of worker time, and a blinded relay was sending every client address to its resolver
-  and on to the client ISP's PTR servers — on a private spool too. Where a name came back, the
+  and on to the client ISP's PTR servers — on a private Spool too. Where a name came back, the
   limits were keyed on it. The lookup ran whenever `SPOOL_TRUST_PROXY` was off, the default, and
   behind a trusted proxy for any request that arrived without `X-Forwarded-For`. Finding F5 of
   the same review, and the /64 half of F9.
@@ -379,7 +379,7 @@ Nothing yet.
 - **The two client-keyed tables are bounded.** The per-client table — the connection count and
   the new-scope bucket, keyed by address — gained an entry at every accept, before the token check,
   and kept it ten minutes after the last connection left; with IPv6 rotation or a botnet it grew at
-  the connection rate, on a private spool too, at about 250 bytes an entry. The PoW cache gained a
+  the connection rate, on a private Spool too, at about 250 bytes an entry. The PoW cache gained a
   `(scope, day)` entry at every verified stamp whether or not the scope was then created, so at
   the scope quota it still grew at the attacker's mining rate, unbounded by `maxScopes`. Both are
   heap, and both were slower than the fixed findings above. Finding F9 of the same review, the
@@ -411,7 +411,7 @@ Nothing yet.
 - **The host Caddyfile seals `/metrics` like its siblings.** `deploy/Caddyfile` — the config for a
   Caddy the operator already runs — had no `respond /metrics 404`, while `Caddyfile.compose` and
   `nginx.conf` did and `SECURITY.md` said "both shipped proxy configs" do. The daemon token-gates
-  the endpoint only on a private spool, so a public spool behind that file served scope counts,
+  the endpoint only on a private Spool, so a public Spool behind that file served scope counts,
   live bytes and the commons subscriber count to anyone who asked. Finding F10 of the same review.
 
   The line is in, with the same `read_timeout 0` transport the compose file already carried for
@@ -423,13 +423,13 @@ Nothing yet.
 
 - **`SPOOL_LOG_LEVEL=TRACE` no longer writes the bearer token to the log.** The variable set the
   root level, `logback.xml` let every logger inherit it, and Ktor's websocket routing traces
-  `Starting websocket session for <uri>` — a URI that on a private spool carries `?k=<token>`. An
+  `Starting websocket session for <uri>` — a URI that on a private Spool carries `?k=<token>`. An
   operator turning the log up to chase a problem was writing the connect credential to it, on
   every connection, and `SECURITY.md` classes a token in this daemon's log as a finding. Finding
   F11 of the same review.
 
   `io.ktor` is pinned at `INFO` in the shipped `logback.xml`, so no root level reaches that line;
-  nothing Ktor says below `INFO` is about the spool, and the daemon's own loggers follow the root
+  nothing Ktor says below `INFO` is about the Spool, and the daemon's own loggers follow the root
   level as before. The README's logging section says so, and says to keep the pin in an overridden
   config. Pinned by `HelloAuthTest`, which drives the root logger to `TRACE` the way the variable
   would, connects with a token, and reads every event that reaches the root: the token appears in
@@ -465,12 +465,12 @@ Nothing yet.
 
 ## [0.2.0](https://github.com/getknit/knit-spool/releases/tag/v0.2.0) — 2026-09-04T19:49:37Z
 
-> The operator release. A spool can now be reloaded, drained, credential-rotated and
+> The operator release. A Spool can now be reloaded, drained, credential-rotated and
 > validated without dropping a connection or guessing, and it will tell you which version of
-> itself is running. It also gains a commons — one optional shared scope per spool, relayed
+> itself is running. It also gains a commons — one optional shared scope per Spool, relayed
 > but unreadable. Pre-1.0, so every interface below is still subject to change; the wire is
 > additive only, with no records or error codes removed or changed, so a 0.1.0 client talks to
-> a 0.2.0 spool unchanged.
+> a 0.2.0 Spool unchanged.
 
 ### Added
 
@@ -488,7 +488,7 @@ Nothing yet.
 
 - **Drain mode, toggled by `SIGUSR1`** — new connections refused `503` with a `Retry-After` while
   the live ones keep being served. There was nowhere to stand between "serving" and "stopped":
-  shutdown closes every session at once, so on a busy spool an upgrade sent every client back on
+  shutdown closes every session at once, so on a busy Spool an upgrade sent every client back on
   the same second. Now you drain, watch the connection count fall, and then stop.
 
   `SIGUSR1` rather than a second `SIGTERM`, which is what `docker stop` sends before it `SIGKILL`s
@@ -534,22 +534,22 @@ Nothing yet.
   tree and a build told neither honestly reports `unknown`. `Dockerfile` takes them as build args
   — `.dockerignore` excludes `.git`, so there is no repository in the image context to ask.
 - **`SPOOL_METRICS_TOKEN`, a scrape credential separate from the connect credential** (default
-  unset, which keeps today's behavior: `SPOOL_TOKEN` gates `/metrics` on a private spool). The two
+  unset, which keeps today's behavior: `SPOOL_TOKEN` gates `/metrics` on a private Spool). The two
   answer to different people. `/metrics` carries scope counts, live bytes and traffic shape — the
   operator's business, not the client's — and until now the only credential that opened it was the
   one every client already holds. It also ran the other way: a Prometheus scraping a fleet needed
-  each spool's *connect* secret in its scrape config.
+  each Spool's *connect* secret in its scrape config.
 
   Setting it **replaces** `SPOOL_TOKEN` on `/metrics` rather than joining it, which is the point —
   a client holding the connect token gets `403`. That does mean a scrape configured as
   `?k=$SPOOL_TOKEN` stops working the moment the new variable is set; nothing changes until it is.
-  A public spool can set it on its own to gate metrics without becoming private.
-- **A commons: one shared scope per spool** (spec §7.4), off unless `SPOOL_COMMONS_ID` is set. It
-  turns a spool from pure infrastructure into a place — everyone on it who holds the invite can talk
+  A public Spool can set it on its own to gate metrics without becoming private.
+- **A commons: one shared scope per Spool** (spec §7.4), off unless `SPOOL_COMMONS_ID` is set. It
+  turns a Spool from pure infrastructure into a place — everyone on it who holds the invite can talk
   to everyone else, sealed end to end like any other scope.
 
   The operator mints an invite with `knit-spool commons-invite` and configures only
-  `SHA-256("knit/spool/v1/commons" ‖ secret)`. The secret goes to members, so **the spool relays a
+  `SHA-256("knit/spool/v1/commons" ‖ secret)`. The secret goes to members, so **the Spool relays a
   room it cannot read**, and this repo deliberately implements no content-key derivation at all —
   the property is structural, not a promise.
 
@@ -558,26 +558,26 @@ Nothing yet.
   the store applies whatever the most recent subscriber declared and one member asking for
   `maxFrames = 1` would otherwise evict the whole room's history. It is created at boot, so it is
   never an unknown scope and the §6.4 PoW and new-scope gates never fire for a member joining. It is
-  pinned against the storage watermark, which may never shed it. And it carries a spool-wide push
+  pinned against the storage watermark, which may never shed it. And it carries a Spool-wide push
   budget (`SPOOL_COMMONS_RATE_PUSHES`, default 20/s) that the per-connection limit cannot bound —
   200 members at 10/s each is 2,000 pushes/s into one scope — which throttles *without* striking the
   connection, since congestion on a shared room is not evidence any one member misbehaved.
 
   `hello` advertises the room's bounds and an optional name but **never its scope id**: the id comes
-  from the invite, and a spool that published it would turn a room only invite holders can find into
+  from the invite, and a Spool that published it would turn a room only invite holders can find into
   one anybody who connects could subscribe to and flood. Observability is
   `knit_spool_commons_subscribers`, `knit_spool_commons_pushes_total`,
   `knit_spool_commons_rate_limited_total`, and `commons=Nsub/Nf` in the status line — all absent
-  entirely on a spool with no commons. The conformance suite gains `commons-advertisement`,
+  entirely on a Spool with no commons. The conformance suite gains `commons-advertisement`,
   `commons-bounds-pinned`, and `commons-fanout`; the latter two need `--commons-invite` and skip
   without it.
 - **`SPOOL_MAX_CONNS`, a total-connection cap** (default `0`, unlimited — the daemon had no global
   connection limit before this, only per-IP). At the cap the WebSocket upgrade is refused `503`
   with a `Retry-After` rather than accepted into a box that has no room for it. Deliberately not a
   close code: §7.1 defines four, none of them means "come back later", and `4003 abuse` would tell
-  a client it misbehaved when it did not. A full spool is a property of the hardware, so it is
+  a client it misbehaved when it did not. A full Spool is a property of the hardware, so it is
   answered at the transport, where a multi-homing client already handles it as one more unreachable
-  spool. Counted by `knit_spool_conns_refused_total` and `refused=+N` in the status line; the
+  Spool. Counted by `knit_spool_conns_refused_total` and `refused=+N` in the status line; the
   configured ceiling is exported as `knit_spool_max_conns` and shown as `conns=N/max`.
 
 ### Fixed
@@ -591,7 +591,7 @@ Nothing yet.
 ### Changed
 
 - **Scope ids are truncated in the log.** The watermark's shed warning carried a full 64-character
-  scope id; it now carries the first eight, and the whole id moved to `DEBUG`. A blinded spool
+  scope id; it now carries the first eight, and the whole id moved to `DEBUG`. A blinded Spool
   ships its lines to an aggregator that is not blinded — it retains them, indexes them, and
   outlives the scope — so a full id at `WARN` was the one identifier this daemon holds that
   survived contact with the outside world. Eight hex characters still follow one scope across a
@@ -614,7 +614,7 @@ Nothing yet.
 
 ## [0.1.0](https://github.com/getknit/knit-spool/releases/tag/v0.1.0) — 2026-08-18T19:29:49Z
 
-> First implementation of the v1 spool protocol, and the first tagged release. Pre-1.0 every
+> First implementation of the v1 Spool protocol, and the first tagged release. Pre-1.0 every
 > interface below is subject to change, and only the wire protocol's own compatibility rules, which
 > are versioned separately from this daemon, are stable.
 
@@ -623,7 +623,7 @@ Nothing yet.
 - **Record layer** — CBOR `hello`/`sub`/`digest`/`list`/`pull`/`blob`/`push`/`event`/`ok`/`err`,
   pinned byte-for-byte to the spec's §13 vectors by `SpecVectorTest`, with forward-compatible
   tolerance of unknown records and fields.
-- **Handshake** — version negotiation, advertised limits, and bearer-token private spools
+- **Handshake** — version negotiation, advertised limits, and bearer-token private Spools
   (`wss://host/spool/v1?k=…`).
 - **Fan-out** — live `event` delivery to every other subscriber of a scope, `q`-correlated replies,
   and idempotent duplicate pushes.
@@ -637,13 +637,13 @@ Nothing yet.
   close 4003); and a global storage watermark that sheds the least-active scope.
 - **Persistence** — SQLite (WAL, self-healing boot recompute) or in-memory behind one store
   contract, plus a periodic sweeper.
-- **Ops** — `GET /healthz`, `GET /metrics` (Prometheus text, token-gated on private spools),
+- **Ops** — `GET /healthz`, `GET /metrics` (Prometheus text, token-gated on private Spools),
   graceful shutdown, and a periodic one-line status log under its own `app.getknit.spool.Status`
   logger — gauges absolute, everything else a delta since the previous line
   (`SPOOL_STATUS_MS`, 5 min; `0` disables).
 - **`knit_spool_egress_bytes_total`** — fan-out means one push leaves as (subscribers − 1) copies,
   and on a metered link the transfer allowance binds long before CPU or memory does.
-- **Conformance suite** (`:conformance`) — a CLI that validates *any* live spool over WebSocket, TAP
+- **Conformance suite** (`:conformance`) — a CLI that validates *any* live Spool over WebSocket, TAP
   on stdout and a MUST tally on stderr. Depends only on `:protocol`, never on `:daemon`, so it tests
   the wire contract rather than this repo's internals. `--destructive` enables the quota and
   rate-limit checks; `--token-file` keeps a bearer token out of argv, where `ps` and shell history
@@ -686,7 +686,7 @@ Nothing yet.
 
 - The WebSocket close path no longer surfaces a ping-timeout `IOException` as an error.
 - The conformance runner reports non-assertion failures diagnosably, and tallies transport faults
-  apart from spec violations — a spool that drops the connection no longer looks like a spool that
+  apart from spec violations — a Spool that drops the connection no longer looks like a Spool that
   answered wrongly.
 - The container build no longer races the Kotlin compile daemon's `/tmp` lock file under kaniko
   (compilation runs in-process), and `mkdir -p /data` tolerates kaniko creating the `VOLUME` path
@@ -694,7 +694,7 @@ Nothing yet.
 
 ## About this file
 
-**Wire compatibility is versioned separately from this daemon.** The spool protocol's own version is
+**Wire compatibility is versioned separately from this daemon.** The Spool protocol's own version is
 negotiated in the handshake and specified in
 [`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md); a major
 version of this daemon does not imply a new protocol version, and a protocol change never arrives

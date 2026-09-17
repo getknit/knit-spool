@@ -1,5 +1,5 @@
 name: 💡 Feature request
-description: Propose a feature or enhancement for knit-spool.
+description: Propose a feature or enhancement for Knit Spool.
 title: "[Feature]: "
 labels: ["enhancement", "needs-triage"]
 body:
@@ -8,9 +8,9 @@ body:
       value: |
         Thanks for the proposal. **Please search existing issues before opening a new one.**
 
-        - knit-spool is a **best-effort hobby project** — proposals are welcome but may not be
+        - Knit Spool is a **best-effort hobby project** — proposals are welcome but may not be
           accepted.
-        - **Read this first: the spec is the product.** Behavior the spool protocol does not
+        - **Read this first: the spec is the product.** Behavior the Spool protocol does not
           describe is out of scope for this daemon, and a change to the protocol itself belongs in
           the Knit repo
           ([`docs/SPOOL_PROTOCOL.md`](https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md)),
@@ -19,7 +19,7 @@ body:
     id: problem
     attributes:
       label: Problem / motivation
-      description: What are you trying to do that a spool doesn't support today?
+      description: What are you trying to do that a Spool doesn't support today?
     validations:
       required: true
   - type: textarea
@@ -58,7 +58,7 @@ body:
     attributes:
       label: Blindness impact
       description: >-
-        A spool sees scope ids, blob ids, ciphertext, sizes, and timing — and must never learn node
+        A Spool sees scope ids, blob ids, ciphertext, sizes, and timing — and must never learn node
         ids, plaintext, rosters, or delivery facts. Does this proposal log, persist, export, or
         derive anything outside that set? See `SECURITY.md`.
     validations:
@@ -83,5 +83,5 @@ body:
       options:
         - label: I searched existing issues and this is not a duplicate.
           required: true
-        - label: I understand knit-spool is a best-effort hobby project and this may not be accepted.
+        - label: I understand Knit Spool is a best-effort hobby project and this may not be accepted.
           required: true

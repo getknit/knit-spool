@@ -1,4 +1,4 @@
-# Issue-template chooser for knit-spool.
+# Issue-template chooser for Knit Spool.
 # https://docs.github.com/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
 #
 # Blank issues are disabled so reports flow through the Bug / Feature forms; open-ended questions go
@@ -14,8 +14,8 @@ contact_links:
     about: >-
       Do NOT open a public issue for security bugs. Use GitHub's private vulnerability reporting (or
       email, per SECURITY.md) — public disclosure before a fix exists puts the people relying on
-      running spools at risk.
-  - name: 📐 The spool protocol spec (Knit repo)
+      running Spools at risk.
+  - name: 📐 The Spool protocol spec (Knit repo)
     url: https://github.com/getknit/knit/blob/main/docs/SPOOL_PROTOCOL.md
     about: >-
       The normative wire contract lives in the Knit repo. If the *spec* is what looks wrong, open it
@@ -25,4 +25,4 @@ contact_links:
     about: For operator questions, ideas, and open-ended discussion that isn't a bug or a concrete feature request.
   - name: 📖 Contributing guide & support expectations
     url: https://github.com/getknit/knit-spool/blob/main/CONTRIBUTING.md
-    about: knit-spool is a best-effort hobby project shipped as-is. Please read this before filing.
+    about: Knit Spool is a best-effort hobby project shipped as-is. Please read this before filing.
