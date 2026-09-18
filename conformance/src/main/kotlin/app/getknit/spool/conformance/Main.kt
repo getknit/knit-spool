@@ -5,7 +5,6 @@ import app.getknit.spool.protocol.Commons
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
@@ -41,20 +40,9 @@ fun main(args: Array<String>) {
     exitProcess(exitCode)
 }
 
-private class Options(
-    val url: String,
-    val connectUrl: String,
-    val hasToken: Boolean,
-    val timeoutMs: Long,
-    val powLimit: Int,
-    val destructive: Boolean,
-    /** The commons secret, when the operator supplied one; null leaves those checks skipped. */
-    val commonsSecret: ByteArray?,
-)
-
 // One `when` arm per flag: a switch table, and splitting it would hide that shape.
 @Suppress("CyclomaticComplexMethod")
-private fun parseArgs(args: Array<String>): Options {
+private fun parseArgs(args: Array<String>): SuiteOptions {
     var url: String? = null
     var token: String? = null
     var tokenFile: String? = null
@@ -108,7 +96,7 @@ private fun parseArgs(args: Array<String>): Options {
             '?' in parsed -> "$parsed&k=$bearer"
             else -> "$parsed?k=$bearer"
         }
-    return Options(
+    return SuiteOptions(
         url = parsed,
         connectUrl = connectUrl,
         hasToken = bearer != null,
@@ -162,95 +150,3 @@ private fun argExit(message: String): Nothing {
     System.err.println(USAGE)
     exitProcess(2)
 }
-
-private suspend fun runSuite(
-    httpClient: HttpClient,
-    options: Options,
-): Int {
-    val client = SpoolClient(httpClient = httpClient, url = options.connectUrl, timeoutMs = options.timeoutMs)
-    val bareClient = SpoolClient(httpClient = httpClient, url = options.url, timeoutMs = options.timeoutMs)
-    val serverHello =
-        try {
-            client.connect { hello() }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            System.err.println("probe connection failed: ${e.message ?: e::class.simpleName}")
-            return 2
-        }
-    val ctx =
-        Ctx(
-            client = client,
-            bareClient = bareClient,
-            serverHello = serverHello,
-            timeoutMs = options.timeoutMs,
-            powLimit = options.powLimit,
-            hasToken = options.hasToken,
-            commonsSecret = options.commonsSecret,
-        )
-    val checks = allChecks()
-    val report = Report(checks.size)
-    report.begin()
-    checks.forEachIndexed { index, check ->
-        val number = index + 1
-        if (check.destructive && !options.destructive) {
-            report.skip(number, check.name, "destructive (pass --destructive)")
-            return@forEachIndexed
-        }
-        try {
-            check.run(ctx)
-            report.pass(number, check.name, check.must)
-        } catch (e: SkipCheck) {
-            report.skip(number, check.name, e.reason)
-        } catch (e: Advisory) {
-            report.advisory(number, check.name, check.must, e.reason)
-        } catch (e: CheckFailure) {
-            // The only category that judges the spool: a written expected-vs-got assertion.
-            if (check.must) {
-                report.fail(number, check.name, describeFailure(e))
-            } else {
-                report.advisory(number, check.name, false, describeFailure(e))
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            // TransportFailure, plus anything unclassified — a TLS fault, a bug in this tool. None
-            // of it says whether the spool conforms, so it is reported apart from the tally rather
-            // than charged to the implementation under test.
-            report.error(number, check.name, describeFailure(e))
-        }
-    }
-    return report.summary()
-}
-
-/**
- * A one-line failure reason that stays diagnosable when the throwable is not one of ours.
- *
- * [CheckFailure] is raised with a written expected-vs-got message, so its message alone is the
- * whole story and is returned unadorned — that is the spool failing the spec, which is what the
- * report is for.
- *
- * Everything else is a bug in this tool, in a library, or in the transport, and those arrive as
- * bare types with useless messages: a run against a remote spool reported `NullPointerException`
- * and `IllegalArgumentException: Failed requirement.`, neither of which says where it came from or
- * even whether the spool was at fault. For those, name the type, keep any message, and append the
- * first frame of our own code plus the cause chain, so the next run is diagnosable from its output
- * instead of needing a debugger attached to a remote endpoint.
- */
-fun describeFailure(e: Throwable): String {
-    if (e is CheckFailure) return e.message ?: "check failed"
-    val type = e::class.simpleName ?: "unknown failure"
-    val message = e.message?.let { ": $it" } ?: " (no message)"
-    val origin =
-        e.stackTrace.firstOrNull { it.className.startsWith("app.getknit.spool") }
-            ?: e.stackTrace.firstOrNull()
-    val where = origin?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }.orEmpty()
-    val causedBy =
-        generateSequence(e.cause) { it.cause }
-            .take(CAUSE_CHAIN_DEPTH)
-            .joinToString("") { c -> " <- ${c::class.simpleName}${c.message?.let { m -> ": $m" }.orEmpty()}" }
-    return "$type$message$where$causedBy"
-}
-
-/** How far down a `cause` chain [describeFailure] walks before the line stops being readable. */
-private const val CAUSE_CHAIN_DEPTH = 3

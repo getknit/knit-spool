@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.conformance
 
+import java.io.PrintStream
+
 /** Thrown by a check that cannot run in this environment; rendered as a TAP `# SKIP` directive. */
 class SkipCheck(
     val reason: String,
@@ -50,9 +52,15 @@ inline fun ensure(
  * A spec violation and a broken transport are different findings and are tallied apart: only the
  * former says anything about the spool. Folding them together let a flaky network read as a
  * non-conformant spool.
+ *
+ * [out] and [err] default to the process streams. They are parameters so the daemon's in-process
+ * self-test can capture a run: swapping `System.out` under it would also capture whatever the
+ * daemon logs meanwhile — logback resolves the stream at write time — and interleave it with the TAP.
  */
 class Report(
     private val total: Int,
+    private val out: PrintStream = System.out,
+    private val err: PrintStream = System.err,
 ) {
     private var mustRun = 0
     private var mustPassed = 0
@@ -62,8 +70,8 @@ class Report(
     private var errors = 0
 
     fun begin() {
-        println("TAP version 13")
-        println("1..$total")
+        out.println("TAP version 13")
+        out.println("1..$total")
     }
 
     fun pass(
@@ -75,7 +83,7 @@ class Report(
             mustRun++
             mustPassed++
         }
-        println("ok $index - $name")
+        out.println("ok $index - $name")
     }
 
     fun skip(
@@ -84,7 +92,7 @@ class Report(
         reason: String,
     ) {
         skipped++
-        println("ok $index - $name # SKIP $reason")
+        out.println("ok $index - $name # SKIP $reason")
     }
 
     fun advisory(
@@ -98,7 +106,7 @@ class Report(
             mustRun++
             mustPassed++
         }
-        println("ok $index - $name # advisory: $reason")
+        out.println("ok $index - $name # advisory: $reason")
     }
 
     fun fail(
@@ -108,8 +116,8 @@ class Report(
     ) {
         mustRun++
         failures++
-        println("not ok $index - $name")
-        reason.lineSequence().forEach { line -> println("  # $line") }
+        out.println("not ok $index - $name")
+        reason.lineSequence().forEach { line -> out.println("  # $line") }
     }
 
     /**
@@ -124,8 +132,8 @@ class Report(
         reason: String,
     ) {
         errors++
-        println("not ok $index - $name # error: not a spec verdict")
-        reason.lineSequence().forEach { line -> println("  # $line") }
+        out.println("not ok $index - $name # error: not a spec verdict")
+        reason.lineSequence().forEach { line -> out.println("  # $line") }
     }
 
     /**
@@ -135,7 +143,7 @@ class Report(
      */
     fun summary(): Int {
         val errored = if (errors > 0) ", errored $errors (no verdict — transport or tool, not the spool)" else ""
-        System.err.println(
+        err.println(
             "MUST: $mustPassed/$mustRun passed, skipped $skipped, advisory-noted $advisories$errored",
         )
         return when {

@@ -81,20 +81,10 @@ class ReportTallyTest {
     private fun capture(block: (Report) -> Unit): Captured {
         val out = ByteArrayOutputStream()
         val err = ByteArrayOutputStream()
-        val stdout = System.out
-        val stderr = System.err
-        val exitCode: Int
-        try {
-            System.setOut(PrintStream(out, true))
-            System.setErr(PrintStream(err, true))
-            val report = Report(total = 3)
-            report.begin()
-            block(report)
-            exitCode = report.summary()
-        } finally {
-            System.setOut(stdout)
-            System.setErr(stderr)
-        }
+        val report = Report(total = 3, out = PrintStream(out, true), err = PrintStream(err, true))
+        report.begin()
+        block(report)
+        val exitCode = report.summary()
         return Captured(tap = out.toString(), summary = err.toString(), exitCode = exitCode)
     }
 }
