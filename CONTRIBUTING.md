@@ -34,7 +34,9 @@ consequences for contributions:
 
 Third-party Spool implementations are first-class. `:conformance` deliberately depends only on
 `:protocol`, never on `:daemon`, so it tests the wire contract rather than this repo's internals; a
-check that can only pass against this server does not belong in it.
+check that can only pass against this server does not belong in it. The arrow does point the other
+way in tests: `:daemon`'s `ConformanceSelfTest` runs the whole suite against an in-process server,
+which is how `check` proves the reference daemon conforms.
 
 ## Ground rules
 
@@ -78,12 +80,12 @@ carries its reason.
 ```
 
 `check` runs the §13 spec-vector pins, the store contract against **both** backends (in-memory and
-SQLite), and the full server integration tests. Please run it before opening a pull request, and
-match the surrounding code style.
+SQLite), the full server integration tests, and the conformance suite against an in-process
+server. Please run it before opening a pull request, and match the surrounding code style.
 
-If your change touches the wire, run the conformance suite against your own build the way CI does —
-that job (`conformance-selftest`) is the one that catches a server that passes its unit tests and
-still talks the wrong protocol:
+If your change touches the wire, also run the conformance suite against your own build the way CI
+does — that job (`conformance-selftest`) runs the packaged binaries, so it is the one that catches
+a start script, a `check` exit code, or an argument the in-process run never parses:
 
 ```sh
 ./gradlew :daemon:installDist :conformance:installDist
@@ -116,9 +118,10 @@ edit the ratchet exists to prevent, and it will be asked about in review.
 
 Two things are excluded from the report, both in `build.gradle.kts` with a comment: the
 kotlinx-serialization-generated `$serializer` classes, and the two `main` entry points, which no
-unit test can reach and which `conformance-selftest` covers for real, out of process. `:conformance`
-itself scores low for the same out-of-process reason — its checks run against a live server — so
-judge a conformance change by the self-test, not by the number.
+unit test can reach and which `conformance-selftest` covers for real, out of process. The
+conformance checks themselves are counted, but only by the merged report: they execute inside
+`:daemon`'s test JVM, so `:conformance:koverHtmlReport` on its own reads a few percent and that is
+not a regression. Judge every module by the merged number.
 
 New configuration knobs are **environment variables only** (`SPOOL_*`), must refuse to start on an
 invalid value, and belong in the README's configuration table in the same commit.

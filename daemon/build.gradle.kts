@@ -27,6 +27,12 @@ dependencies {
     testImplementation(libs.ktor.client.cio)
     testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.kotlinx.coroutines.test)
+    // The conformance runner, so ConformanceSelfTest can run every check against an in-process
+    // server. Test-only and pointing this way: :conformance still never depends on :daemon, which
+    // is what keeps it a test of the wire contract rather than of this server. The two costs are
+    // that any edit under conformance/src/main re-runs this suite, and that the runner's own
+    // logback.xml lands on the test classpath — src/test/resources/logback-test.xml outranks it.
+    testImplementation(project(":conformance"))
 }
 
 // ---- build stamp ----

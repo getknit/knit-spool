@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The daemon's logback.xml, verbatim, under the name logback picks first. It exists because the
+    test classpath also carries :conformance's logback.xml (root WARN, for a clean TAP stream):
+    Gradle puts this module's own resources first so ours would probably win anyway, but logback
+    warns about the duplicate and "probably" is not good enough for the file that pins io.ktor at
+    INFO to keep the bearer token out of the log. Keep the two in sync — the tests that capture
+    log lines without re-levelling a logger rely on INFO being the effective level.
+-->
+<configuration>
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} %-5level %logger{24} %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!--
+        Pinned, not inherited: Ktor traces the request URI at the start of every WebSocket
+        session, and on a private spool the URI carries the bearer token in ?k=. A token in this
+        daemon's log is a reportable vulnerability (SECURITY.md), so no SPOOL_LOG_LEVEL may reach
+        that line. Nothing Ktor says below INFO is about the spool; the daemon's own loggers under
+        app.getknit.spool follow the root level as before.
+    -->
+    <logger name="io.ktor" level="INFO"/>
+    <root level="${SPOOL_LOG_LEVEL:-INFO}">
+        <appender-ref ref="console"/>
+    </root>
+</configuration>

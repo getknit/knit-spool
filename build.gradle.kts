@@ -43,17 +43,19 @@ allprojects {
 // report that module alone. Nothing is wired to `check` on purpose — `check` is the pre-MR gate
 // and stays a compile+lint+test run.
 //
-// Read the total with one caveat: it sits well below the per-module numbers (:protocol 98%,
-// :daemon 91%) because :conformance's check bodies only execute against a live server, which
-// happens in the conformance-selftest CI job — a separate process, which Kover does not
-// instrument. So a change to :daemon or :protocol is judged by the merged report; a change to
-// :conformance is judged by whether the selftest still passes.
+// :conformance's checks are credited by the merged report only: :daemon's ConformanceSelfTest
+// runs the whole suite against an in-process server, and the agent counts every class the test
+// JVM loads, whichever module's jar it came from. So `:conformance:koverHtmlReport` on its own
+// reads a few percent — that module's own tests cover only the report and the failure
+// describer — and the merged number is the one to read. The conformance-selftest CI job still
+// runs the same suite against the packaged binaries, out of process; it proves the artefacts and
+// the CLI entry points, not lines.
 //
 // The floors are ratchets, not aspirations: a few points under what the suite covers today (line
-// 60%, branch 54%), so an unrelated refactor does not fail the build but deleting tests does.
+// 95%, branch 72%), so an unrelated refactor does not fail the build but deleting tests does.
 // Raise them when coverage rises; do not lower them to make a red build green.
-val coverageFloorLine = 57
-val coverageFloorBranch = 51
+val coverageFloorLine = 92
+val coverageFloorBranch = 68
 
 val coverageExcludedClasses =
     listOf(
@@ -63,10 +65,16 @@ val coverageExcludedClasses =
         // Process entry points: argument parsing, env wiring, and a shutdown hook, all reachable
         // only by starting a real process. The conformance-selftest job covers them for real, out
         // of process, where Kover cannot see it — counting them here would just be permanently-red
-        // lines that no unit test can legitimately reach.
+        // lines that no unit test can legitimately reach. Only the `exitProcess` paths live in
+        // these files; the conformance runner itself (Suite.kt) is called in-process and counted.
         //
         // The trailing `*` is load-bearing: it takes the lambda classes the compiler synthesizes
         // inside `main` (`MainKt$main$…`), which an exact name leaves behind.
+        //
+        // Not excluded, and not expected to turn green: SpoolServer's ping-timeout swallow (Ktor's
+        // pinger is fixed at 30 s/60 s), its slow-consumer close (needs the outgoing channel and
+        // the loopback TCP buffers full), the `start()` default-argument bridge, and the
+        // missing-field branches kotlinx-serialization synthesizes on `@Serializable` classes.
         "app.getknit.spool.MainKt*",
         "app.getknit.spool.conformance.MainKt*",
     )

@@ -20,7 +20,19 @@ document:
 
 ## Unreleased
 
-Nothing yet.
+### Changed
+
+- **The conformance suite runs in-process on every `check`.** `:daemon`'s `ConformanceSelfTest`
+  boots the reference daemon on an ephemeral port and runs every check against it three ways: with
+  a token, proof-of-work, a commons and moderation all on (nothing skips); the CI job's bare shape
+  against the SQLite store; and non-destructive with PoW off, which exercises the runner's skip
+  paths. Each run asserts the exact set of skipped checks and that nothing came back advisory, so a
+  limit drifting out of a probe's reach fails the build instead of quietly turning a check into a
+  skip. The checks are now counted by the merged coverage report — line coverage moves from 63% to
+  95% — and the floors ratchet up with it. The `conformance-selftest` CI job is unchanged: it still
+  runs the packaged binaries, which is what proves the artefacts.
+- `:conformance`'s runner is callable: `runSuite` and `SuiteOptions` are public, and `Report`
+  takes its output streams. The CLI's behaviour and exit codes are unchanged.
 
 ## [0.3.0](https://github.com/getknit/knit-spool/releases/tag/v0.3.0) — 2026-09-16T20:56:18Z
 

@@ -56,6 +56,7 @@ fun testConfig(
     maxPull: Int = 4,
     hardLimits: HardLimits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 4),
     maxBytes: Long = 0L,
+    sweepMs: Long = 3_600_000L,
     statusMs: Long = 0L,
     trustProxy: Boolean = false,
     maxConns: Int = 0,
@@ -77,8 +78,8 @@ fun testConfig(
         maxPull = maxPull,
         hardLimits = hardLimits,
         maxBytes = maxBytes,
-        // Effectively off — tests drive expiry deterministically via sweepTick().
-        sweepMs = 3_600_000L,
+        // Effectively off by default — tests drive expiry deterministically via sweepTick().
+        sweepMs = sweepMs,
         // Off by default — StatusLineTest drives statusTick() itself.
         statusMs = statusMs,
         trustProxy = trustProxy,

@@ -598,11 +598,11 @@ SQLite), and the full server integration tests.
 Nothing is wired to `check` — reports are asked for explicitly. CI runs them alongside the tests,
 gates on `koverVerify`, and publishes the merged percentage as the coverage badge above.
 
-The merged total sits well under the per-module numbers (`:protocol` ~98%, `:daemon` ~91%) for a
-structural reason worth knowing before reading it: `:conformance`'s check bodies only execute
-against a live server, which happens in the `conformance-selftest` job — a separate process that
-Kover does not instrument. Judge daemon and protocol changes by the merged report; judge conformance
-changes by whether the self-test still passes.
+The merged report is the one to read. `:conformance`'s checks execute inside `:daemon`'s test
+suite — `ConformanceSelfTest` runs the whole suite against an in-process server — so they are
+credited only when the three modules are reported together, and `:conformance:koverHtmlReport` on
+its own reads a few percent by construction. The `conformance-selftest` CI job runs the same suite
+against the packaged binaries; it proves the shipped artefacts rather than adding to the number.
 
 ## 🤝 Contributing
 
