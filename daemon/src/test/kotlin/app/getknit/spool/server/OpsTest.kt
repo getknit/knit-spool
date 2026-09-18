@@ -2,16 +2,21 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.BuildInfo
+import app.getknit.spool.protocol.Err
+import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.store.SqliteScopeStore
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.websocket.CloseReason
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
 import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,6 +24,9 @@ import kotlin.test.assertTrue
 
 /** The operator surface: /healthz, /metrics, graceful shutdown. */
 class OpsTest {
+    @TempDir
+    lateinit var tempDir: Path
+
     @Test
     fun healthzReturns200() {
         withServer {
@@ -28,20 +36,40 @@ class OpsTest {
         }
     }
 
+    /**
+     * /healthz asks the store a question rather than reporting that the process is up: a daemon
+     * whose database has gone away is exactly the one an orchestrator should restart.
+     */
+    @Test
+    fun healthzReturns503WhenTheStoreCannotAnswer() {
+        val store = SqliteScopeStore.open(tempDir, testConfig().hardLimits)
+        withServer(store = store) {
+            assertEquals(HttpStatusCode.OK, http.get("http://127.0.0.1:$port/healthz").status)
+            store.close()
+            val response = http.get("http://127.0.0.1:$port/healthz")
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals("""{"status":"fail"}""", response.bodyAsText())
+        }
+    }
+
     @Test
     fun metricsExposeCounters() {
         withServer {
             connect {
                 helloHandshake()
-                subscribe(testScope(1))
+                // A push before any sub: one err not_subscribed, so the per-code counter has a row.
                 val (id, data) = testBlob(1)
                 sendRecord(Push(t = RecordType.PUSH, q = 1L, scope = testScope(1), blobId = id, data = data))
+                assertEquals(ErrCode.NOT_SUBSCRIBED, expectRecord<Err>(RecordType.ERR).code)
+                subscribe(testScope(1))
+                sendRecord(Push(t = RecordType.PUSH, q = 2L, scope = testScope(1), blobId = id, data = data))
                 expectRecord<Ok>(RecordType.OK)
             }
             val body = http.get("http://127.0.0.1:$port/metrics").bodyAsText()
             assertTrue(body.contains("knit_spool_pushes_total 1"))
             assertTrue(body.contains("knit_spool_scopes_current 1"))
             assertTrue(body.contains("knit_spool_connections_total 1"))
+            assertTrue(body.contains("knit_spool_errs_total{code=\"not_subscribed\"} 1"), body)
         }
     }
 

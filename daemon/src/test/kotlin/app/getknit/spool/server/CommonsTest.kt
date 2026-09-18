@@ -10,13 +10,18 @@ import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.store.HardLimits
+import app.getknit.spool.store.InMemoryScopeStore
+import app.getknit.spool.store.SubscribeResult
+import ch.qos.logback.classic.Level
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.websocket.WebSocketSession
 import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -200,6 +205,55 @@ class CommonsTest {
                 }
             }
         }
+    }
+
+    /**
+     * A persistent store can already hold `maxScopes` scopes from before the commons was configured.
+     * The commons then cannot be created, and the daemon refuses to start rather than come up
+     * advertising a room it does not have.
+     */
+    @Test
+    fun bootRefusesWhenTheStoreIsFullAndTheCommonsCannotBeCreated() {
+        val limits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 1)
+        val full = InMemoryScopeStore(limits)
+        assertIs<SubscribeResult.Subscribed>(full.subscribe(testScope(9), testBounds(), now = 0L))
+
+        val refused =
+            assertFailsWith<IllegalStateException> {
+                withServer(testConfig(hardLimits = limits, commons = testCommons()), store = full) {}
+            }
+        assertTrue(refused.message!!.contains("SPOOL_MAX_SCOPES"), refused.message)
+        assertTrue(full.isUnknownScope(commonsScope()))
+    }
+
+    /**
+     * Over the watermark with nothing left to shed but the pinned commons, the sweeper says so
+     * once and stops — rather than logging on every pass or spinning on a shed that returns null.
+     * `configFromEnv` refuses a commons that alone exceeds `maxBytes`, so reaching this at all
+     * means the two have drifted apart, which is exactly what the operator needs to hear.
+     */
+    @Test
+    fun aWatermarkThatOnlyTheCommonsCanSatisfyWarnsOnce() {
+        val logged =
+            withLogCapture("app.getknit.spool.server.SpoolServer") {
+                withServer(testConfig(maxBytes = 100L, commons = testCommons())) {
+                    connect {
+                        helloHandshake()
+                        subscribe(commonsScope())
+                        (1..3).forEach { seed ->
+                            val (id, data) = testBlob(seed)
+                            pushBlob(commonsScope(), id, data, q = 10L + seed)
+                            expectRecord<Ok>(RecordType.OK)
+                        }
+                        // 120 bytes over a 100-byte watermark; the third push already tried to shed.
+                        spool.sweepTick()
+                        spool.sweepTick()
+                    }
+                    assertFalse(store.isUnknownScope(commonsScope()), "the commons must never be shed")
+                }
+            }
+        val stuck = logged.filter { it.level == Level.WARN && it.formattedMessage.contains("only the pinned commons") }
+        assertEquals(1, stuck.size, "one warning for the condition, not one per pass:\n${logged.map { it.formattedMessage }}")
     }
 
     @Test

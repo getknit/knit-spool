@@ -5,6 +5,7 @@ import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Ok
 import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
+import kotlinx.coroutines.delay
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -128,6 +129,31 @@ class StatusLineTest {
         assertEquals("1.0KiB", StatusLine.bytes(1_024L))
         assertEquals("4.2MiB", StatusLine.bytes(4_404_019L))
         assertEquals("1.5GiB", StatusLine.bytes(1_610_612_736L))
+    }
+
+    /** The room's occupancy is one field when there is a room and no field at all when there is not. */
+    @Test
+    fun theCommonsSegmentAppearsOnlyWhenThereIsACommons() {
+        val status = statusLine(Metrics())
+        val without = fields(status.render(now = 60_000L, scopes = 1, liveBytes = 0L))
+        assertFalse("commons" in without, "no commons, no field: $without")
+
+        val with = fields(status.render(now = 120_000L, scopes = 1, liveBytes = 0L, commonsSubscribers = 2, commonsFrames = 3))
+        assertEquals("2sub/3f", with["commons"])
+    }
+
+    /** The loop `start()` launches is what logs the line in production: nothing here calls the tick. */
+    @Test
+    fun theScheduledStatusLineLogsOnItsCadence() {
+        val logged =
+            withLogCapture("app.getknit.spool.Status") {
+                withServer(testConfig(statusMs = 20L)) {
+                    // Long enough for several ticks on a loaded CI box; the assertion asks only for one.
+                    delay(300L)
+                }
+            }
+        assertTrue(logged.isNotEmpty(), "the scheduled tick never logged")
+        assertTrue(logged.all { "scopes=" in it.formattedMessage }, logged.map { it.formattedMessage }.toString())
     }
 
     /** End to end: the server's tick reads the live store and logs one line under its own logger. */

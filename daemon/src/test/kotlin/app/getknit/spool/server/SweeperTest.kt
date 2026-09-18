@@ -17,6 +17,23 @@ import kotlin.test.assertTrue
 
 /** The periodic sweeper: TTL expiry re-anchors, PoW-cache pruning. Driven via sweepTick(). */
 class SweeperTest {
+    /** The loop `start()` launches is what runs [SpoolServer.sweepTick] in production: nothing here calls it. */
+    @Test
+    fun theScheduledSweeperRunsOnItsCadence() {
+        withServer(testConfig(sweepMs = 20L)) {
+            connect {
+                helloHandshake()
+                subscribe(testScope(1)) // ttlMs = 10_000
+                val (id, data) = testBlob(1)
+                sendRecord(Push(t = RecordType.PUSH, q = 1L, scope = testScope(1), blobId = id, data = data))
+                expectRecord<Ok>(RecordType.OK)
+
+                clock.advance(20_000)
+                assertEquals(0, expectRecord<Digest>(RecordType.DIGEST).count)
+            }
+        }
+    }
+
     @Test
     fun expiryBroadcastsAFreshDigest() {
         withServer {
