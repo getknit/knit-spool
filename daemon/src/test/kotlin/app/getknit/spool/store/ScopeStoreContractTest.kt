@@ -546,6 +546,39 @@ abstract class ScopeStoreContractTest {
         }
     }
 
+    /**
+     * Attachment tombstones are count-bounded like blob tombstones (§6.5 inherits §6.2's cap): a
+     * scope churning through attachments must not grow a dead-list without bound. The oldest fall
+     * off — and an aid that fell off is merely absent, not dead, so its uploader may put it again.
+     */
+    @Test
+    fun attachmentTombstonesAreCountBounded() {
+        createStore().use { store ->
+            val tight = ScopeBounds(maxFrames = 1, ttlMs = limits.maxTtlMs, maxBlob = 1_024)
+            store.subscribed(scope, tight)
+            val cap = ScopeStore.tombstoneCap(tight)
+            val (cid, data) = tiny(0)
+            // Two floor-charged rows fit the budget, so from the third put on every put evicts one
+            // whole attachment into a tombstone. Enough of them to overflow the cap by six.
+            val aids =
+                List(cap + 8) { i ->
+                    ByteArray(32).also {
+                        it[0] = (i ushr 8).toByte()
+                        it[1] = i.toByte()
+                    }
+                }
+            aids.forEachIndexed { i, aid ->
+                assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = i.toLong()))
+            }
+
+            val later = (cap + 20).toLong()
+            assertTrue(store.attachmentPresence(scope, aids[cap + 5], now = later).dead, "the newest eviction is dead")
+            assertEquals(false, store.attachmentPresence(scope, aids[0], now = later).dead, "the oldest fell off the cap")
+            assertEquals(false, store.attachmentPresence(scope, aids[5], now = later).dead, "six over: six dropped")
+            assertTrue(store.attachmentPresence(scope, aids[6], now = later).dead, "the seventh is the oldest kept")
+        }
+    }
+
     @Test
     fun theChargedAmountIsReleasedOnExpiryAndShed() {
         val floor = ScopeStore.ATTACH_CHUNK_FLOOR.toLong()
