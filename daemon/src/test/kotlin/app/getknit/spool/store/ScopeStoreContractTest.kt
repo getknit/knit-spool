@@ -80,6 +80,48 @@ abstract class ScopeStoreContractTest {
     }
 
     @Test
+    fun pushOverTheAppliedMaxBlobIsRefusedTooLarge() {
+        createStore().use { store ->
+            store.subscribed(scope)
+            val data = ByteArray(limits.maxBlob + 1)
+            val id = MessageDigest.getInstance("SHA-256").digest(data)
+
+            assertIs<PushResult.TooLarge>(store.push(scope, id, data, now = 1L))
+            assertEquals(0, store.digest(scope, now = 1L)?.count)
+            assertEquals(0L, store.totalBytes())
+        }
+    }
+
+    /**
+     * `pull` answers with the ids the scope still holds, in the order they were asked for, and
+     * `blob` hands back one payload at a time — the split that keeps a `maxPull × maxBlob` pull
+     * from materializing at once. What is unknown, expired, or in an unknown scope is simply
+     * absent, which the server reports as `missing` (§6.3).
+     */
+    @Test
+    fun pullReportsWhatIsHeldInRequestOrderAndBlobReadsOnePayload() {
+        createStore().use { store ->
+            store.subscribed(scope)
+            val (id1, data1) = blob(1)
+            val (id2, data2) = blob(2)
+            val (unknown, _) = blob(3)
+            store.push(scope, id1, data1, now = 0L)
+            store.push(scope, id2, data2, now = 1L)
+
+            val held = store.pull(scope, listOf(id2, unknown, id1), now = 2L)
+            assertEquals(listOf(id2, id1).map { it.toList() }, held.map { it.toList() })
+            assertEquals(data1.toList(), store.blob(scope, id1, now = 2L)?.toList())
+            assertEquals(data2.toList(), store.blob(scope, id2, now = 2L)?.toList())
+            assertNull(store.blob(scope, unknown, now = 2L))
+            assertEquals(emptyList(), store.pull(ByteArray(32) { 7 }, listOf(id1), now = 2L))
+
+            // Past the TTL the pull sweeps first, so an expired blob is neither listed nor readable.
+            assertEquals(emptyList(), store.pull(scope, listOf(id1, id2), now = 20_000L))
+            assertNull(store.blob(scope, id1, now = 20_000L))
+        }
+    }
+
+    @Test
     fun overflowEvictsOldestIntoTombstonesAndRefusesRePush() {
         createStore().use { store ->
             store.subscribed(scope)

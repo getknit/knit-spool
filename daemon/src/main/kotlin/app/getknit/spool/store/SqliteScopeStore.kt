@@ -362,6 +362,7 @@ class SqliteScopeStore private constructor(
             }
         }
 
+    @Synchronized
     override fun blob(
         scopeId: ByteArray,
         blobId: ByteArray,

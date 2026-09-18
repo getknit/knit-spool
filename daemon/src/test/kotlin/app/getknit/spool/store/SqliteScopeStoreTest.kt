@@ -7,8 +7,10 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.sql.DriverManager
+import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -66,6 +68,53 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
             assertEquals(ScopeDigest.fnv64(id), info.digest)
             assertEquals(40L, store.totalBytes())
         }
+    }
+
+    /**
+     * A schema-1 file — written before attachments existed — gains the `attach_bytes` column on
+     * open, once, and is stamped schema 2 so the next open does not try again. Built by taking a
+     * fresh file back to that shape rather than by checking in a fixture: the only difference
+     * between the two versions is the one column and the meta row.
+     */
+    @Test
+    fun aSchema1FileIsMigratedOnOpen() {
+        createStore().use { store -> store.subscribe(scope, bounds, now = 0L) }
+
+        DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { raw ->
+            raw.createStatement().use {
+                it.executeUpdate("ALTER TABLE scopes DROP COLUMN attach_bytes")
+                it.executeUpdate("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+            }
+        }
+
+        val data = byteArrayOf(1)
+        val cid = MessageDigest.getInstance("SHA-256").digest(data)
+        createStore().use { store ->
+            assertEquals(false, store.isUnknownScope(scope))
+            assertIs<AputResult.Stored>(store.attachmentPut(scope, ByteArray(32) { 9 }, 0, 1, cid, data, now = 1L))
+            assertEquals(ScopeStore.ATTACH_CHUNK_FLOOR.toLong(), store.totalBytes())
+        }
+
+        DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { raw ->
+            raw.createStatement().use { statement ->
+                val version =
+                    statement.executeQuery("SELECT value FROM meta WHERE key = 'schema_version'").use { rs ->
+                        rs.next()
+                        rs.getString(1)
+                    }
+                assertEquals("2", version)
+            }
+        }
+    }
+
+    /** A closed store refuses rather than answering from a dead connection. */
+    @Test
+    fun aClosedStoreRefusesInsteadOfAnsweringStale() {
+        val store = createStore()
+        store.subscribe(scope, bounds, now = 0L)
+        store.close()
+
+        assertFailsWith<SQLException> { store.scopeCount() }
     }
 
     @Test
