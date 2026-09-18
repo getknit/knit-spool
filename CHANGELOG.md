@@ -28,9 +28,14 @@ document:
   against the SQLite store; and non-destructive with PoW off, which exercises the runner's skip
   paths. Each run asserts the exact set of skipped checks and that nothing came back advisory, so a
   limit drifting out of a probe's reach fails the build instead of quietly turning a check into a
-  skip. The checks are now counted by the merged coverage report — line coverage moves from 63% to
-  95% — and the floors ratchet up with it. The `conformance-selftest` CI job is unchanged: it still
-  runs the packaged binaries, which is what proves the artefacts.
+  skip. The checks are now counted by the merged coverage report, and the floors ratchet up with
+  it. The `conformance-selftest` CI job is unchanged: it still runs the packaged binaries, which is
+  what proves the artefacts.
+- Tests for what the report showed had never run: `SqliteScopeStore`'s `pull`/`blob` and its
+  schema-1 migration, the attachment tombstone cap on both backends, every `aput` error code over
+  the wire, the boot refusal when a full store cannot hold the commons, the watermark's
+  commons-only warning, `/healthz` on a dead store, the scheduled sweep and status loops, and the
+  commons invite codec. Merged line coverage moves from 63% to 97%, branch from 59% to 76%.
 - `:conformance`'s runner is callable: `runSuite` and `SuiteOptions` are public, and `Report`
   takes its output streams. The CLI's behaviour and exit codes are unchanged.
 

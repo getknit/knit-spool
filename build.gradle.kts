@@ -52,10 +52,10 @@ allprojects {
 // the CLI entry points, not lines.
 //
 // The floors are ratchets, not aspirations: a few points under what the suite covers today (line
-// 95%, branch 72%), so an unrelated refactor does not fail the build but deleting tests does.
+// 97%, branch 76%), so an unrelated refactor does not fail the build but deleting tests does.
 // Raise them when coverage rises; do not lower them to make a red build green.
-val coverageFloorLine = 92
-val coverageFloorBranch = 68
+val coverageFloorLine = 94
+val coverageFloorBranch = 73
 
 val coverageExcludedClasses =
     listOf(
