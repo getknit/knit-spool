@@ -55,6 +55,7 @@ one conversation member.
 | **Config** | Environment variables only; invalid values refuse to start |
 | **Ops** | `GET /healthz`, `GET /source`, `GET /metrics` (Prometheus text) |
 | **Footprint** | Idles in ~128–256 MB on the cheapest VPS tier (`-Xmx256m` default) |
+| **Hosted** | [Knit Hosted](https://hosted.getknit.app) runs the same release for you — own hostname, token and dashboard |
 | **License** | AGPL-3.0-or-later |
 
 ## Contents
@@ -296,6 +297,14 @@ behind tap-to-reveal, as their own setting says.
 
 Picking a host first? [`HOSTING.md`](HOSTING.md) covers what a Spool needs from a box, which
 providers fit, and which container platforms are the wrong shape for a long-lived WebSocket.
+
+Would rather not run a box at all? [Knit Hosted](https://hosted.getknit.app) runs this same daemon
+for you on hardware in the EU, pinned to a public release: your own hostname under
+`spool.getknit.app` with its certificate renewed for you, and a token you can read, set or rotate
+from a dashboard without dropping a device. Plans are priced by how many devices can connect at
+once, paid a month at a time. The Spool is as blind there as it is on your box; what Knit Hosted
+keeps about you is an email address, a billing reference and an instance id — no scope ids, no
+connection logs, no client addresses. Knit works with either, or with several Spools at once.
 
 The daemon serves plain WebSocket; **TLS terminates at a reverse proxy**. Either one you already
 run ([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
@@ -619,9 +628,9 @@ default) rather than findings.
 
 ## 💛 Support
 
-Knit Spool is free and open source, with no ads, no tracking, and nothing to sell you — it's funded
-entirely by tips. If you run a Spool and it's been useful, you can leave a one-off tip on Ko-fi or set
-up a recurring one on Liberapay:
+Knit Spool is free and open source, with no ads, no tracking, and no paid edition — the daemon here
+is the same one [Knit Hosted](https://hosted.getknit.app) runs. If you run a Spool yourself and it's
+been useful, you can leave a one-off tip on Ko-fi or set up a recurring one on Liberapay:
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-leave%20a%20tip-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/zaventh)
 [![Support on Liberapay](https://img.shields.io/badge/Liberapay-give%20recurring-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/zaventh/)

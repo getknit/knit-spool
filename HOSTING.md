@@ -10,6 +10,13 @@ member who still has the frames re-pushes them somewhere else. Buy accordingly. 
 that stays up is usually the right one, and if you want redundancy the answer is a second Spool
 somewhere else, not a bigger box.
 
+If you'd rather not shop at all, [Knit Hosted](https://hosted.getknit.app) runs this same daemon
+for you: a public release, pinned by digest, on Hetzner in the EU, at its own hostname under
+`spool.getknit.app` with the certificate renewed for you and a token you rotate from a dashboard
+without dropping a device. Plans are priced by how many devices can connect at once, paid a month
+at a time. What it keeps about you is an email address, a billing reference and an instance id —
+the [README](README.md#-deploy) has the rest.
+
 ## Contents
 
 - [What a Spool needs from a host](#what-a-spool-needs-from-a-host)
