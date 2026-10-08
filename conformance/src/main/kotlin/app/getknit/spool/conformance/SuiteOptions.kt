@@ -15,4 +15,6 @@ class SuiteOptions(
     val destructive: Boolean,
     /** The commons secret, when the operator supplied one; null leaves those checks skipped. */
     val commonsSecret: ByteArray?,
+    /** The TURN shared secret (experimental), when supplied; null skips the HMAC check. */
+    val turnSecret: String? = null,
 )

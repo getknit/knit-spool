@@ -35,7 +35,7 @@ class ConformanceSelfTest {
 
     /** Nothing is skipped: every optional feature is on and every limit is inside the probes' reach. */
     @Test
-    fun everyCheckPassesWithTokenPowCommonsAndModeration() {
+    fun everyCheckPassesWithTokenPowCommonsModerationAndTurn() {
         val run =
             runSuiteAgainst(
                 testConfig(
@@ -45,9 +45,11 @@ class ConformanceSelfTest {
                     commons = testCommons(attach = true),
                     hardLimits = suiteLimits(),
                     ratePushes = RATE_PUSHES,
+                    turn = testTurn(),
                 ),
                 token = TOKEN,
                 commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
             )
         run.assertClean(expectedSkips = emptySet())
     }
@@ -131,6 +133,7 @@ class ConformanceSelfTest {
         store: ScopeStore = InMemoryScopeStore(config.hardLimits),
         token: String? = null,
         commonsSecret: ByteArray? = null,
+        turnSecret: String? = null,
         destructive: Boolean = true,
     ): Run {
         val tap = ByteArrayOutputStream()
@@ -149,6 +152,7 @@ class ConformanceSelfTest {
                     powLimit = 24,
                     destructive = destructive,
                     commonsSecret = commonsSecret,
+                    turnSecret = turnSecret,
                 )
             exitCode = runSuite(http, options, out = PrintStream(tap, true), err = PrintStream(summary, true))
         }
@@ -190,7 +194,7 @@ class ConformanceSelfTest {
                 maxAttachBytes = MAX_ATTACH_BYTES,
             )
 
-        /** What skips without a token, a commons or a moderation flag — the CI job's exact SKIP set. */
+        /** What skips without a token, a commons, a moderation flag or TURN — the CI job's exact SKIP set. */
         val BARE_SKIPS =
             setOf(
                 "auth-required",
@@ -198,6 +202,9 @@ class ConformanceSelfTest {
                 "commons-bounds-pinned",
                 "commons-fanout",
                 "moderation-advertisement",
+                "turn-requires-sub",
+                "turn-cred-shape",
+                "turn-hmac",
             )
     }
 }

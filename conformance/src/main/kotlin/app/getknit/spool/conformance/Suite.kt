@@ -37,6 +37,7 @@ suspend fun runSuite(
             powLimit = options.powLimit,
             hasToken = options.hasToken,
             commonsSecret = options.commonsSecret,
+            turnSecret = options.turnSecret,
         )
     val checks = allChecks()
     val report = Report(checks.size, out, err)
