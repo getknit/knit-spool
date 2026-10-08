@@ -1,0 +1,72 @@
+# TURN for Knit voice calls (experimental; proposed spec §7.6). An overlay on
+# docker-compose.tls.yml — it borrows Caddy's certificate for turns: — and always the LAST -f:
+#
+#   docker compose -f docker-compose.tls.yml -f docker-compose.turn.yml up -d
+#   docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-compose.turn.yml up -d
+#
+# The Spool hands clients short-lived credentials signed with SPOOL_TURN_SECRET; coturn checks
+# them with the same secret and relays the call. The Spool never carries media.
+#
+# Open on the host firewall: 3478/udp, 3478/tcp, 5349/tcp, and the relay range
+# TURN_MIN_PORT-TURN_MAX_PORT/udp (default 49160-49200). 443 stays Caddy's.
+#
+# What it costs: a relayed call is ~58 MB per hour through this box, and the TURN server sees both
+# callers' addresses and how long they talked — never what was said (media is DTLS-SRTP end to end).
+
+services:
+  spool:
+    environment:
+      SPOOL_TURN_SECRET: "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env (openssl rand -base64 48)}"
+      # Every transport a client may need: UDP first, TCP for UDP-hostile networks, TLS on 5349 for
+      # networks that only pass TLS. Override to drop one or to point at a TURN server elsewhere.
+      SPOOL_TURN_URLS: "${SPOOL_TURN_URLS:-turn:${SPOOL_DOMAIN}:3478?transport=udp,turn:${SPOOL_DOMAIN}:3478?transport=tcp,turns:${SPOOL_DOMAIN}:5349?transport=tcp}"
+
+  turn:
+    # Pinned by digest: the relay is a network-facing C service, and a tag can move under it.
+    image: "${TURN_IMAGE:-coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e}"
+    container_name: knit-turn
+    restart: unless-stopped
+    # The relay allocates a UDP port per call leg from the range; publishing a range through
+    # docker-proxy costs a process per port, and NAT in front of it would hide the client address
+    # the relay must see. Host networking avoids both.
+    network_mode: host
+    depends_on:
+      - caddy
+    # Root only to read Caddy's 0600 certificates; turnserver drops to nobody:nogroup itself. Every
+    # capability is dropped except what chowning, dropping and signalling need — plus
+    # NET_BIND_SERVICE, which nothing here uses but the image sets on /usr/bin/turnserver as a file
+    # capability, and the kernel refuses to exec a binary whose file capabilities the bounding set
+    # lacks ("turnserver: Operation not permitted").
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - KILL
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run/turn:mode=0750,size=1m
+    entrypoint: ["/bin/sh", "/knit/entrypoint.sh"]
+    environment:
+      SPOOL_TURN_SECRET: "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env (openssl rand -base64 48)}"
+      SPOOL_DOMAIN: "${SPOOL_DOMAIN:?set SPOOL_DOMAIN in deploy/.env}"
+      # Only behind NAT (a home box, some clouds): the public address, or public/private.
+      TURN_EXTERNAL_IP:
+      TURN_MIN_PORT:
+      TURN_MAX_PORT:
+      # How often to look for a renewed certificate, in seconds. Default 6 h.
+      TURN_CERT_POLL_S:
+    volumes:
+      - ./coturn/entrypoint.sh:/knit/entrypoint.sh:ro
+      - caddy-data:/caddy:ro
+    mem_limit: 96m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

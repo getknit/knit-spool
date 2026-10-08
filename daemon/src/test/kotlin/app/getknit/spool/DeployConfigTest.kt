@@ -98,6 +98,26 @@ class DeployConfigTest {
             }
         }.isSuccess
 
+    /**
+     * The TURN overlay (experimental) is two halves that must meet: the Spool signs credentials with
+     * `SPOOL_TURN_SECRET` and coturn verifies them with the same value, so the overlay has to hand it
+     * to both services. It also must not reach for 443, which Caddy holds on the same host, and the
+     * entrypoint it mounts has to be the one this repo ships.
+     */
+    @Test
+    fun theTurnOverlayWiresBothHalvesAndLeaves443ToCaddy() {
+        val overlay = repoRoot.resolve("deploy/docker-compose.turn.yml")
+        if (!overlay.exists()) fail("$overlay is missing")
+        val text = overlay.readText()
+        val secretLines = text.lines().count { it.trimStart().startsWith("SPOOL_TURN_SECRET:") }
+        assertTrue(secretLines == 2, "SPOOL_TURN_SECRET must reach both the spool and turn services, found $secretLines")
+        assertTrue(text.lines().any { it.trimStart().startsWith("SPOOL_TURN_URLS:") }, "the overlay never sets SPOOL_TURN_URLS")
+        val serviceLines = text.lines().filterNot { it.trimStart().startsWith("#") }
+        assertTrue(serviceLines.none { "443" in it }, "the turn overlay binds or names 443, which Caddy owns on this host")
+        assertTrue(text.contains("./coturn/entrypoint.sh:/knit/entrypoint.sh:ro"), "the overlay must mount the shipped entrypoint")
+        assertTrue(repoRoot.resolve("deploy/coturn/entrypoint.sh").exists(), "deploy/coturn/entrypoint.sh is missing")
+    }
+
     @Test
     fun everyVariableTheDaemonReadsIsReachableFromEnv() {
         val unreachable = KNOWN_VARS - declared().keys - exempt
