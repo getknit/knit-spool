@@ -38,6 +38,10 @@ object RecordType {
     // ever sent to a spool whose HELLO carried `turn`.
     const val TURNREQ = "turnreq"
     const val TURNCRED = "turncred"
+
+    // Entitlement tickets (experimental; knit-next docs/VOICE_CALLS.md §2.6). Only ever sent to a
+    // spool whose HELLO carried `ent`.
+    const val ENT = "ent"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -55,6 +59,12 @@ object ErrCode {
 
     /** An `aput` whose `cid` differs from the chunk already stored at that position (§6.5). */
     const val CONFLICT = "conflict"
+
+    /**
+     * An `ent` the spool will not accept, or a `turnreq` that needs a ticket the connection does not
+     * hold (experimental, VOICE_CALLS.md §2.6). `msg` carries one [Tickets.Reason] word.
+     */
+    const val TICKET = "ticket"
 }
 
 /** WebSocket close codes for failures before or outside the record layer (spec §7.1). */
@@ -160,6 +170,11 @@ class CommonsInfo(
  *
  * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, proposed spec
  * §7.6). Nullable for [moderation]'s reason: presence is the signal, and `false` is never sent.
+ *
+ * [ent] says the spool accepts entitlement tickets ([Ent]), and that a `turnreq` on this connection
+ * needs one. [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
+ * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
+ * (VOICE_CALLS.md §2.6), and both omitted when off: `false` and an empty list are never sent.
  */
 @Serializable
 class Hello(
@@ -171,6 +186,8 @@ class Hello(
     val commons: CommonsInfo? = null,
     val moderation: Boolean? = null,
     val turn: Boolean? = null,
+    val ent: Boolean? = null,
+    val stun: List<String>? = null,
 )
 
 @Serializable
@@ -287,6 +304,20 @@ class TurnCred(
     val user: String,
     val pass: String,
     val exp: Long,
+)
+
+/**
+ * Client→spool: present an entitlement ticket (experimental, VOICE_CALLS.md §2.6). [tk] is the CBOR
+ * [Ticket] exactly as signed, and [sig] the 64-byte Ed25519 signature over [Tickets.LABEL] ‖ [tk] —
+ * carried as bytes rather than re-encoded, so the spool verifies what the issuer signed. Answered by
+ * `ok` or `err ticket`; a later `ent` on the same connection replaces the claims.
+ */
+@Serializable
+class Ent(
+    val t: String,
+    val q: Long,
+    val tk: ByteArray,
+    val sig: ByteArray,
 )
 
 /** Client→spool: fetch up to [n] chunks from [from] (truncated at `maxAget`); [Achunk]s then a bare OK. */
