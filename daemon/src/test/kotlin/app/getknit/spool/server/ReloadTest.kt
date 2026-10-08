@@ -95,6 +95,19 @@ class ReloadTest {
         }
     }
 
+    /**
+     * TURN is boot-only: its secret has to change in lockstep with the TURN server's, and the
+     * per-connection and per-address budgets are built when a client arrives.
+     */
+    @Test
+    fun turnIsBootOnly() {
+        withServer(testConfig()) {
+            val ignored = spool.reload(testConfig(turn = testTurn()))
+            assertTrue(ignored.any { it.startsWith("turn=") }, ignored.toString())
+            connect { assertNull(helloHandshake().turn) }
+        }
+    }
+
     /** A reload that changes nothing reports nothing. */
     @Test
     fun anIdenticalReloadIsSilent() {

@@ -222,4 +222,67 @@ class ConfigTest {
         val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_REQUIRE_MODERATION" to "yes")) }
         assertTrue(e.message!!.contains("SPOOL_REQUIRE_MODERATION"), e.message!!)
     }
+
+    private val turnSecret = "0123456789abcdef0123456789abcdef"
+    private val turnUrls = "turn:spool.example:3478?transport=udp,turns:spool.example:5349?transport=tcp"
+
+    private fun withTurn(vararg extra: Pair<String, String>) =
+        config(mapOf("SPOOL_TURN_SECRET" to turnSecret, "SPOOL_TURN_URLS" to turnUrls) + extra.toMap())
+
+    /** Experimental TURN issuing is off unless a secret is set, exactly as before it existed. */
+    @Test
+    fun turnIsOffByDefault() {
+        assertNull(config(emptyMap()).turn)
+        assertNull(config(mapOf("SPOOL_TURN_SECRET" to "")).turn)
+    }
+
+    @Test
+    fun turnParsesWithItsDefaults() {
+        val turn = assertNotNull(withTurn().turn)
+        assertEquals(listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"), turn.urls)
+        assertEquals(43_200L, turn.ttlS)
+        assertEquals(4, turn.ratePer10Min)
+        val tuned = assertNotNull(withTurn("SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "10").turn)
+        assertEquals(3_600L, tuned.ttlS)
+        assertEquals(10, tuned.ratePer10Min)
+    }
+
+    /** URLs or tuning with no secret means an operator who believes credentials are being issued. */
+    @Test
+    fun turnSettingsWithoutASecretRefuseToStart() {
+        for (orphan in listOf("SPOOL_TURN_URLS" to turnUrls, "SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "4")) {
+            val e = assertFailsWith<IllegalArgumentException> { config(mapOf(orphan)) }
+            assertTrue(e.message!!.contains("SPOOL_TURN_SECRET"), e.message!!)
+        }
+    }
+
+    @Test
+    fun aTurnSecretNeedsUrls() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TURN_SECRET" to turnSecret)) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_URLS"), e.message!!)
+    }
+
+    /** The refusal names the variable and the floor, and never echoes the value it refused. */
+    @Test
+    fun aShortTurnSecretIsRefusedWithoutBeingEchoed() {
+        val short = "tooshort-secret"
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TURN_SECRET" to short, "SPOOL_TURN_URLS" to turnUrls)) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_SECRET"), e.message!!)
+        assertFalse(e.message!!.contains(short), e.message!!)
+    }
+
+    @Test
+    fun turnUrlsMustBeTurnUris() {
+        for (bad in listOf("stun:spool.example:3478", "https://spool.example", "turn:", "turn:a b")) {
+            assertFailsWith<IllegalArgumentException>(bad) { withTurn("SPOOL_TURN_URLS" to bad) }
+        }
+    }
+
+    @Test
+    fun turnTtlAndRateAreBounded() {
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "599") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "604801") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "0") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "61") }
+    }
 }

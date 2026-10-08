@@ -6,6 +6,9 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 private const val MS_PER_SECOND = 1000.0
+private const val IP_TURN_FACTOR = 4.0
+private const val TURN_WINDOW_S = 600.0
+private const val TURN_IP_BURST = 2.0
 
 /**
  * Token bucket for the spec §6.4 rate limits. `take()` returns 0 on success or the milliseconds
@@ -55,10 +58,15 @@ class StrikeWindow(
     }
 }
 
-/** Per-client-IP state: connection count and the new-scope-creation bucket. */
+/**
+ * Per-client-IP state: connection count, the new-scope-creation bucket and, on a spool that issues
+ * TURN credentials, their per-address budget — four times one connection's, so a household behind
+ * one address is not one caller.
+ */
 class IpState(
     rateNewScopesPerMin: Int,
     clock: () -> Long,
+    turnRatePer10Min: Int? = null,
 ) {
     val connections = AtomicInteger(0)
 
@@ -68,6 +76,11 @@ class IpState(
             burst = 4.0 * rateNewScopesPerMin,
             clock = clock,
         )
+
+    val turnBucket =
+        turnRatePer10Min?.let {
+            TokenBucket(ratePerSec = IP_TURN_FACTOR * it / TURN_WINDOW_S, burst = IP_TURN_FACTOR * TURN_IP_BURST, clock = clock)
+        }
 
     @Volatile
     var lastSeen = 0L

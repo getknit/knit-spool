@@ -60,6 +60,10 @@ internal val KNOWN_VARS =
         "SPOOL_COMMONS_MAX_BLOB",
         "SPOOL_COMMONS_ATTACH",
         "SPOOL_COMMONS_RATE_PUSHES",
+        "SPOOL_TURN_SECRET",
+        "SPOOL_TURN_URLS",
+        "SPOOL_TURN_TTL_S",
+        "SPOOL_TURN_RATE",
     )
 
 /**
@@ -68,6 +72,17 @@ internal val KNOWN_VARS =
  * for the record around them.
  */
 private const val ID_RECORD_BYTES = 34
+
+/** A coturn REST secret is an HMAC key; 32 characters is the floor `openssl rand -base64 24` clears. */
+private const val MIN_TURN_SECRET = 32
+
+/** Ten minutes up to a week: below that a call outlives its allocation, above it a leak is worth too much. */
+private const val MIN_TURN_TTL_S = 600L
+private const val MAX_TURN_TTL_S = 604_800L
+private const val MAX_TURN_RATE = 60
+
+/** One `turn:`/`turns:` URI (RFC 7065): no whitespace, and no comma, which separates the list. */
+private val TURN_URL = Regex("^turns?:[^\\s,]+$")
 
 /** The CBOR record around a payload — the fields beside the blob in a `push`, or the ids in a `list`. */
 private const val RECORD_ENVELOPE = 512
@@ -366,6 +381,41 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         requireModeration = boolVar(env, "SPOOL_REQUIRE_MODERATION", default = false),
         sourceUrl = sourceUrlFromEnv(env),
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
+        turn = turnFromEnv(env),
+    )
+}
+
+/**
+ * TURN credential issuing (experimental, proposed spec §7.6), or null when `SPOOL_TURN_SECRET` is
+ * unset — off by default, and a spool without it advertises nothing and answers `turnreq` with
+ * `err malformed`.
+ *
+ * The URLs and lifetime without a secret are refused rather than ignored: they mean an operator
+ * believes the spool is handing out credentials that it is not. Neither the secret nor any part of
+ * it is ever echoed, here or anywhere.
+ */
+internal fun turnFromEnv(env: (String) -> String?): SpoolServer.TurnConfig? {
+    val secret = env("SPOOL_TURN_SECRET")?.takeIf { it.isNotEmpty() }
+    val rawUrls = env("SPOOL_TURN_URLS")?.takeIf { it.isNotEmpty() }
+    if (secret == null) {
+        require(rawUrls == null && env("SPOOL_TURN_TTL_S") == null && env("SPOOL_TURN_RATE") == null) {
+            "SPOOL_TURN_URLS, SPOOL_TURN_TTL_S and SPOOL_TURN_RATE need SPOOL_TURN_SECRET; set it, or unset them"
+        }
+        return null
+    }
+    require(secret.length >= MIN_TURN_SECRET) {
+        "SPOOL_TURN_SECRET must be at least $MIN_TURN_SECRET characters (openssl rand -base64 48)"
+    }
+    requireNotNull(rawUrls) { "SPOOL_TURN_SECRET is set but SPOOL_TURN_URLS is not: clients need somewhere to use it" }
+    val urls = rawUrls.split(',').map(String::trim)
+    urls.forEach { url ->
+        require(TURN_URL.matches(url)) { "SPOOL_TURN_URLS entries must be turn: or turns: URIs, got \"$url\"" }
+    }
+    return SpoolServer.TurnConfig(
+        secret = secret,
+        urls = urls,
+        ttlS = longVar(env, "SPOOL_TURN_TTL_S", default = 43_200L, min = MIN_TURN_TTL_S, max = MAX_TURN_TTL_S),
+        ratePer10Min = intVar(env, "SPOOL_TURN_RATE", default = 4, min = 1, max = MAX_TURN_RATE),
     )
 }
 
@@ -473,10 +523,12 @@ private fun longVar(
     name: String,
     default: Long,
     min: Long,
+    max: Long = Long.MAX_VALUE,
 ): Long {
     val raw = env(name) ?: return default
     val value = requireNotNull(raw.toLongOrNull()) { "$name must be an integer, got \"$raw\"" }
     require(value >= min) { "$name must be >= $min, got $value" }
+    require(value <= max) { "$name must be <= $max, got $value" }
     return value
 }
 

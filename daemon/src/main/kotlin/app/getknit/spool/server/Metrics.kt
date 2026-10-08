@@ -58,6 +58,9 @@ class Metrics(
     val commonsPushesTotal = LongAdder()
     val commonsRateLimitedTotal = LongAdder()
 
+    /** TURN credentials issued (experimental). Refusals land in the `rate`/`not_subscribed` errs. */
+    val turnIssuedTotal = LongAdder()
+
     /**
      * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
      * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
@@ -86,6 +89,7 @@ class Metrics(
         maxConns: Int = 0,
         commonsSubscribers: Int? = null,
         storeFileBytes: Long? = null,
+        turn: Boolean = false,
     ): String =
         buildString {
             // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
@@ -126,6 +130,8 @@ class Metrics(
                 line("knit_spool_commons_pushes_total", "counter", commonsPushesTotal.sum())
                 line("knit_spool_commons_rate_limited_total", "counter", commonsRateLimitedTotal.sum())
             }
+            // Absent on a spool that issues no credentials, for the commons' reason.
+            if (turn) line("knit_spool_turn_issued_total", "counter", turnIssuedTotal.sum())
             append("# TYPE knit_spool_errs_total counter\n")
             errsTotal.entries.sortedBy { it.key }.forEach { (code, adder) ->
                 append("knit_spool_errs_total{code=\"")

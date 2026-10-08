@@ -28,6 +28,8 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.TurnCred
+import app.getknit.spool.protocol.TurnReq
 import app.getknit.spool.shortHex
 import app.getknit.spool.store.AputResult
 import app.getknit.spool.store.DigestInfo
@@ -71,9 +73,18 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+
+/** `SPOOL_TURN_RATE` counts issues per ten minutes; a [TokenBucket] wants them per second. */
+private const val TURN_RATE_WINDOW_S = 600.0
+
+/** A client may fetch a credential for a call and one more for an immediate redial. */
+private const val TURN_CONN_BURST = 2.0
+
+private const val MS_PER_S = 1000L
 
 /** Headroom over `maxRecord` for the WebSocket frame envelope before the transport kills it (1009). */
 private const val FRAME_SLACK = 1024L
@@ -223,6 +234,8 @@ class SpoolServer(
         val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
         val commons: CommonsConfig? = null,
+        /** TURN credential issuing (experimental, proposed spec §7.6), or null when off. */
+        val turn: TurnConfig? = null,
     ) {
         /**
          * Every resolved value on one line, `k=v`, for the boot log.
@@ -259,6 +272,10 @@ class SpoolServer(
                 "statusMs" to statusMs,
                 "trustProxy" to trustProxy,
                 "commons" to (commons?.let { shortHex(it.scopeId) } ?: "off"),
+                // Boot-only: the secret changes in lockstep with coturn's, and the per-connection
+                // and per-IP buckets are built from the rate when a client arrives.
+                "turn" to (turn?.let { "${it.urls.size}urls/${it.ttlS}s/${it.ratePer10Min}per10min" } ?: "off"),
+                "turnSecret" to secret(turn?.secret),
                 "source" to sourceUrl,
             )
 
@@ -295,6 +312,7 @@ class SpoolServer(
                 trustProxy = trustProxy,
                 sourceUrl = sourceUrl,
                 commons = commons,
+                turn = turn,
                 token = candidate.token,
                 tokenNext = candidate.tokenNext,
                 metricsToken = candidate.metricsToken,
@@ -313,6 +331,22 @@ class SpoolServer(
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
     }
+
+    /**
+     * Where and how this spool issues TURN credentials ([TurnCredentials]). The spool never relays
+     * media: [secret] is shared with a separate TURN server, which verifies what this hands out.
+     *
+     * A plain class rather than a data class, so no `toString` can put [secret] in a log line.
+     */
+    class TurnConfig(
+        val secret: String,
+        /** RFC 7065 `turn:`/`turns:` URIs, sent to clients verbatim. */
+        val urls: List<String>,
+        /** Credential lifetime. It has to outlast the longest call: coturn re-checks it on every Refresh. */
+        val ttlS: Long,
+        /** Issues per connection per ten minutes; the per-IP budget is four times this. */
+        val ratePer10Min: Int,
+    )
 
     /**
      * One operator-declared scope shared by everyone on the spool who holds the invite.
@@ -401,6 +435,9 @@ class SpoolServer(
     private val commonsPushBucket =
         config.commons?.let { TokenBucket(it.ratePushes.toDouble(), 4.0 * it.ratePushes, clock) }
 
+    /** The source of TURN username suffixes; see [TurnCredentials] for why they are random. */
+    private val turnRandom = SecureRandom()
+
     /** Latches the "over watermark, nothing left to shed" warning so it logs on entry, not per sweep. */
     private var watermarkStuck = false
 
@@ -460,6 +497,7 @@ class SpoolServer(
         val subscriptions = HashMap<String, ScopeBounds>()
         val recordBucket = TokenBucket(config.rateRecords.toDouble(), 4.0 * config.rateRecords, clock)
         val pushBucket = TokenBucket(config.ratePushes.toDouble(), 4.0 * config.ratePushes, clock)
+        val turnBucket = config.turn?.let { TokenBucket(it.ratePer10Min / TURN_RATE_WINDOW_S, TURN_CONN_BURST, clock) }
         val strikes = StrikeWindow(RATE_STRIKE_LIMIT, RATE_STRIKE_WINDOW_MS)
         val eventMisses = AtomicInteger(0)
     }
@@ -549,7 +587,14 @@ class SpoolServer(
                         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
                         val fileBytes = withStore { store.storeFileBytes() }
                         call.respondText(
-                            metrics.render(scopeCount, liveBytes, config.maxConns, commonsSubscribers(), fileBytes),
+                            metrics.render(
+                                scopeCount,
+                                liveBytes,
+                                config.maxConns,
+                                commonsSubscribers(),
+                                fileBytes,
+                                turn = config.turn != null,
+                            ),
                             ContentType.Text.Plain,
                         )
                     }
@@ -713,7 +758,7 @@ class SpoolServer(
         val ipState =
             checkNotNull(
                 ips.compute(ip) { _, existing ->
-                    (existing ?: IpState(config.rateNewScopesPerMin, clock)).also {
+                    (existing ?: IpState(config.rateNewScopesPerMin, clock, config.turn?.ratePer10Min)).also {
                         connections = it.connections.incrementAndGet()
                         it.lastSeen = now
                     }
@@ -829,6 +874,11 @@ class SpoolServer(
                     RecordType.APUT -> {
                         val aput = RecordCodec.decode<Aput>(bytes)
                         if (aput == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, aput.q) { handleAput(conn, aput) }
+                    }
+
+                    RecordType.TURNREQ -> {
+                        val req = RecordCodec.decode<TurnReq>(bytes)
+                        if (req == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, req.q) { handleTurnReq(conn, req) }
                     }
 
                     null -> {
@@ -1054,6 +1104,53 @@ class SpoolServer(
                 total = info.total,
                 bits = info.bits,
                 dead = info.dead,
+            ),
+        )
+    }
+
+    /**
+     * Issues one TURN credential (experimental, proposed spec §7.6).
+     *
+     * The request names no scope, and nothing here asks which: holding *some* subscription is the
+     * whole gate, so the spool never learns which conversation is about to call. A refusal for rate
+     * is not a strike — asking for a credential is not abuse of the scope plane, and a client that
+     * redials a dropped call should not be closed 4003 for it. Neither half of the credential is
+     * ever logged.
+     */
+    private suspend fun handleTurnReq(
+        conn: Conn,
+        req: TurnReq,
+    ) {
+        val turn = config.turn
+        // A spool without turn omits it from hello and a conforming client never asks (C-7.6-3),
+        // but the request's `q` should still get an answer rather than hang until timeout.
+        if (turn == null) {
+            sendErr(conn, ErrCode.MALFORMED, q = req.q)
+            return
+        }
+        if (conn.subscriptions.isEmpty()) {
+            sendErr(conn, ErrCode.NOT_SUBSCRIBED, q = req.q)
+            return
+        }
+        for (bucket in listOfNotNull(conn.turnBucket, conn.ipState.turnBucket)) {
+            val retryMs = bucket.take()
+            if (retryMs > 0) {
+                rateLimited(conn, q = req.q, scope = null, retryMs = retryMs, strike = false)
+                return
+            }
+        }
+        val expS = clock() / MS_PER_S + turn.ttlS
+        val user = TurnCredentials.user(expS, ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes))
+        metrics.turnIssuedTotal.increment()
+        out(
+            conn,
+            TurnCred(
+                t = RecordType.TURNCRED,
+                q = req.q,
+                urls = turn.urls,
+                user = user,
+                pass = TurnCredentials.pass(turn.secret, user),
+                exp = expS,
             ),
         )
     }
@@ -1523,6 +1620,9 @@ class SpoolServer(
             // Present only when on (§7.5, S-7.5-1): omitted is the off state, and `false` is never
             // sent. A request to clients, not something this spool can check.
             moderation = true.takeIf { config.requireModeration },
+            // Present only when this spool issues credentials, for moderation's reason: presence is
+            // the signal, and a client that sees it absent never sends `turnreq` (C-7.6-3).
+            turn = true.takeIf { config.turn != null },
             // Bounds and a label — never `scopeId`. The id comes from the invite, and a spool that
             // published it would turn a room only invite holders can find into one that anybody
             // who connects can subscribe to and flood.

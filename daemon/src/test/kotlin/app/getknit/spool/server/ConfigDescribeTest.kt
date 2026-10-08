@@ -26,6 +26,17 @@ class ConfigDescribeTest {
         assertEquals("false", fields["trustProxy"])
         assertEquals("off", fields["commons"])
         assertEquals("false", fields["moderation"])
+        assertEquals("off", fields["turn"])
+        assertEquals("unset", fields["turnSecret"])
+    }
+
+    /** The TURN secret is an HMAC key a credential holder could otherwise mint from forever. */
+    @Test
+    fun theTurnSecretIsReportedAsPresenceOnly() {
+        val line = testConfig(turn = testTurn(ttlS = 3_600L, ratePer10Min = 4)).describe()
+        assertFalse(line.contains(TEST_TURN_SECRET), line)
+        assertEquals("set", fields(line)["turnSecret"])
+        assertEquals("2urls/3600s/4per10min", fields(line)["turn"])
     }
 
     /** SECURITY.md makes a token in this daemon's log a reportable vulnerability. */

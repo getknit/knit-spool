@@ -13,6 +13,15 @@ class MetricsTest {
         assertTrue(rendered.contains("""knit_spool_build_info{version="1.2.3",commit="cd08e5f"} 1"""), rendered)
     }
 
+    /** Absent on a spool that issues no TURN credentials, rather than a flat zero. */
+    @Test
+    fun turnIssuedIsEmittedOnlyWhenTurnIsOn() {
+        val metrics = Metrics()
+        metrics.turnIssuedTotal.increment()
+        assertTrue(metrics.render(scopesCurrent = 0, liveBytes = 0L, turn = true).contains("knit_spool_turn_issued_total 1\n"))
+        assertTrue(!metrics.render(scopesCurrent = 0, liveBytes = 0L).contains("turn"))
+    }
+
     /**
      * A stray quote in a label value corrupts not just its own line but the scrape's parse from that
      * point on, and the stamp is whatever `-PspoolVersion` was handed.
