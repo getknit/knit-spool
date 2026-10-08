@@ -28,6 +28,7 @@ the [README](README.md#-deploy) has the rest.
 - [Home and self-hosted](#home-and-self-hosted)
 - [Architecture](#architecture)
 - [What a commons costs](#what-a-commons-costs)
+- [What TURN costs](#what-turn-costs)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
@@ -40,7 +41,7 @@ the [README](README.md#-deploy) has the rest.
 | CPU | 1 shared vCPU | The store runs on one thread and sustains order-1000 pushes/s on a $5 tier. TLS and PoW verification are the only other work. CPU won't be your constraint. |
 | Disk | 10–25 GB | Payload is bounded by `SPOOL_MAX_BYTES` (256 MB default) and the image is ~150 MB. The rest is logs, so cap them. |
 | Transfer | 1 TB/month, minimum | The one to shop on. See below. |
-| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. |
+| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp+tcp, 5349/tcp and the relay range (49160–49200/udp). |
 | Uptime | Whatever the tier gives you | Clients treat a missing Spool as a missing Spool. Don't buy an SLA for this. |
 
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
@@ -233,6 +234,22 @@ and the fan-out itself is non-blocking sends on the pushing connection's corouti
 not a stall. A member who never drains is disconnected as a slow consumer rather than being allowed
 to back everyone else up.
 
+## What TURN costs
+
+The experimental TURN overlay (`docker-compose.turn.yml`, see the README) relays the voice calls
+that cannot connect peer to peer, which is the minority but not a rare one: carrier-grade NAT on
+mobile networks pushes it to somewhere around 10–20%.
+
+Bandwidth is the cost. A relayed call is Opus at roughly 32 kbps each way, which crosses the box
+twice — in from one caller, out to the other — so about 128 kbps, or **~58 MB per call-hour**. A
+1 TB monthly allowance covers on the order of 10,000 relayed call-hours, and coturn's `max-bps`
+(256 kB/s per session in the shipped config) bounds what any one credential can pull through.
+
+Memory is small: coturn idles in tens of megabytes, and the overlay caps it at 96 MB, which still
+fits the 1 GB budget beside the tiny overlay's Spool and Caddy. A relayed call costs one UDP port per
+leg from the 41-port default range; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the firewall rule)
+before it becomes the ceiling.
+
 ## Upgrading without a reconnect storm
 
 Stopping a Spool closes every session at once, and a few thousand clients then redial together.
@@ -259,6 +276,8 @@ With too little free space it logs a warning, boots unchanged, and tries again o
 - [ ] Included transfer you're comfortable with, and you've read the overage rate.
 - [ ] A public IPv4 with inbound :80 and :443, and a DNS name already pointing at it. ACME issuance
       fails otherwise.
+- [ ] Running TURN: 3478/udp, 3478/tcp, 5349/tcp and 49160–49200/udp open too — on the host firewall
+      *and* any provider-side one.
 - [ ] A persistent volume for `SPOOL_DATA_DIR`, or a deliberate choice to run in memory.
 - [ ] A region with a sane path to the people who'll use it, and ideally not the region their other
       Spool is in.

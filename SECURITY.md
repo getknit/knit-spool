@@ -136,3 +136,11 @@ Not a substitute for the above, but the short list operators ask for: terminate 
 `--token-file` rather than argv, keep `/metrics` off the public internet, leave
 `SPOOL_TRUST_PROXY=false` unless a proxy you control appends `X-Forwarded-For`, and cap the process
 (the shipped compose overlays do). See the README's *Deploy* and *Operating* sections.
+
+Running the experimental TURN overlay adds two: keep `SPOOL_TURN_SECRET` out of anything but
+`deploy/.env` (mode 0600) — anyone holding it can mint relay credentials — and keep the
+`denied-peer-ip` list in `deploy/coturn/entrypoint.sh` intact. Without it a credential holder can
+relay to the host's loopback, its private network or a cloud metadata endpoint. A credential, or
+the secret, in this daemon's log is a reportable vulnerability like a token is. coturn itself logs
+the *username* of a failed authentication, which carries the expiry and a random suffix and links to
+no conversation.

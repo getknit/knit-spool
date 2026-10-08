@@ -67,6 +67,7 @@ one conversation member.
 - [Configuration](#-configuration)
 - [The commons](#-the-commons)
 - [Send-side moderation](#-send-side-moderation)
+- [TURN (experimental)](#-turn-experimental)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -219,6 +220,10 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_COMMONS_MAX_BLOB` | `SPOOL_MAX_BLOB` | commons per-blob cap |
 | `SPOOL_COMMONS_ATTACH` | `false` | allow attachments in the commons |
 | `SPOOL_COMMONS_RATE_PUSHES` | `20` | **Spool-wide** pushes/s into the commons (burst 4×) |
+| `SPOOL_TURN_SECRET` | unset | *experimental:* the TURN shared secret, ≥ 32 characters; **unset = no TURN**, and the three below must stay unset |
+| `SPOOL_TURN_URLS` | — | comma-separated `turn:`/`turns:` URIs clients are told to dial; required with the secret |
+| `SPOOL_TURN_TTL_S` | `43200` | credential lifetime in seconds (600–604800); must outlast the longest call |
+| `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
 
 The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
@@ -292,6 +297,49 @@ behind tap-to-reveal, as their own setting says.
 | **Strictest wins** | A sender seals a frame once and pushes identical bytes to every Spool it knows. If *any* Spool of a conversation asks for moderation, a conforming client withholds flagged content from all of them rather than fork the conversation by operator. |
 | **Nothing on the data path** | No record, error code, close code or bound is added. An off Spool's `hello` is byte-identical to before this existed. |
 | **Reloadable** | Announced in `hello`, so like `SPOOL_POW_BITS` a `SIGHUP` moves it for the next connection; a live client keeps the hello it negotiated. |
+
+## 📞 TURN (experimental)
+
+> [!WARNING]
+> Experimental, on the `exp/turn` branch only. The records below are a draft (knit-next
+> `docs/VOICE_CALLS.md` §2, proposed spec §7.6), not yet in the spec, and may change without notice.
+
+Knit voice calls run peer to peer over WebRTC, and the 10–20% that cannot connect directly need a
+relay. Set `SPOOL_TURN_SECRET` and the Spool hands short-lived relay credentials to clients that ask;
+`docker-compose.turn.yml` runs [coturn](https://github.com/coturn/coturn) beside it, checking them
+with the same secret. **The Spool never carries media**, and call setup is ordinary sealed traffic
+in the conversation's own scope, so nothing else on the data path changes.
+
+```
+{ t: "hello", …, turn: true }
+{ t: "turnreq", q: 7 }                                                         // client → Spool
+{ t: "turncred", q: 7, urls: [...], user: "<exp>:<random>", pass: "…", exp: … } // Spool → client
+```
+
+| | |
+|---|---|
+| **Names no conversation** | `turnreq` carries no scope, and the Spool does not ask. Holding *some* subscription is the whole gate, so the Spool never learns which conversation is calling. |
+| **coturn's own scheme** | `pass = base64(HMAC-SHA1(secret, user))` — coturn's `use-auth-secret`. The suffix after `<exp>:` is random per issue, so a credential links to nothing. |
+| **Budgeted, never struck** | `SPOOL_TURN_RATE` per connection, four times that per address; past it, `err rate` with `retryMs`. A refusal never counts toward the 4003 abuse close: redialling a dropped call is not abuse. |
+| **Boot-only** | The secret has to change in lockstep with coturn's, so a `SIGHUP` reports it as needing a restart. |
+| **Never logged** | Neither half of a credential, nor the secret, reaches this daemon's log. |
+
+Run it as the last overlay:
+
+```sh
+docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-compose.turn.yml up -d
+```
+
+It needs **3478/udp, 3478/tcp, 5349/tcp** and the relay range **49160–49200/udp** open on the host;
+443 stays Caddy's. `turns:` on 5349 uses the certificate Caddy already holds for `SPOOL_DOMAIN`, and
+a renewal is picked up in place (coturn's `SIGUSR2` reload) without dropping a call. coturn refuses to
+relay to loopback, private, link-local and CGNAT addresses — without that list a credential holder
+could reach the box's own network through it.
+
+What a relay sees that a Spool does not: **both callers' IP addresses, and how long they talked**.
+Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed
+call setup. Run by the same operator as the Spool, the two logs can be joined. See
+[`HOSTING.md`](HOSTING.md#what-turn-costs) for the bandwidth.
 
 ## 🌐 Deploy
 

@@ -20,6 +20,21 @@ document:
 
 ## Unreleased
 
+### Added
+
+- **Experimental: TURN credentials for Knit voice calls** (the `exp/turn` branch; draft in knit-next
+  `docs/VOICE_CALLS.md` §2, proposed spec §7.6 — **not in the spec yet, and the wire may change**).
+  With `SPOOL_TURN_SECRET` set, `hello` carries `turn: true`, and a connection holding any
+  subscription can send `turnreq` for a `turncred`: coturn REST credentials (`<exp>:<random>`,
+  `HMAC-SHA1`) for the URLs in `SPOOL_TURN_URLS`. The request names no scope. Budgeted per connection
+  and per address by `SPOOL_TURN_RATE`, refused with `err rate` but never struck; off, `turnreq`
+  draws `err malformed` and `hello` is byte-identical to before. Boot-only, never logged, and counted
+  in `knit_spool_turn_issued_total`. New conformance checks `turn-requires-sub`, `turn-cred-shape`
+  and `turn-hmac` (the last with `--turn-secret-file`). `deploy/docker-compose.turn.yml` runs a
+  digest-pinned coturn 4.18.0 beside the Spool on host networking: `turns:` on 5349 from Caddy's
+  certificate with in-place renewal, every capability dropped but five, a read-only root, and a
+  `denied-peer-ip` list covering loopback, private, link-local and CGNAT ranges.
+
 ### Changed
 
 - **The conformance suite runs in-process on every `check`.** `:daemon`'s `ConformanceSelfTest`
