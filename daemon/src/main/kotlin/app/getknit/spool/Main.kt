@@ -140,8 +140,16 @@ fun main(args: Array<String>) {
             exitProcess(checkConfig(System.getenv()))
         }
 
+        "ticket-keygen" -> {
+            ticketKeygen(::println)
+        }
+
+        "ticket-mint" -> {
+            exitProcess(ticketMint(args.drop(1), System.currentTimeMillis(), ::println, System.err::println))
+        }
+
         else -> {
-            System.err.println("unknown command \"$command\"; usage: knit-spool [commons-invite|check]")
+            System.err.println("unknown command \"$command\"; usage: knit-spool [commons-invite|check|ticket-keygen|ticket-mint]")
             exitProcess(2)
         }
     }
