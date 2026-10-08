@@ -33,6 +33,11 @@ object RecordType {
     const val AGET = "aget"
     const val ACHUNK = "achunk"
     const val APUT = "aput"
+
+    // TURN provisioning (experimental; knit-next docs/VOICE_CALLS.md §2, proposed spec §7.6). Only
+    // ever sent to a spool whose HELLO carried `turn`.
+    const val TURNREQ = "turnreq"
+    const val TURNCRED = "turncred"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -152,6 +157,9 @@ class CommonsInfo(
  * defaulted to `false` so a decoder can tell the field apart from its absence — the spec says a
  * spool that does not require it omits the field, and `false` on the wire is a conformance finding.
  * It is a request, not a check: the spool holds ciphertext and cannot verify compliance.
+ *
+ * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, proposed spec
+ * §7.6). Nullable for [moderation]'s reason: presence is the signal, and `false` is never sent.
  */
 @Serializable
 class Hello(
@@ -162,6 +170,7 @@ class Hello(
     val powBits: Int? = null,
     val commons: CommonsInfo? = null,
     val moderation: Boolean? = null,
+    val turn: Boolean? = null,
 )
 
 @Serializable
@@ -253,6 +262,31 @@ class Ahas(
     val total: Int,
     val bits: ByteArray,
     val dead: Boolean = false,
+)
+
+/**
+ * Client→spool: ask for one TURN credential (experimental, proposed spec §7.6). Names no scope on
+ * purpose — the spool must not learn which conversation is calling. Answered by [TurnCred] or `err`.
+ */
+@Serializable
+class TurnReq(
+    val t: String,
+    val q: Long,
+)
+
+/**
+ * Spool→client: a coturn REST credential. [user] is `"<exp>:<random>"`, [pass] is
+ * `base64(HMAC-SHA1(secret, user))`, [exp] is Unix **seconds**, and [urls] are RFC 7065
+ * `turn:`/`turns:` URIs. Terminal, and echoes [q] like [Ahas].
+ */
+@Serializable
+class TurnCred(
+    val t: String,
+    val q: Long,
+    val urls: List<String>,
+    val user: String,
+    val pass: String,
+    val exp: Long,
 )
 
 /** Client→spool: fetch up to [n] chunks from [from] (truncated at `maxAget`); [Achunk]s then a bare OK. */
