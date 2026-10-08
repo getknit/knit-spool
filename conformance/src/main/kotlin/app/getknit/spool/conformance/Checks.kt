@@ -12,6 +12,7 @@ import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -30,6 +31,8 @@ import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.protocol.TurnCred
 import app.getknit.spool.protocol.TurnReq
 import io.ktor.websocket.Frame
@@ -70,6 +73,16 @@ private const val MS_PER_S = 1_000L
 /** The longest credential lifetime this suite accepts as sane: a week. */
 private const val MAX_TURN_TTL_S = 604_800L
 
+/** A `stun:`/`stuns:` URI, and no `@`: a STUN list carries no credential (S-7.6-13). */
+private val STUN_URI = Regex("^stuns?:[^\\s,@]+$")
+
+/** Tickets this suite mints start a minute ago and last a day: well inside any honest skew and window. */
+private const val TICKET_BACKDATE_S = 60L
+private const val TICKET_LIFETIME_S = 86_400L
+
+/** An audience no spool is named: `.invalid` is reserved for exactly this (RFC 2606). */
+private const val FOREIGN_AUDIENCE = "conformance.invalid"
+
 /** Upper bound on pushes blasted by the rate-limit probe. */
 private const val RATE_BLAST_MAX = 1_000
 
@@ -105,6 +118,10 @@ class Ctx(
     val commonsSecret: ByteArray? = null,
     /** The TURN secret from `--turn-secret-file`, or null — `turn-hmac` skips then. */
     val turnSecret: String? = null,
+    /** The ticket signing key from `--ticket-key-file`, or null — the checks that need an accepted ticket skip. */
+    val ticketSigningKey: ByteArray? = null,
+    /** The audience from `--ticket-audience`; set exactly when [ticketSigningKey] is. */
+    val ticketAudience: String? = null,
 ) {
     /** Mined stamps by scope hex — a stamp is reusable across connections (the spool caches too). */
     private val stamps = HashMap<String, PowStamp>()
@@ -119,6 +136,30 @@ class Ctx(
     fun randomBlob(size: Int = 48): Pair<ByteArray, ByteArray> = blob(Random.nextBytes(size))
 
     fun limits(): Limits = serverHello.limits ?: throw CheckFailure("expected limits in the server hello, got none")
+
+    /**
+     * An `ent` the spool should accept: this run's key and audience, a window around now, a fresh
+     * pseudonym. Each claim can be bent for the checks that want a refusal. [SkipCheck] without a key.
+     */
+    fun ent(
+        q: Long,
+        signingKey: ByteArray = ticketSigningKey ?: throw SkipCheck("no --ticket-key-file; no ticket this spool accepts can be made"),
+        aud: String = ticketAudience ?: FOREIGN_AUDIENCE,
+        nbfS: Long = System.currentTimeMillis() / MS_PER_S - TICKET_BACKDATE_S,
+        expS: Long = nbfS + TICKET_LIFETIME_S,
+    ): Ent {
+        val ticket =
+            Ticket.forKey(
+                signingKey,
+                aud = aud,
+                nbf = nbfS,
+                exp = expS,
+                ps = Random.nextBytes(Tickets.PS_BYTES),
+                fl = Tickets.FL_TURN,
+            )
+        val (tk, sig) = Tickets.issue(signingKey, ticket)
+        return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
+    }
 
     /**
      * A stamp for [scope] at the advertised difficulty: null when PoW is off, [SkipCheck] when the
@@ -198,6 +239,14 @@ fun allChecks(): List<Check> =
         turnRequiresSub(),
         turnCredShape(),
         turnHmac(),
+        // Experimental (VOICE_CALLS.md §2.6): entitlement tickets and the STUN list.
+        entAdvertised(),
+        entForeignKey(),
+        entRequired(),
+        entAccepts(),
+        entExpired(),
+        entAudience(),
+        stunShape(),
         rateLimit(),
         quotaScopes(),
     )
@@ -245,9 +294,19 @@ private fun Ctx.requireTurn() {
     ensure(serverHello.turn == true) { "hello carries turn=false; presence is the signal and false is never sent" }
 }
 
-/** Subscribes a fresh scope, asks for one credential, and returns it — the shape every TURN check needs. */
+/**
+ * Earns one credential the way this spool asks (a ticket where `hello` carried `ent`, a fresh
+ * subscription otherwise), then asks for it — the shape every TURN check needs. Call once per
+ * connection: a second call presents or subscribes again.
+ */
 private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
-    ctx.subscribeFresh(this, ctx.randomScope())
+    if (ctx.serverHello.ent == true) {
+        val ent = ctx.ent(nextQ())
+        send(ent)
+        ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for the ticket" }
+    } else {
+        ctx.subscribeFresh(this, ctx.randomScope())
+    }
     val q = nextQ()
     send(TurnReq(t = RecordType.TURNREQ, q = q))
     val cred = expect<TurnCred>(RecordType.TURNCRED)
@@ -257,7 +316,8 @@ private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
 
 /**
  * Proposed §7.6 (S-7.6-4): a connection holding no subscription is refused `not_subscribed`, echoing
- * `q` and naming no scope — the request has none, and the refusal must not invent one.
+ * `q` and naming no scope — the request has none, and the refusal must not invent one. Where `hello`
+ * carried `ent`, the ticket gate replaces this one (S-7.6-16) and the refusal is `ticket`.
  */
 private fun turnRequiresSub(): Check =
     Check(name = "turn-requires-sub") { ctx ->
@@ -266,7 +326,7 @@ private fun turnRequiresSub(): Check =
             hello()
             val q = nextQ()
             send(TurnReq(t = RecordType.TURNREQ, q = q))
-            val err = expectErr(ErrCode.NOT_SUBSCRIBED)
+            val err = expectErr(if (ctx.serverHello.ent == true) ErrCode.TICKET else ErrCode.NOT_SUBSCRIBED)
             ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
             ensure(err.scope == null) { "a turnreq names no scope, but the refusal carried one" }
         }
@@ -295,7 +355,14 @@ private fun turnCredShape(): Check =
             val q = nextQ()
             send(TurnReq(t = RecordType.TURNREQ, q = q))
             val second = expect<TurnCred>(RecordType.TURNCRED)
-            ensure(second.user != first.user) { "two issues shared a user; the suffix must be fresh per issue (S-7.6-7)" }
+            val suffix = first.user.substringAfter(':')
+            if (ctx.serverHello.ent == true) {
+                // S-7.6-17: one ticket, one pseudonym, one suffix — what lets the TURN server's
+                // per-user quota count the holder rather than the credential.
+                ensure(second.user.substringAfter(':') == suffix) { "two issues under one ticket must share a suffix (S-7.6-17)" }
+            } else {
+                ensure(second.user != first.user) { "two issues shared a user; the suffix must be fresh per issue (S-7.6-7)" }
+            }
         }
     }
 
@@ -311,6 +378,91 @@ private fun turnHmac(): Check =
             mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA1"))
             val expected = Base64.getEncoder().encodeToString(mac.doFinal(cred.user.toByteArray(Charsets.UTF_8)))
             ensure(cred.pass == expected) { "pass does not verify as base64(HMAC-SHA1(secret, user)) under the given secret" }
+        }
+    }
+
+/** Skips every ticket check on a spool whose `hello` carried no `ent` (S-7.6-13, experimental). */
+private fun Ctx.requireEnt() {
+    if (serverHello.ent == null) throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+    ensure(serverHello.ent == true) { "hello carries ent=false; presence is the signal and false is never sent" }
+}
+
+/** S-7.6-13: `ent` is present and true, never `false`. */
+private fun entAdvertised(): Check = Check(name = "ent-advertised") { ctx -> ctx.requireEnt() }
+
+/**
+ * S-7.6-14: a ticket signed by a key the spool does not hold is refused `ticket`, echoing `q`. Needs
+ * no secret — any spool that advertises `ent` must refuse a stranger's ticket.
+ */
+private fun entForeignKey(): Check =
+    Check(name = "ent-foreign-key") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val ent = ctx.ent(nextQ(), signingKey = Tickets.generateSigningKey())
+            send(ent)
+            ensure(expectErr(ErrCode.TICKET).q == ent.q) { "expected the ticket refusal to echo q=${ent.q}" }
+        }
+    }
+
+/** S-7.6-16: on an `ent` spool, a subscription does not substitute for a ticket. */
+private fun entRequired(): Check =
+    Check(name = "ent-required") { ctx ->
+        ctx.requireEnt()
+        ctx.requireTurn()
+        ctx.client.connect {
+            hello()
+            ctx.subscribeFresh(this, ctx.randomScope())
+            val q = nextQ()
+            send(TurnReq(t = RecordType.TURNREQ, q = q))
+            ensure(expectErr(ErrCode.TICKET).q == q) { "expected the ticket refusal to echo q=$q" }
+        }
+    }
+
+/** S-7.6-14/15: a ticket under the operator's key, naming this spool, inside its window, is accepted. */
+private fun entAccepts(): Check =
+    Check(name = "ent-accepts") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val ent = ctx.ent(nextQ())
+            send(ent)
+            ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q}" }
+        }
+    }
+
+/** S-7.6-14: a ticket whose window ended well past the skew allowance is refused. */
+private fun entExpired(): Check =
+    Check(name = "ent-expired") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val nbf = System.currentTimeMillis() / MS_PER_S - 2 * TICKET_LIFETIME_S
+            send(ctx.ent(nextQ(), nbfS = nbf, expS = nbf + TICKET_LIFETIME_S))
+            expectErr(ErrCode.TICKET)
+        }
+    }
+
+/** S-7.6-14: a good ticket for some other spool is refused here. */
+private fun entAudience(): Check =
+    Check(name = "ent-audience") { ctx ->
+        ctx.requireEnt()
+        // Without the key there is no valid signature to put on the wrong audience.
+        if (ctx.ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no ticket this spool accepts can be made")
+        ctx.client.connect {
+            hello()
+            send(ctx.ent(nextQ(), aud = FOREIGN_AUDIENCE))
+            expectErr(ErrCode.TICKET)
+        }
+    }
+
+/** S-7.6-13: a `stun` list is non-empty, and every entry a `stun:`/`stuns:` URI with nothing to sign in. */
+private fun stunShape(): Check =
+    Check(name = "stun-shape") { ctx ->
+        val stun = ctx.serverHello.stun ?: throw SkipCheck("spool advertises no stun (VOICE_CALLS.md §2.6)")
+        ensure(stun.isNotEmpty()) { "hello carries an empty stun list; omitted is the off state" }
+        stun.forEach { url ->
+            ensure(STUN_URI.matches(url)) { "expected a stun:/stuns: URI with no credential, got \"$url\"" }
         }
     }
 

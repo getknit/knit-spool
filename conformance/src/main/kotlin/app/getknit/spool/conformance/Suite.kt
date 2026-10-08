@@ -38,6 +38,8 @@ suspend fun runSuite(
             hasToken = options.hasToken,
             commonsSecret = options.commonsSecret,
             turnSecret = options.turnSecret,
+            ticketSigningKey = options.ticketSigningKey,
+            ticketAudience = options.ticketAudience,
         )
     val checks = allChecks()
     val report = Report(checks.size, out, err)
