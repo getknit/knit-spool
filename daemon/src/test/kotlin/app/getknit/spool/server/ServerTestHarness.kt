@@ -125,7 +125,7 @@ const val TEST_TURN_SECRET = "test-turn-secret-0123456789abcdefghij"
 
 fun testTurn(
     urls: List<String> = listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"),
-    ttlS: Long = 43_200L,
+    ttlS: Long = 300L,
     ratePer10Min: Int = 60,
 ): SpoolServer.TurnConfig = SpoolServer.TurnConfig(secret = TEST_TURN_SECRET, urls = urls, ttlS = ttlS, ratePer10Min = ratePer10Min)
 

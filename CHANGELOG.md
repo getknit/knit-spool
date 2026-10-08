@@ -33,7 +33,9 @@ document:
   and `turn-hmac` (the last with `--turn-secret-file`). `deploy/docker-compose.turn.yml` runs a
   digest-pinned coturn 4.18.0 beside the Spool on host networking: `turns:` on 5349 from Caddy's
   certificate with in-place renewal, every capability dropped but five, a read-only root, and a
-  `denied-peer-ip` list covering loopback, private, link-local and CGNAT ranges.
+  `denied-peer-ip` list covering loopback, private, link-local and CGNAT ranges. Credentials live 5
+  minutes by default (coturn checks expiry only at allocation), and `TURN_*` caps bound the relay:
+  3 allocations per credential, 16 in all, 16000 B/s per session, 1 Mbps for the box.
 
 ### Changed
 

@@ -76,9 +76,14 @@ private const val ID_RECORD_BYTES = 34
 /** A coturn REST secret is an HMAC key; 32 characters is the floor `openssl rand -base64 24` clears. */
 private const val MIN_TURN_SECRET = 32
 
-/** Ten minutes up to a week: below that a call outlives its allocation, above it a leak is worth too much. */
-private const val MIN_TURN_TTL_S = 600L
-private const val MAX_TURN_TTL_S = 604_800L
+/**
+ * coturn checks a REST credential's expiry only when a session first authenticates — its Allocate —
+ * and refreshes reuse the cached key (4.18.0, `check_stun_auth`). So the lifetime is the window in
+ * which a credential can *start* relaying, not a cap on a call: a minute is enough for ICE to
+ * allocate, and an hour is already far more than any honest client needs.
+ */
+private const val MIN_TURN_TTL_S = 60L
+private const val MAX_TURN_TTL_S = 3_600L
 private const val MAX_TURN_RATE = 60
 
 /** One `turn:`/`turns:` URI (RFC 7065): no whitespace, and no comma, which separates the list. */
@@ -414,7 +419,7 @@ internal fun turnFromEnv(env: (String) -> String?): SpoolServer.TurnConfig? {
     return SpoolServer.TurnConfig(
         secret = secret,
         urls = urls,
-        ttlS = longVar(env, "SPOOL_TURN_TTL_S", default = 43_200L, min = MIN_TURN_TTL_S, max = MAX_TURN_TTL_S),
+        ttlS = longVar(env, "SPOOL_TURN_TTL_S", default = 300L, min = MIN_TURN_TTL_S, max = MAX_TURN_TTL_S),
         ratePer10Min = intVar(env, "SPOOL_TURN_RATE", default = 4, min = 1, max = MAX_TURN_RATE),
     )
 }

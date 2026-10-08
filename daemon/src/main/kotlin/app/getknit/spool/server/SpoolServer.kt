@@ -342,7 +342,10 @@ class SpoolServer(
         val secret: String,
         /** RFC 7065 `turn:`/`turns:` URIs, sent to clients verbatim. */
         val urls: List<String>,
-        /** Credential lifetime. It has to outlast the longest call: coturn re-checks it on every Refresh. */
+        /**
+         * How long a credential can start a relay. coturn checks expiry only at a session's first
+         * authentication, so a call outlives it; a short window is what keeps a leaked one cheap.
+         */
         val ttlS: Long,
         /** Issues per connection per ten minutes; the per-IP budget is four times this. */
         val ratePer10Min: Int,

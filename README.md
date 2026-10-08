@@ -222,7 +222,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_COMMONS_RATE_PUSHES` | `20` | **Spool-wide** pushes/s into the commons (burst 4×) |
 | `SPOOL_TURN_SECRET` | unset | *experimental:* the TURN shared secret, ≥ 32 characters; **unset = no TURN**, and the three below must stay unset |
 | `SPOOL_TURN_URLS` | — | comma-separated `turn:`/`turns:` URIs clients are told to dial; required with the secret |
-| `SPOOL_TURN_TTL_S` | `43200` | credential lifetime in seconds (600–604800); must outlast the longest call |
+| `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it |
 | `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
 
 The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
@@ -335,6 +335,13 @@ It needs **3478/udp, 3478/tcp, 5349/tcp** and the relay range **49160–49200/ud
 a renewal is picked up in place (coturn's `SIGUSR2` reload) without dropping a call. coturn refuses to
 relay to loopback, private, link-local and CGNAT addresses — without that list a credential holder
 could reach the box's own network through it.
+
+**On a public Spool, anyone can get a credential** — a subscription costs one proof-of-work stamp.
+So the bound on what strangers can push through the box is coturn's quotas, not the credential:
+`TURN_USER_QUOTA` (3 allocations per credential), `TURN_TOTAL_QUOTA` (16), `TURN_MAX_BPS` (16000
+bytes/s per session) and `TURN_BPS_CAPACITY` (125000 bytes/s, 1 Mbps, for the whole relay). A
+refreshed allocation lives on after its credential expires, so these caps are the real limit.
+Prefer TURN on a tokened Spool.
 
 What a relay sees that a Spool does not: **both callers' IP addresses, and how long they talked**.
 Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed

@@ -242,8 +242,12 @@ mobile networks pushes it to somewhere around 10–20%.
 
 Bandwidth is the cost. A relayed call is Opus at roughly 32 kbps each way, which crosses the box
 twice — in from one caller, out to the other — so about 128 kbps, or **~58 MB per call-hour**. A
-1 TB monthly allowance covers on the order of 10,000 relayed call-hours, and coturn's `max-bps`
-(256 kB/s per session in the shipped config) bounds what any one credential can pull through.
+1 TB monthly allowance covers on the order of 10,000 relayed call-hours.
+
+On a public Spool anyone can get a credential, so size the caps for the worst case, not the honest
+one. `TURN_BPS_CAPACITY` (bytes/s, default 125000 = 1 Mbps for the whole relay) bounds it: saturated
+around the clock that is ~325 GB/month, about a third of a 1 TB allowance. `TURN_MAX_BPS` (16000
+bytes/s per session) and the allocation quotas keep any one credential from taking all of it.
 
 Memory is small: coturn idles in tens of megabytes, and the overlay caps it at 96 MB, which still
 fits the 1 GB budget beside the tiny overlay's Spool and Caddy. A relayed call costs one UDP port per

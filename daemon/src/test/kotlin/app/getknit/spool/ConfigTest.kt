@@ -240,7 +240,7 @@ class ConfigTest {
     fun turnParsesWithItsDefaults() {
         val turn = assertNotNull(withTurn().turn)
         assertEquals(listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"), turn.urls)
-        assertEquals(43_200L, turn.ttlS)
+        assertEquals(300L, turn.ttlS)
         assertEquals(4, turn.ratePer10Min)
         val tuned = assertNotNull(withTurn("SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "10").turn)
         assertEquals(3_600L, tuned.ttlS)
@@ -280,8 +280,8 @@ class ConfigTest {
 
     @Test
     fun turnTtlAndRateAreBounded() {
-        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "599") }
-        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "604801") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "59") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "3601") }
         assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "0") }
         assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "61") }
     }

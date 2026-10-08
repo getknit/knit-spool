@@ -12,6 +12,11 @@
 #
 # What it costs: a relayed call is ~58 MB per hour through this box, and the TURN server sees both
 # callers' addresses and how long they talked — never what was said (media is DTLS-SRTP end to end).
+#
+# On a PUBLIC Spool anyone can get a credential (a subscription costs one PoW stamp), so the
+# TURN_* quotas below are the real bound on what strangers can push through this box. The default
+# 1 Mbps whole-box cap is ~325 GB/month if saturated around the clock; lower it, or run TURN only
+# on a tokened Spool.
 
 services:
   spool:
@@ -61,6 +66,12 @@ services:
       TURN_MAX_PORT:
       # How often to look for a renewed certificate, in seconds. Default 6 h.
       TURN_CERT_POLL_S:
+      # The abuse bounds; see entrypoint.sh. Bandwidth is BYTES per second. Defaults: 3
+      # allocations per credential, 16 in all, 16000 B/s per session, 125000 B/s (1 Mbps) in all.
+      TURN_USER_QUOTA:
+      TURN_TOTAL_QUOTA:
+      TURN_MAX_BPS:
+      TURN_BPS_CAPACITY:
     volumes:
       - ./coturn/entrypoint.sh:/knit/entrypoint.sh:ro
       - caddy-data:/caddy:ro

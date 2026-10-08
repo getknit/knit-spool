@@ -65,9 +65,14 @@ write_conf() {
     echo "fingerprint"
     echo "no-multicast-peers"
     echo "no-tcp-relay"
-    echo "user-quota=4"
-    echo "total-quota=200"
-    echo "max-bps=256000"
+    # The relay's real abuse bound. A credential is checked only when a session first allocates,
+    # and a refreshed allocation then lives on, so what a leaked or farmed credential is worth is
+    # capped here, not by its lifetime. max-bps and bps-capacity are BYTES per second: one Opus
+    # call leg is ~4 kB/s, so 16000 per session is 4x headroom, and bps-capacity caps the whole box.
+    echo "user-quota=${TURN_USER_QUOTA:-3}"
+    echo "total-quota=${TURN_TOTAL_QUOTA:-16}"
+    echo "max-bps=${TURN_MAX_BPS:-16000}"
+    echo "bps-capacity=${TURN_BPS_CAPACITY:-125000}"
     echo "stale-nonce=600"
     echo "proc-user=nobody"
     echo "proc-group=nogroup"
