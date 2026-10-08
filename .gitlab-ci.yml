@@ -85,6 +85,10 @@ default:
 # order is execution order, so bundling it with the reports risks the floors failing the build
 # before the XML that explains the failure is written. Here the reports always exist first, and the
 # second call is near-instant — everything it needs is already up to date.
+#
+# The project's badges (Settings > General > Badges) hang off this job: the coverage badge reads
+# the `coverage:` regex below, and links to the Kover HTML artifact by `?job=test`. Renaming the
+# job or moving the report breaks that link, not the pipeline.
 test:
   extends: .gradle
   stage: test

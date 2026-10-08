@@ -110,7 +110,8 @@ three modules. It is not part of `check` — ask for it:
 ```
 
 CI runs the same reports alongside the tests, gates on `koverVerify`, and publishes the merged
-percentage as the README's coverage badge.
+percentage as the README's coverage badge. The GitLab project's coverage badge reads the same
+number from the `test` job's log, and links to that job's HTML report.
 
 The floors in the root `build.gradle.kts` are a **ratchet**: they sit a few points under today's
 numbers so that ordinary refactoring passes and deleting tests does not. If a change raises
