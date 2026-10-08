@@ -2,6 +2,7 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.BuildInfo
+import app.getknit.spool.protocol.Tickets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.LongAdder
@@ -61,6 +62,23 @@ class Metrics(
     /** TURN credentials issued (experimental). Refusals land in the `rate`/`not_subscribed` errs. */
     val turnIssuedTotal = LongAdder()
 
+    /** Of [turnIssuedTotal], those issued under an entitlement ticket: the paying callers. */
+    val turnIssuedTicketedTotal = LongAdder()
+
+    /** `ent` records accepted (experimental). */
+    val ticketAcceptedTotal = LongAdder()
+
+    /**
+     * Ticket refusals by [Tickets.Reason] — on `ent` and on a `turnreq` that needed one. A closed
+     * set, every member rendered from zero, so a field test can tell an expired ticket from a
+     * clock-skewed or mis-addressed one without a series appearing mid-test.
+     */
+    private val ticketRefusedTotal = Tickets.Reason.entries.associateWith { LongAdder() }
+
+    fun ticketRefused(reason: Tickets.Reason) {
+        ticketRefusedTotal.getValue(reason).increment()
+    }
+
     /**
      * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
      * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
@@ -90,6 +108,7 @@ class Metrics(
         commonsSubscribers: Int? = null,
         storeFileBytes: Long? = null,
         turn: Boolean = false,
+        tickets: Boolean = false,
     ): String =
         buildString {
             // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
@@ -132,6 +151,19 @@ class Metrics(
             }
             // Absent on a spool that issues no credentials, for the commons' reason.
             if (turn) line("knit_spool_turn_issued_total", "counter", turnIssuedTotal.sum())
+            // Absent on a spool with no ticket key, for the commons' reason.
+            if (tickets) {
+                line("knit_spool_ticket_accepted_total", "counter", ticketAcceptedTotal.sum())
+                line("knit_spool_turn_issued_ticketed_total", "counter", turnIssuedTicketedTotal.sum())
+                append("# TYPE knit_spool_ticket_refused_total counter\n")
+                ticketRefusedTotal.forEach { (reason, adder) ->
+                    append("knit_spool_ticket_refused_total{reason=\"")
+                        .append(reason.word)
+                        .append("\"} ")
+                        .append(adder.sum())
+                        .append('\n')
+                }
+            }
             append("# TYPE knit_spool_errs_total counter\n")
             errsTotal.entries.sortedBy { it.key }.forEach { (code, adder) ->
                 append("knit_spool_errs_total{code=\"")

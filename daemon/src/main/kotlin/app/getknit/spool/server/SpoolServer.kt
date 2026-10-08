@@ -11,6 +11,7 @@ import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -28,6 +29,8 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.protocol.TurnCred
 import app.getknit.spool.protocol.TurnReq
 import app.getknit.spool.shortHex
@@ -73,6 +76,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.security.PublicKey
 import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -242,6 +246,8 @@ class SpoolServer(
          * can still tell a free phone where to learn its own public address.
          */
         val stunUrls: List<String> = emptyList(),
+        /** Entitlement-ticket checking (experimental, VOICE_CALLS.md §2.6), or null when off. */
+        val ticket: TicketConfig? = null,
     ) {
         /**
          * Every resolved value on one line, `k=v`, for the boot log.
@@ -305,6 +311,11 @@ class SpoolServer(
                 // A count: describe() splits on spaces and URIs are not secrets, but a list in one
                 // k=v field is noise. The values are in the env, and in every client's hello.
                 "stun" to stunUrls.size,
+                // The key is public, but reported like a secret: presence is what an operator
+                // checks, and a 43-character value would drown the line. Read live by every `ent`;
+                // whether a connection may present one at all is fixed by the hello it was sent.
+                "ticketKey" to if (ticket == null) "unset" else "set",
+                "ticketAud" to (ticket?.audience ?: "unset"),
             )
 
         /**
@@ -337,6 +348,7 @@ class SpoolServer(
                 rateNewScopesPerMin = candidate.rateNewScopesPerMin,
                 requireModeration = candidate.requireModeration,
                 stunUrls = candidate.stunUrls,
+                ticket = candidate.ticket,
             )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
@@ -359,6 +371,18 @@ class SpoolServer(
         val ttlS: Long,
         /** Issues per connection per ten minutes; the per-IP budget is four times this. */
         val ratePer10Min: Int,
+    )
+
+    /**
+     * What entitlement tickets ([Tickets]) are checked against (experimental, VOICE_CALLS.md
+     * §2.6): the issuer's public key and the audience a ticket must name to be good here. Only the
+     * public half — whoever issues tickets holds the signing key, and nothing in the daemon can mint.
+     */
+    class TicketConfig(
+        val key: PublicKey,
+        /** [Tickets.kid] of [key], computed once rather than on every `ent`. */
+        val kid: ByteArray,
+        val audience: String,
     )
 
     /**
@@ -503,6 +527,12 @@ class SpoolServer(
     private inner class Conn(
         val session: DefaultWebSocketServerSession,
         val ipState: IpState,
+        /**
+         * Whether the hello this connection was sent carried `ent`. Fixed for its life: a SIGHUP
+         * that adds or removes the ticket key must not start refusing `turnreq` on a connection
+         * that was never told a ticket exists, nor waive the subscription gate on one that was.
+         */
+        val entAdvertised: Boolean,
     ) {
         val out: SendChannel<Frame> get() = session.outgoing
 
@@ -513,6 +543,9 @@ class SpoolServer(
         val turnBucket = config.turn?.let { TokenBucket(it.ratePer10Min / TURN_RATE_WINDOW_S, TURN_CONN_BURST, clock) }
         val strikes = StrikeWindow(RATE_STRIKE_LIMIT, RATE_STRIKE_WINDOW_MS)
         val eventMisses = AtomicInteger(0)
+
+        /** The last ticket this connection presented that was accepted; replaced by the next one. */
+        var ticket: Ticket? = null
     }
 
     fun start(wait: Boolean = true): EmbeddedServer<*, *> {
@@ -607,6 +640,7 @@ class SpoolServer(
                                 commonsSubscribers(),
                                 fileBytes,
                                 turn = config.turn != null,
+                                tickets = config.ticket != null,
                             ),
                             ContentType.Text.Plain,
                         )
@@ -806,10 +840,11 @@ class SpoolServer(
         session: DefaultWebSocketServerSession,
         ipState: IpState,
     ) {
-        val conn = Conn(session, ipState)
+        val hello = serverHello()
+        val conn = Conn(session, ipState, entAdvertised = hello.ent == true)
         activeSessions.add(session)
         try {
-            conn.out.send(binary(RecordCodec.encode(serverHello())))
+            conn.out.send(binary(RecordCodec.encode(hello)))
             var helloed = false
             for (frame in session.incoming) {
                 // Only data frames reach `incoming` — Ktor answers pings and consumes pongs and the
@@ -822,15 +857,7 @@ class SpoolServer(
                 val binary = frame is Frame.Binary
                 metrics.recordsTotal.increment()
                 if (!helloed) {
-                    val hello = if (binary) RecordCodec.decode<Hello>(bytes) else null
-                    if (hello == null || RecordCodec.peekType(bytes) != RecordType.HELLO) {
-                        session.close(CloseReason(CloseCode.MALFORMED.toShort(), "hello first"))
-                        return
-                    }
-                    if (hello.v !in 1..RECORD_VERSION) {
-                        session.close(CloseReason(CloseCode.VERSION.toShort(), "no version overlap"))
-                        return
-                    }
+                    if (!acceptClientHello(session, bytes, binary)) return
                     helloed = true
                     continue
                 }
@@ -894,6 +921,11 @@ class SpoolServer(
                         if (req == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, req.q) { handleTurnReq(conn, req) }
                     }
 
+                    RecordType.ENT -> {
+                        val ent = RecordCodec.decode<Ent>(bytes)
+                        if (ent == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, ent.q) { handleEnt(conn, ent) }
+                    }
+
                     null -> {
                         sendErr(conn, ErrCode.MALFORMED)
                     }
@@ -920,6 +952,28 @@ class SpoolServer(
                 }
             }
         }
+    }
+
+    /**
+     * The client's half of the hello exchange (spec §7.1): its first record must be a binary
+     * `hello` with a version this spool speaks, or the connection is closed — 4000 or 4002 — and
+     * false says so. Out of [serveConnection]'s loop only to keep that dispatch table one screen.
+     */
+    private suspend fun acceptClientHello(
+        session: DefaultWebSocketServerSession,
+        bytes: ByteArray,
+        binary: Boolean,
+    ): Boolean {
+        val hello = if (binary) RecordCodec.decode<Hello>(bytes) else null
+        if (hello == null || RecordCodec.peekType(bytes) != RecordType.HELLO) {
+            session.close(CloseReason(CloseCode.MALFORMED.toShort(), "hello first"))
+            return false
+        }
+        if (hello.v !in 1..RECORD_VERSION) {
+            session.close(CloseReason(CloseCode.VERSION.toShort(), "no version overlap"))
+            return false
+        }
+        return true
     }
 
     /** Wraps a record handler so an unexpected failure surfaces as `err internal`, not a dead task. */
@@ -1129,6 +1183,11 @@ class SpoolServer(
      * is not a strike — asking for a credential is not abuse of the scope plane, and a client that
      * redials a dropped call should not be closed 4003 for it. Neither half of the credential is
      * ever logged.
+     *
+     * On a connection that was told about tickets (S-7.6-16), a live ticket granting TURN replaces
+     * the subscription gate, and the username's suffix comes from its pseudonym rather than from
+     * fresh randomness (S-7.6-17): every credential one holder fetches then shares a suffix, which
+     * is what makes coturn's `user-quota` count the holder instead of the credential.
      */
     private suspend fun handleTurnReq(
         conn: Conn,
@@ -1141,7 +1200,8 @@ class SpoolServer(
             sendErr(conn, ErrCode.MALFORMED, q = req.q)
             return
         }
-        if (conn.subscriptions.isEmpty()) {
+        val ticket = if (conn.entAdvertised) liveTurnTicket(conn, req.q) ?: return else null
+        if (ticket == null && conn.subscriptions.isEmpty()) {
             sendErr(conn, ErrCode.NOT_SUBSCRIBED, q = req.q)
             return
         }
@@ -1153,8 +1213,11 @@ class SpoolServer(
             }
         }
         val expS = clock() / MS_PER_S + turn.ttlS
-        val user = TurnCredentials.user(expS, ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes))
+        val suffix =
+            ticket?.let { TurnCredentials.pseudonymSuffix(it.ps) } ?: ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes)
+        val user = TurnCredentials.user(expS, suffix)
         metrics.turnIssuedTotal.increment()
+        if (ticket != null) metrics.turnIssuedTicketedTotal.increment()
         out(
             conn,
             TurnCred(
@@ -1166,6 +1229,71 @@ class SpoolServer(
                 exp = expS,
             ),
         )
+    }
+
+    /**
+     * Checks an entitlement ticket and binds it to the connection (experimental, VOICE_CALLS.md
+     * §2.6, S-7.6-14/15). The verifying key is read live, so a reload that rotates it judges the
+     * next `ent`. A refusal is never a strike — an expired ticket is ordinary life for a phone that
+     * slept through its refresh — and leaves any earlier accepted ticket in place, so a failed
+     * renewal cannot take away what the connection already holds. Neither the ticket nor its
+     * pseudonym is ever logged (S-7.6-18).
+     */
+    private suspend fun handleEnt(
+        conn: Conn,
+        ent: Ent,
+    ) {
+        // A connection that was never told about tickets has no business sending one: the same
+        // in-band `malformed` an unconfigured spool gives `turnreq`.
+        if (!conn.entAdvertised) {
+            sendErr(conn, ErrCode.MALFORMED, q = ent.q)
+            return
+        }
+        val tickets = config.ticket
+        val outcome =
+            if (tickets == null) {
+                // Advertised at hello, then the key was reloaded away: nothing left to check against.
+                Tickets.Outcome.Refused(Tickets.Reason.KEY)
+            } else {
+                Tickets.check(ent.tk, ent.sig, tickets.key, tickets.kid, tickets.audience, clock() / MS_PER_S)
+            }
+        when (outcome) {
+            is Tickets.Outcome.Accepted -> {
+                conn.ticket = outcome.ticket
+                metrics.ticketAcceptedTotal.increment()
+                out(conn, Ok(t = RecordType.OK, q = ent.q))
+            }
+
+            is Tickets.Outcome.Refused -> {
+                refuseTicket(conn, ent.q, outcome.reason)
+            }
+        }
+    }
+
+    /** The connection's ticket if it is live and grants TURN; otherwise refuses [q] and returns null. */
+    private suspend fun liveTurnTicket(
+        conn: Conn,
+        q: Long,
+    ): Ticket? {
+        val ticket = conn.ticket
+        val reason =
+            when {
+                ticket == null -> Tickets.Reason.MISSING
+                clock() / MS_PER_S - Tickets.SKEW_S > ticket.exp -> Tickets.Reason.EXPIRED
+                ticket.fl and Tickets.FL_TURN == 0L -> Tickets.Reason.FLAGS
+                else -> return ticket
+            }
+        refuseTicket(conn, q, reason)
+        return null
+    }
+
+    private suspend fun refuseTicket(
+        conn: Conn,
+        q: Long,
+        reason: Tickets.Reason,
+    ) {
+        metrics.ticketRefused(reason)
+        sendErr(conn, ErrCode.TICKET, q = q, msg = reason.word)
     }
 
     private suspend fun handleAget(
@@ -1636,6 +1764,9 @@ class SpoolServer(
             // Present only when this spool issues credentials, for moderation's reason: presence is
             // the signal, and a client that sees it absent never sends `turnreq` (C-7.6-3).
             turn = true.takeIf { config.turn != null },
+            // Present only with a key (S-7.6-13). The connection snapshots it, so what it was told
+            // here is what its `turnreq` gate follows for its whole life.
+            ent = true.takeIf { config.ticket != null },
             // Omitted when empty, never `[]` (S-7.6-13). Read per connection, so a reload reaches
             // every client that connects after it.
             stun = config.stunUrls.takeIf { it.isNotEmpty() },
@@ -1680,9 +1811,10 @@ class SpoolServer(
         q: Long? = null,
         scope: ByteArray? = null,
         retryMs: Long? = null,
+        msg: String? = null,
     ) {
         metrics.err(code)
-        out(conn, Err(t = RecordType.ERR, code = code, q = q, scope = scope, retryMs = retryMs))
+        out(conn, Err(t = RecordType.ERR, code = code, q = q, scope = scope, msg = msg, retryMs = retryMs))
     }
 
     /**

@@ -3,6 +3,7 @@ package app.getknit.spool
 
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.ScopeBounds
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.server.SpoolServer
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
@@ -12,7 +13,9 @@ import sun.misc.Signal
 import sun.misc.SignalHandler
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.GeneralSecurityException
 import java.security.SecureRandom
+import java.util.Base64
 import kotlin.system.exitProcess
 
 /**
@@ -65,6 +68,8 @@ internal val KNOWN_VARS =
         "SPOOL_TURN_TTL_S",
         "SPOOL_TURN_RATE",
         "SPOOL_STUN_URLS",
+        "SPOOL_TICKET_KEY",
+        "SPOOL_TICKET_AUDIENCE",
     )
 
 /**
@@ -95,6 +100,9 @@ private val STUN_URL = Regex("^stuns?:[^\\s,]+$")
 
 /** More STUN servers than this only multiplies a client's gathering; two would already be generous. */
 private const val MAX_STUN_URLS = 4
+
+/** A ticket's `aud`: a lowercase host name, which is what an operator would name a spool by. */
+private val TICKET_AUDIENCE = Regex("^[a-z0-9.-]{1,253}$")
 
 /** The CBOR record around a payload — the fields beside the blob in a `push`, or the ids in a `list`. */
 private const val RECORD_ENVELOPE = 512
@@ -395,7 +403,40 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
         turn = turnFromEnv(env),
         stunUrls = stunFromEnv(env),
+        ticket = ticketFromEnv(env),
     )
+}
+
+/**
+ * Entitlement-ticket checking (experimental, VOICE_CALLS.md §2.6), or null when
+ * `SPOOL_TICKET_KEY` is unset. The key is the issuer's raw Ed25519 public key in unpadded base64url,
+ * as `knit-spool ticket-keygen` prints it; it is decoded and tried as a verifier here, so a key the
+ * JDK cannot use stops the spool at boot rather than refusing the first paying caller.
+ *
+ * An audience without a key is refused rather than ignored, for the TURN settings' reason. Neither
+ * is a secret, but the key is still never echoed: a refusal that printed it would invite pasting
+ * the private half next time to "check".
+ */
+internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? {
+    val rawKey = env("SPOOL_TICKET_KEY")?.takeIf { it.isNotEmpty() }
+    val audience = env("SPOOL_TICKET_AUDIENCE")?.takeIf { it.isNotEmpty() }
+    if (rawKey == null) {
+        require(audience == null) { "SPOOL_TICKET_AUDIENCE needs SPOOL_TICKET_KEY; set it, or unset the audience" }
+        return null
+    }
+    requireNotNull(audience) { "SPOOL_TICKET_KEY is set but SPOOL_TICKET_AUDIENCE is not: tickets must name the spool they are for" }
+    require(TICKET_AUDIENCE.matches(audience)) { "SPOOL_TICKET_AUDIENCE must be a lowercase host name, got \"$audience\"" }
+    val raw =
+        requireNotNull(runCatching { Base64.getUrlDecoder().decode(rawKey) }.getOrNull()) {
+            "SPOOL_TICKET_KEY must be unpadded base64url (${rawKey.length} characters given)"
+        }
+    val key =
+        try {
+            Tickets.publicKey(raw)
+        } catch (e: GeneralSecurityException) {
+            throw IllegalArgumentException("SPOOL_TICKET_KEY is not a usable Ed25519 public key (${raw.size} bytes decoded)", e)
+        }
+    return SpoolServer.TicketConfig(key = key, kid = Tickets.kid(raw), audience = audience)
 }
 
 /**

@@ -101,6 +101,10 @@ services:
       # STUN URIs every client is told in hello, with no credential (experimental). Needs no secret;
       # the TURN overlay points it at its own coturn.
       SPOOL_STUN_URLS:
+      # Entitlement tickets (experimental). The issuer's Ed25519 PUBLIC key and the audience tickets
+      # must name; with them, turnreq needs a ticket. Both or neither.
+      SPOOL_TICKET_KEY:
+      SPOOL_TICKET_AUDIENCE:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

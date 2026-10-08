@@ -225,6 +225,8 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it |
 | `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
 | `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
+| `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and `turnreq` needs a ticket. Reloadable |
+| `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
 
 The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
@@ -525,7 +527,7 @@ this feature exists to avoid.
 | | Takes effect |
 |---|---|
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
-| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
 

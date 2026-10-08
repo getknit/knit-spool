@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import java.security.MessageDigest
 import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -22,6 +23,8 @@ object TurnCredentials {
     /** 10 bytes is exactly 16 base32 characters, so the suffix carries no padding. */
     const val SUFFIX_BYTES = 10
 
+    private val TURN_USER_LABEL = "knit/spool/v1/turn-user".toByteArray()
+
     private const val BASE32 = "abcdefghijklmnopqrstuvwxyz234567"
     private const val BITS_PER_CHAR = 5
     private const val CHAR_MASK = 0x1f
@@ -35,6 +38,20 @@ object TurnCredentials {
         require(suffix.size == SUFFIX_BYTES) { "a TURN user suffix is $SUFFIX_BYTES bytes, got ${suffix.size}" }
         return "$expS:${base32(suffix)}"
     }
+
+    /**
+     * The suffix of a ticketed credential (VOICE_CALLS.md §2.6, S-7.6-17):
+     * `SHA-256("knit/spool/v1/turn-user" ‖ ps)[0..SUFFIX_BYTES]`. The same for every issue under one
+     * pseudonym, so coturn's `user-quota` — which counts the part after the colon — counts the holder.
+     * Hashed rather than the pseudonym itself, so the TURN server's logs never carry the spool's id.
+     */
+    fun pseudonymSuffix(ps: ByteArray): ByteArray =
+        MessageDigest
+            .getInstance("SHA-256")
+            .run {
+                update(TURN_USER_LABEL)
+                digest(ps)
+            }.copyOf(SUFFIX_BYTES)
 
     fun pass(
         secret: String,

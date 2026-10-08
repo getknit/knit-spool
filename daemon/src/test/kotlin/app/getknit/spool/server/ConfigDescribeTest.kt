@@ -29,6 +29,11 @@ class ConfigDescribeTest {
         assertEquals("off", fields["turn"])
         assertEquals("unset", fields["turnSecret"])
         assertEquals("0", fields["stun"])
+        assertEquals("unset", fields["ticketKey"])
+        assertEquals("unset", fields["ticketAud"])
+        val ticketed = fields(testConfig(ticket = testTicketConfig()).describe())
+        assertEquals("set", ticketed["ticketKey"])
+        assertEquals(TEST_TICKET_AUD, ticketed["ticketAud"])
         assertEquals("2", fields(testConfig(stunUrls = listOf("stun:a.example:3478", "stun:b.example:3478")).describe())["stun"])
     }
 

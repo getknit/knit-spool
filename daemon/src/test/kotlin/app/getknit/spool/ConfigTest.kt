@@ -297,6 +297,59 @@ class ConfigTest {
         assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_STUN_URLS" to five)) }
     }
 
+    /** RFC 8032 §7.1 TEST 1's public key, as `ticket-keygen` prints one: unpadded base64url. */
+    private val ticketKey =
+        java.util.Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".hexToByteArray())
+
+    private fun withTicket(vararg extra: Pair<String, String>) =
+        config(mapOf("SPOOL_TICKET_KEY" to ticketKey, "SPOOL_TICKET_AUDIENCE" to "spool.example") + extra.toMap())
+
+    @Test
+    fun ticketsAreOffByDefaultAndParseWithAKeyAndAudience() {
+        assertNull(config(emptyMap()).ticket)
+        assertNull(config(mapOf("SPOOL_TICKET_KEY" to "")).ticket)
+        val ticket = assertNotNull(withTicket().ticket)
+        assertEquals("spool.example", ticket.audience)
+        assertEquals("21fe31dfa154a261", ticket.kid.toHexString())
+    }
+
+    /** An audience with no key means an operator who believes tickets are being checked. */
+    @Test
+    fun anAudienceWithoutAKeyAndAKeyWithoutAnAudienceRefuseToStart() {
+        val orphan = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_AUDIENCE" to "spool.example")) }
+        assertTrue(orphan.message!!.contains("SPOOL_TICKET_KEY"), orphan.message!!)
+        val bare = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_KEY" to ticketKey)) }
+        assertTrue(bare.message!!.contains("SPOOL_TICKET_AUDIENCE"), bare.message!!)
+    }
+
+    @Test
+    fun theAudienceIsALowercaseHostName() {
+        for (bad in listOf("Spool.Example", "spool example", "spool.example:443", "x".repeat(254))) {
+            assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_AUDIENCE" to bad) }
+        }
+    }
+
+    /**
+     * Not base64url, the wrong length, and a well-formed 32 bytes that is not a point on the curve
+     * all stop the spool at boot — and the refusal never echoes what it was given.
+     */
+    @Test
+    fun anUnusableTicketKeyRefusesToStartWithoutBeingEchoed() {
+        val offCurve =
+            java.util.Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(ByteArray(32).also { it[0] = 2 })
+        for (bad in listOf("not base64!", ticketKey.dropLast(4), offCurve)) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_KEY" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_KEY"), e.message!!)
+            assertFalse(e.message!!.contains(bad), e.message!!)
+        }
+    }
+
     @Test
     fun turnTtlAndRateAreBounded() {
         assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "59") }
