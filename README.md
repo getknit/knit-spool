@@ -341,10 +341,38 @@ could reach the box's own network through it.
 
 **On a public Spool, anyone can get a credential** — a subscription costs one proof-of-work stamp.
 So the bound on what strangers can push through the box is coturn's quotas, not the credential:
-`TURN_USER_QUOTA` (3 allocations per credential), `TURN_TOTAL_QUOTA` (16), `TURN_MAX_BPS` (16000
+`TURN_USER_QUOTA` (3 allocations per credential, or per ticket holder on a ticketed Spool — see
+below), `TURN_TOTAL_QUOTA` (16), `TURN_MAX_BPS` (16000
 bytes/s per session) and `TURN_BPS_CAPACITY` (125000 bytes/s, 1 Mbps, for the whole relay). A
 refreshed allocation lives on after its credential expires, so these caps are the real limit.
 Prefer TURN on a tokened Spool.
+
+### Tickets and STUN
+
+Two further switches, for an operator who sells TURN to some callers and not others (knit-next
+`docs/VOICE_CALLS.md` §2.6; ADR 2026-10.bxsg):
+
+- **`SPOOL_STUN_URLS`** puts a credential-free `stun` list in every `hello`. A phone with no TURN of
+  its own needs one: without it, it offers only private addresses, and a paying peer's relay —
+  which admits peers by IP — cannot permit it. The TURN overlay points it at its own coturn.
+- **`SPOOL_TICKET_KEY`** and **`SPOOL_TICKET_AUDIENCE`** make `hello` carry `ent`, and `turnreq` then
+  needs an Ed25519 ticket presented once per connection with `{ t: "ent", q, tk, sig }`. With one,
+  no subscription is needed, and the TURN username's suffix is derived from the ticket's daily
+  pseudonym, so every credential one holder fetches shares it and `TURN_USER_QUOTA` counts the
+  holder. A refusal is `err ticket` with a `msg` (`expired`, `audience`, …), never a strike.
+
+The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
+
+```sh
+knit-spool ticket-keygen                    # prints the signing key and SPOOL_TICKET_KEY=…
+knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account alice
+```
+
+`ticket-mint` prints a `knit-ticket:v1:…` line for a test client. Conformance takes the same key:
+`--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
+`knit_spool_ticket_refused_total{reason}` and `knit_spool_turn_issued_ticketed_total` count what
+happened. The Spool learns each holder's pseudonym and can link their connections within a day; it
+never logs a ticket or a pseudonym.
 
 What a relay sees that a Spool does not: **both callers' IP addresses, and how long they talked**.
 Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed

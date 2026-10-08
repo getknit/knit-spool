@@ -70,7 +70,9 @@ services:
       # How often to look for a renewed certificate, in seconds. Default 6 h.
       TURN_CERT_POLL_S:
       # The abuse bounds; see entrypoint.sh. Bandwidth is BYTES per second. Defaults: 3
-      # allocations per credential, 16 in all, 16000 B/s per session, 125000 B/s (1 Mbps) in all.
+      # allocations per credential (per ticket holder on a ticketed Spool), 16 in all, 16000 B/s per
+      # session, 125000 B/s (1 Mbps) in all. One holder on Wi-Fi and cellular with three URLs needs
+      # more than 3: set TURN_USER_QUOTA from a measured call.
       TURN_USER_QUOTA:
       TURN_TOTAL_QUOTA:
       TURN_MAX_BPS:
