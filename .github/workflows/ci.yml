@@ -72,6 +72,18 @@ jobs:
           path: build/reports/kover/
           if-no-files-found: ignore
 
+  adr-index:
+    name: ADR router is in sync
+    runs-on: ubuntu-latest
+    # No JDK, no Gradle: this only reads `.agents/memory/decisions/`. Enforced because a
+    # stale router silently hides a decision from every agent that reads it, and
+    # `merge=union` on the generated file means a bad merge lands quietly rather than as
+    # a conflict. Mirrors GitLab's `verify:adr-index`.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check .agents/memory/decisions.md
+        run: python3 scripts/adr.py index --check
+
   conformance:
     name: Conformance self-test
     runs-on: ubuntu-latest

@@ -307,6 +307,17 @@ verify:markdown:
     # git ls-files keeps the scan on tracked docs — no vendored or build-output Markdown.
     - git ls-files '*.md' | xargs -r mdl
 
+# `.agents/memory/decisions.md` is generated from `.agents/memory/decisions/` by `scripts/adr.py index`.
+# Enforced, unlike verify:markdown: a stale router silently hides a decision from every agent that reads
+# it, and `.gitattributes` gives the file `merge=union`, so a bad merge lands as duplicated rows rather
+# than as a conflict. Standard library only — no JDK. Mirrors GitHub's `adr-index` job.
+verify:adr-index:
+  stage: verify
+  image: python:3.13-alpine
+  needs: []
+  script:
+    - python3 scripts/adr.py index --check
+
 # ---------------- release ----------------
 # Tag-only, and INTERNAL. The images an operator pulls come from .github/workflows/release.yml —
 # that one is multi-arch, attested, and pushed to GHCR and Docker Hub. This job only records the

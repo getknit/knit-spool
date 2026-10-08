@@ -50,8 +50,9 @@ which is how `check` proves the reference daemon conforms.
   commit (`git commit -s`), certifying the [Developer Certificate of Origin](DCO) — the verbatim
   1.1 text, also published at [developercertificate.org](https://developercertificate.org/). The
   trailer's email must match the commit author's, and `git config core.hooksPath .githooks` opts
-  into a repo hook that adds it for you. Only submit code you have the right to license under the
-  AGPL.
+  into a repo hook that adds it for you (the same directory's `pre-commit` also refuses an ADR
+  committed without its regenerated router). Only submit code you have the right to license under
+  the AGPL.
 - **Third-party dependencies:** the shipped graph is small and deliberately so — Kotlin, Ktor,
   kotlinx, SLF4J/Logback, sqlite-jdbc, and nothing else. Do not add a dependency whose license is
   AGPL-incompatible or unverified, and update
