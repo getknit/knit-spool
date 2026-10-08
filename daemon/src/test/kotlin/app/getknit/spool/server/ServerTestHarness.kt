@@ -68,6 +68,7 @@ fun testConfig(
     sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
     commons: SpoolServer.CommonsConfig? = null,
     turn: SpoolServer.TurnConfig? = null,
+    stunUrls: List<String> = emptyList(),
 ): SpoolServer.Config =
     SpoolServer.Config(
         port = 0,
@@ -93,6 +94,7 @@ fun testConfig(
         sourceUrl = sourceUrl,
         commons = commons,
         turn = turn,
+        stunUrls = stunUrls,
     )
 
 /** Whether [needle] occurs anywhere in this array — for asserting what an encoded record does *not* carry. */

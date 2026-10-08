@@ -98,6 +98,9 @@ services:
       SPOOL_TURN_URLS:
       SPOOL_TURN_TTL_S:
       SPOOL_TURN_RATE:
+      # STUN URIs every client is told in hello, with no credential (experimental). Needs no secret;
+      # the TURN overlay points it at its own coturn.
+      SPOOL_STUN_URLS:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

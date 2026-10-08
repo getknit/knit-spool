@@ -108,6 +108,21 @@ class ReloadTest {
         }
     }
 
+    /**
+     * The STUN list is read when `hello` is built, so a reload reaches every client that connects
+     * after it — and only those: an open connection keeps the hello it was given.
+     */
+    @Test
+    fun stunUrlsReloadForNewConnections() {
+        withServer(testConfig()) {
+            connect {
+                assertNull(helloHandshake().stun)
+                assertTrue(spool.reload(testConfig(stunUrls = listOf("stun:spool.example:3478"))).isEmpty())
+            }
+            connect { assertEquals(listOf("stun:spool.example:3478"), helloHandshake().stun) }
+        }
+    }
+
     /** A reload that changes nothing reports nothing. */
     @Test
     fun anIdenticalReloadIsSilent() {

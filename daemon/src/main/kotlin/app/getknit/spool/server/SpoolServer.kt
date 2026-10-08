@@ -236,6 +236,12 @@ class SpoolServer(
         val commons: CommonsConfig? = null,
         /** TURN credential issuing (experimental, proposed spec §7.6), or null when off. */
         val turn: TurnConfig? = null,
+        /**
+         * `stun:`/`stuns:` URIs advertised in `hello` to every client, with no credential
+         * (experimental, VOICE_CALLS.md §2.6). Independent of [turn]: a spool that issues nothing
+         * can still tell a free phone where to learn its own public address.
+         */
+        val stunUrls: List<String> = emptyList(),
     ) {
         /**
          * Every resolved value on one line, `k=v`, for the boot log.
@@ -296,6 +302,9 @@ class SpoolServer(
                 "ratePushes" to ratePushes,
                 "rateNewScopes" to rateNewScopesPerMin,
                 "moderation" to requireModeration,
+                // A count: describe() splits on spaces and URIs are not secrets, but a list in one
+                // k=v field is noise. The values are in the env, and in every client's hello.
+                "stun" to stunUrls.size,
             )
 
         /**
@@ -327,6 +336,7 @@ class SpoolServer(
                 ratePushes = candidate.ratePushes,
                 rateNewScopesPerMin = candidate.rateNewScopesPerMin,
                 requireModeration = candidate.requireModeration,
+                stunUrls = candidate.stunUrls,
             )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
@@ -1626,6 +1636,9 @@ class SpoolServer(
             // Present only when this spool issues credentials, for moderation's reason: presence is
             // the signal, and a client that sees it absent never sends `turnreq` (C-7.6-3).
             turn = true.takeIf { config.turn != null },
+            // Omitted when empty, never `[]` (S-7.6-13). Read per connection, so a reload reaches
+            // every client that connects after it.
+            stun = config.stunUrls.takeIf { it.isNotEmpty() },
             // Bounds and a label — never `scopeId`. The id comes from the invite, and a spool that
             // published it would turn a room only invite holders can find into one that anybody
             // who connects can subscribe to and flood.

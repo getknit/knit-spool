@@ -64,6 +64,7 @@ internal val KNOWN_VARS =
         "SPOOL_TURN_URLS",
         "SPOOL_TURN_TTL_S",
         "SPOOL_TURN_RATE",
+        "SPOOL_STUN_URLS",
     )
 
 /**
@@ -88,6 +89,12 @@ private const val MAX_TURN_RATE = 60
 
 /** One `turn:`/`turns:` URI (RFC 7065): no whitespace, and no comma, which separates the list. */
 private val TURN_URL = Regex("^turns?:[^\\s,]+$")
+
+/** One `stun:`/`stuns:` URI (RFC 7064), on [TURN_URL]'s terms. */
+private val STUN_URL = Regex("^stuns?:[^\\s,]+$")
+
+/** More STUN servers than this only multiplies a client's gathering; two would already be generous. */
+private const val MAX_STUN_URLS = 4
 
 /** The CBOR record around a payload — the fields beside the blob in a `push`, or the ids in a `list`. */
 private const val RECORD_ENVELOPE = 512
@@ -387,7 +394,23 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         sourceUrl = sourceUrlFromEnv(env),
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
         turn = turnFromEnv(env),
+        stunUrls = stunFromEnv(env),
     )
+}
+
+/**
+ * The STUN URIs `hello` advertises (experimental, VOICE_CALLS.md §2.6), or none when
+ * `SPOOL_STUN_URLS` is unset. They carry no credential and need no secret, so unlike the TURN
+ * settings they stand alone.
+ */
+internal fun stunFromEnv(env: (String) -> String?): List<String> {
+    val raw = env("SPOOL_STUN_URLS")?.takeIf { it.isNotEmpty() } ?: return emptyList()
+    val urls = raw.split(',').map(String::trim)
+    require(urls.size <= MAX_STUN_URLS) { "SPOOL_STUN_URLS lists ${urls.size} URIs; at most $MAX_STUN_URLS" }
+    urls.forEach { url ->
+        require(STUN_URL.matches(url)) { "SPOOL_STUN_URLS entries must be stun: or stuns: URIs, got \"$url\"" }
+    }
+    return urls
 }
 
 /**

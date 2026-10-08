@@ -28,6 +28,8 @@ class ConfigDescribeTest {
         assertEquals("false", fields["moderation"])
         assertEquals("off", fields["turn"])
         assertEquals("unset", fields["turnSecret"])
+        assertEquals("0", fields["stun"])
+        assertEquals("2", fields(testConfig(stunUrls = listOf("stun:a.example:3478", "stun:b.example:3478")).describe())["stun"])
     }
 
     /** The TURN secret is an HMAC key a credential holder could otherwise mint from forever. */

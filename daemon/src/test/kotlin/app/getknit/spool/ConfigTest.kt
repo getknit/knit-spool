@@ -278,6 +278,25 @@ class ConfigTest {
         }
     }
 
+    /** STUN needs no secret, so it is off by default and otherwise stands on its own. */
+    @Test
+    fun stunUrlsParseAloneAndDefaultToNone() {
+        assertTrue(config(emptyMap()).stunUrls.isEmpty())
+        assertTrue(config(mapOf("SPOOL_STUN_URLS" to "")).stunUrls.isEmpty())
+        val stun = config(mapOf("SPOOL_STUN_URLS" to "stun:spool.example:3478, stuns:spool.example:5349")).stunUrls
+        assertEquals(listOf("stun:spool.example:3478", "stuns:spool.example:5349"), stun)
+    }
+
+    @Test
+    fun stunUrlsMustBeAFewStunUris() {
+        for (bad in listOf("turn:spool.example:3478", "https://spool.example", "stun:", "stun:a b")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { config(mapOf("SPOOL_STUN_URLS" to bad)) }
+            assertTrue(e.message!!.contains("SPOOL_STUN_URLS"), e.message!!)
+        }
+        val five = List(5) { "stun:s$it.example:3478" }.joinToString(",")
+        assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_STUN_URLS" to five)) }
+    }
+
     @Test
     fun turnTtlAndRateAreBounded() {
         assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "59") }

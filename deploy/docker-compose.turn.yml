@@ -25,6 +25,9 @@ services:
       # Every transport a client may need: UDP first, TCP for UDP-hostile networks, TLS on 5349 for
       # networks that only pass TLS. Override to drop one or to point at a TURN server elsewhere.
       SPOOL_TURN_URLS: "${SPOOL_TURN_URLS:-turn:${SPOOL_DOMAIN}:3478?transport=udp,turn:${SPOOL_DOMAIN}:3478?transport=tcp,turns:${SPOOL_DOMAIN}:5349?transport=tcp}"
+      # coturn answers STUN without a credential, so every client — with a TURN credential or not —
+      # can learn its public address here. That is what lets a free phone reach a paying peer's relay.
+      SPOOL_STUN_URLS: "${SPOOL_STUN_URLS:-stun:${SPOOL_DOMAIN}:3478}"
 
   turn:
     # Pinned by digest: the relay is a network-facing C service, and a tag can move under it.
