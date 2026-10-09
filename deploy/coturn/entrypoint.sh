@@ -20,7 +20,7 @@ set -eu
 : "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env}"
 : "${SPOOL_DOMAIN:?set SPOOL_DOMAIN in deploy/.env}"
 MIN_PORT="${TURN_MIN_PORT:-49160}"
-MAX_PORT="${TURN_MAX_PORT:-49200}"
+MAX_PORT="${TURN_MAX_PORT:-49999}"
 POLL_S="${TURN_CERT_POLL_S:-21600}"
 RUN=/run/turn
 CONF="$RUN/turnserver.conf"
@@ -68,11 +68,13 @@ write_conf() {
     # The relay's real abuse bound. A credential is checked only when a session first allocates,
     # and a refreshed allocation then lives on, so what a leaked or farmed credential is worth is
     # capped here, not by its lifetime. max-bps and bps-capacity are BYTES per second: one Opus
-    # call leg is ~4 kB/s, so 16000 per session is 4x headroom, and bps-capacity caps the whole box.
+    # call leg is ~4 kB/s of audio and ~7 kB/s with headers, so 16000 per session is 2x headroom, and
+    # bps-capacity caps the whole box. coturn reserves max-bps from bps-capacity for every allocation,
+    # used or not, so the default pool is total-quota x max-bps and the two run out together.
     echo "user-quota=${TURN_USER_QUOTA:-3}"
-    echo "total-quota=${TURN_TOTAL_QUOTA:-16}"
+    echo "total-quota=${TURN_TOTAL_QUOTA:-100}"
     echo "max-bps=${TURN_MAX_BPS:-16000}"
-    echo "bps-capacity=${TURN_BPS_CAPACITY:-125000}"
+    echo "bps-capacity=${TURN_BPS_CAPACITY:-1600000}"
     echo "stale-nonce=600"
     echo "proc-user=nobody"
     echo "proc-group=nogroup"

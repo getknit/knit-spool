@@ -41,7 +41,7 @@ the [README](README.md#-deploy) has the rest.
 | CPU | 1 shared vCPU | The store runs on one thread and sustains order-1000 pushes/s on a $5 tier. TLS and PoW verification are the only other work. CPU won't be your constraint. |
 | Disk | 10–25 GB | Payload is bounded by `SPOOL_MAX_BYTES` (256 MB default) and the image is ~150 MB. The rest is logs, so cap them. |
 | Transfer | 1 TB/month, minimum | The one to shop on. See below. |
-| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp+tcp, 5349/tcp and the relay range (49160–49200/udp). |
+| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp+tcp, 5349/tcp and the relay range (49160–49999/udp). |
 | Uptime | Whatever the tier gives you | Clients treat a missing Spool as a missing Spool. Don't buy an SLA for this. |
 
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
@@ -240,19 +240,33 @@ The experimental TURN overlay (`docker-compose.turn.yml`, see the README) relays
 that cannot connect peer to peer, which is the minority but not a rare one: carrier-grade NAT on
 mobile networks pushes it to somewhere around 10–20%.
 
-Bandwidth is the cost. A relayed call is Opus at roughly 32 kbps each way, which crosses the box
-twice — in from one caller, out to the other — so about 128 kbps, or **~58 MB per call-hour**. A
-1 TB monthly allowance covers on the order of 10,000 relayed call-hours.
+Bandwidth is the cost. A relayed call is Opus at roughly 32 kbps each way, about 56 kbps once packet
+headers are counted. Each direction comes in from one caller and goes out to the other, so a call
+sends about 112 kbps out of the box, **~50 MB per call-hour**, and takes as much in. Transfer
+allowances meter the outbound half, so 1 TB a month covers about 20,000 relayed call-hours.
 
 On a public Spool anyone can get a credential, so size the caps for the worst case, not the honest
-one. `TURN_BPS_CAPACITY` (bytes/s, default 125000 = 1 Mbps for the whole relay) bounds it: saturated
-around the clock that is ~325 GB/month, about a third of a 1 TB allowance. `TURN_MAX_BPS` (16000
-bytes/s per session) and the allocation quotas keep any one credential from taking all of it.
+one. `TURN_BPS_CAPACITY` (bytes/s, default 1600000 = 12.8 Mbps for the whole relay) bounds it:
+saturated around the clock that is ~4 TB/month out, four times a 1 TB allowance. On a public Spool
+without tickets, lower it to what you are willing to pay for; 400000 keeps the worst case near 1 TB.
+`TURN_MAX_BPS` (16000 bytes/s per session) and the allocation quotas keep any one credential from
+taking all of it.
+
+The caps count allocations, not calls. coturn reserves `TURN_MAX_BPS` out of `TURN_BPS_CAPACITY` for
+every allocation, used or not, which is why the default pool is exactly `TURN_TOTAL_QUOTA` (100) ×
+16000: the two run out together. A phone can hold several allocations in one call, one per network,
+address family and TURN URL it tries, so 100 allocations is anywhere from 100 concurrent relayed
+calls down to a handful. Raise the quota and the pool together, and keep the pool a figure you can
+pay for at saturation.
 
 Memory is small: coturn idles in tens of megabytes, and the overlay caps it at 96 MB, which still
-fits the 1 GB budget beside the tiny overlay's Spool and Caddy. A relayed call costs one UDP port per
-leg from the 41-port default range; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the firewall rule)
-before it becomes the ceiling.
+fits the 1 GB budget beside the tiny overlay's Spool and Caddy. CPU is per packet: a relayed call is
+about 200 packets a second through coturn, twice that when both callers relay through the same box.
+On a single shared core that competes with the Spool, so a relay meant to carry much more than the
+defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it. Each allocation takes one
+UDP port from the 840-port default range (49160–49999), which leaves room to raise
+`TURN_TOTAL_QUOTA` without reopening the firewall; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the
+firewall rule) if the quota ever passes it.
 
 ## Upgrading without a reconnect storm
 
@@ -280,7 +294,7 @@ With too little free space it logs a warning, boots unchanged, and tries again o
 - [ ] Included transfer you're comfortable with, and you've read the overage rate.
 - [ ] A public IPv4 with inbound :80 and :443, and a DNS name already pointing at it. ACME issuance
       fails otherwise.
-- [ ] Running TURN: 3478/udp, 3478/tcp, 5349/tcp and 49160–49200/udp open too — on the host firewall
+- [ ] Running TURN: 3478/udp, 3478/tcp, 5349/tcp and 49160–49999/udp open too — on the host firewall
       *and* any provider-side one.
 - [ ] A persistent volume for `SPOOL_DATA_DIR`, or a deliberate choice to run in memory.
 - [ ] A region with a sane path to the people who'll use it, and ideally not the region their other

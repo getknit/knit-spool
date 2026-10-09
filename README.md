@@ -333,7 +333,7 @@ Run it as the last overlay:
 docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-compose.turn.yml up -d
 ```
 
-It needs **3478/udp, 3478/tcp, 5349/tcp** and the relay range **49160–49200/udp** open on the host;
+It needs **3478/udp, 3478/tcp, 5349/tcp** and the relay range **49160–49999/udp** open on the host;
 443 stays Caddy's. `turns:` on 5349 uses the certificate Caddy already holds for `SPOOL_DOMAIN`, and
 a renewal is picked up in place (coturn's `SIGUSR2` reload) without dropping a call. coturn refuses to
 relay to loopback, private, link-local and CGNAT addresses — without that list a credential holder
@@ -342,8 +342,8 @@ could reach the box's own network through it.
 **On a public Spool, anyone can get a credential** — a subscription costs one proof-of-work stamp.
 So the bound on what strangers can push through the box is coturn's quotas, not the credential:
 `TURN_USER_QUOTA` (3 allocations per credential, or per ticket holder on a ticketed Spool — see
-below), `TURN_TOTAL_QUOTA` (16), `TURN_MAX_BPS` (16000
-bytes/s per session) and `TURN_BPS_CAPACITY` (125000 bytes/s, 1 Mbps, for the whole relay). A
+below), `TURN_TOTAL_QUOTA` (100), `TURN_MAX_BPS` (16000
+bytes/s per session) and `TURN_BPS_CAPACITY` (1600000 bytes/s, 12.8 Mbps, for the whole relay). A
 refreshed allocation lives on after its credential expires, so these caps are the real limit.
 Prefer TURN on a tokened Spool.
 

@@ -35,7 +35,9 @@ document:
   certificate with in-place renewal, every capability dropped but five, a read-only root, and a
   `denied-peer-ip` list covering loopback, private, link-local and CGNAT ranges. Credentials live 5
   minutes by default (coturn checks expiry only at allocation), and `TURN_*` caps bound the relay:
-  3 allocations per credential, 16 in all, 16000 B/s per session, 1 Mbps for the box.
+  3 allocations per credential, 100 in all, 16000 B/s per session, 12.8 Mbps for the box (the pool
+  is exactly 100 × 16000, since coturn reserves the per-session rate for every allocation), and relay
+  ports 49160–49999.
 - **Experimental: entitlement tickets and a STUN list** (draft in knit-next `docs/VOICE_CALLS.md`
   §2.6; ADR 2026-10.bxsg). `SPOOL_STUN_URLS` puts credential-free `stun:` URIs in every `hello`, so
   a phone with no TURN can still be reached through a paying peer's relay. `SPOOL_TICKET_KEY` and

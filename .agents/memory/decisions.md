@@ -18,4 +18,5 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | --- | --- | --- |
 | [2026-10.bxsg](decisions/2026-10-bxsg-entitlement-tickets-gate-turn.md) | entitlement tickets gate turn, files and scope creation on a spool | tickets, turn, attachments, auth |
 | [2026-10.d2zb](decisions/2026-10-d2zb-bare-scopes-are-reclaimed.md) | bare scopes are reclaimed, not held against maxScopes | store, quota, abuse |
+| [2026-10.y2ph](decisions/2026-10-y2ph-the-turn-overlay-s-default.md) | the TURN overlay's default caps are sized in allocations | turn, deploy, abuse |
 | [2026-10.us34](decisions/2026-10-us34-freed-sqlite-pages-go-back.md) | freed SQLite pages go back to the disk | store, deploy |
