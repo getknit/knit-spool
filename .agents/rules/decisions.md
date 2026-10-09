@@ -12,6 +12,7 @@ growing an explanation, that explanation belongs in the ADR.
 
 | If touching | READ |
 | --- | --- |
+| `maxScopes`, scope deletion, `reclaimIdle` or `shedOldestScope` | [ADR 2026-10.d2zb](../memory/decisions/2026-10-d2zb-bare-scopes-are-reclaimed.md) |
 
 ## Where they live
 

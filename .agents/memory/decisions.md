@@ -16,3 +16,4 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 
 | ADR | Decision | Topics |
 | --- | --- | --- |
+| [2026-10.d2zb](decisions/2026-10-d2zb-bare-scopes-are-reclaimed.md) | bare scopes are reclaimed, not held against maxScopes | store, quota, abuse |
