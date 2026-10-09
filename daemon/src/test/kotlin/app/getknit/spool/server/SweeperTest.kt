@@ -54,6 +54,32 @@ class SweeperTest {
         }
     }
 
+    /**
+     * A bare scope idle past its TTL is dropped (ADR 2026-10.d2zb); one a live connection
+     * subscribes to, and the commons, are kept however long they sit empty.
+     */
+    @Test
+    fun theSweeperReclaimsIdleBareScopesNobodyHolds() {
+        withServer(testConfig(commons = testCommons())) {
+            store.subscribe(testScope(2), testBounds(), clock.now)
+            connect {
+                helloHandshake()
+                subscribe(testScope(1)) // ttlMs = 10_000
+
+                clock.advance(5_000)
+                spool.sweepTick()
+                assertEquals(3, store.scopeCount(), "nothing is idle inside its TTL")
+
+                clock.advance(120_000)
+                spool.sweepTick()
+                assertTrue(store.isUnknownScope(testScope(2)))
+                assertTrue(!store.isUnknownScope(testScope(1)), "a subscribed scope was reclaimed")
+                assertTrue(!store.isUnknownScope(commonsScope()), "the commons was reclaimed")
+                assertEquals(1L, spool.metrics.reclaimsTotal.sum())
+            }
+        }
+    }
+
     @Test
     fun powCacheIsPrunedAfterDayRollover() {
         val bits = 8

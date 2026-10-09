@@ -217,6 +217,9 @@ class CommonsTest {
         val limits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 1)
         val full = InMemoryScopeStore(limits)
         assertIs<SubscribeResult.Subscribed>(full.subscribe(testScope(9), testBounds(), now = 0L))
+        // Holding a frame, so not a bare scope the commons could reclaim (ADR 2026-10.d2zb).
+        val (id, blob) = testBlob(9)
+        full.push(testScope(9), id, blob, now = 0L)
 
         val refused =
             assertFailsWith<IllegalStateException> {

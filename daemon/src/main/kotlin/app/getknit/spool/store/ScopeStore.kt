@@ -101,9 +101,14 @@ class ListInfo(
 sealed interface SubscribeResult {
     class Subscribed(
         val digest: DigestInfo,
+        /** A bare scope evicted to make room for this new one at `maxScopes`, or null. */
+        val reclaimed: ByteArray? = null,
     ) : SubscribeResult
 
-    /** The spool is at `maxScopes` and the scope is new — enforced atomically inside the store. */
+    /**
+     * The spool is at `maxScopes`, the scope is new, and no bare scope outside `held` was left to
+     * evict — enforced atomically inside the store.
+     */
     object QuotaExceeded : SubscribeResult
 }
 
@@ -150,6 +155,14 @@ class ShedScope(
  * refuses anything else as `malformed` at the top of each handler, so implementations may key on an
  * id without re-checking its length.
  *
+ * A scope is **bare** when it holds nothing but its own row: no live frames, no attachments and
+ * no tombstones of either kind. Dropping a bare scope loses no frame and no anti-churn memory —
+ * only the fact that it was created, which the next `sub` or `push` re-establishes through the
+ * new-scope gates (§6.4). Bare scopes are what [reclaimIdle] and a full [subscribe] give back, so
+ * a spool whose `maxScopes` slots are taken by conversations that ended does not refuse every new
+ * one with `quota`. A bare scope in `held` — the commons, or one a live connection subscribes to —
+ * is never dropped.
+ *
  * Every stored attachment's `total` is at most [HardLimits.maxATotal]: [attachmentPut] refuses a
  * larger one as [AputResult.QuotaExceeded], and a persistent store drops any header above it on
  * boot, so the presence bitmap [attachmentPresence] builds is at most `⌈maxATotal / 8⌉` bytes and
@@ -170,11 +183,16 @@ interface ScopeStore : AutoCloseable {
      */
     fun totalBytes(): Long
 
-    /** Subscribe-time bounds declaration: clamps to the hard caps and (re)applies them. */
+    /**
+     * Subscribe-time bounds declaration: clamps to the hard caps and (re)applies them. A new scope
+     * on a spool at `maxScopes` evicts the least-recently-active bare scope not in [held] first,
+     * and is [SubscribeResult.QuotaExceeded] only when there is none.
+     */
     fun subscribe(
         scopeId: ByteArray,
         declared: ScopeBounds,
         now: Long,
+        held: (ByteArray) -> Boolean = { false },
     ): SubscribeResult
 
     fun digest(
@@ -222,6 +240,16 @@ interface ScopeStore : AutoCloseable {
      * whose live set changed. Call periodically.
      */
     fun sweep(now: Long): List<SweepChange>
+
+    /**
+     * Drops every bare scope not in [held] whose last activity is older than its own `ttlMs` — the
+     * longest it ever promised to hold a frame — and returns their ids. Call after [sweep], which
+     * is what empties them.
+     */
+    fun reclaimIdle(
+        now: Long,
+        held: (ByteArray) -> Boolean = { false },
+    ): List<ByteArray>
 
     /**
      * Drops the least-recently-active scope entirely (watermark policy), or null when there is

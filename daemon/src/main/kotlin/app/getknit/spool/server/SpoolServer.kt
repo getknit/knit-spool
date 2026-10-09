@@ -640,6 +640,20 @@ class SpoolServer(
     private fun isCommons(scope: ByteArray): Boolean = config.commons?.scopeId?.contentEquals(scope) == true
 
     /**
+     * Scopes the store must never reclaim however bare (ADR 2026-10.d2zb): the commons, and any a
+     * live connection subscribes to. Read on the store thread; [subscribers] is concurrent, and a
+     * race with a `sub` landing at the same moment only costs that connection the push-recreate
+     * path a shed scope already takes.
+     */
+    private fun isHeld(scope: ByteArray): Boolean = isCommons(scope) || subscribers[hex(scope)]?.isNotEmpty() == true
+
+    private fun noteReclaimed(scope: ByteArray?) {
+        if (scope == null) return
+        metrics.reclaimsTotal.increment()
+        log.debug("maxScopes: reclaimed bare scope {} for a new one", shortHex(scope))
+    }
+
+    /**
      * Creates the commons scope before the first client can connect.
      *
      * Everything else about the commons follows from its already existing: `isUnknownScope` is
@@ -648,14 +662,15 @@ class SpoolServer(
      */
     private fun createCommons() {
         val commons = config.commons ?: return
-        val result = runBlocking { withStore { store.subscribe(commons.scopeId, commons.bounds, clock()) } }
+        val result = runBlocking { withStore { store.subscribe(commons.scopeId, commons.bounds, clock(), ::isHeld) } }
         if (result is SubscribeResult.QuotaExceeded) {
-            // Reachable on a persistent store that already holds maxScopes scopes from before the
-            // commons was configured (or under a previous SPOOL_COMMONS_ID). Refuse to start: a
+            // Reachable on a persistent store that already holds maxScopes scopes, none of them
+            // bare, from before the commons was configured (or under a previous SPOOL_COMMONS_ID).
+            // Refuse to start: a
             // spool silently up without the room it advertises is the worse outcome.
             error(
                 "commons scope cannot be created: the store already holds SPOOL_MAX_SCOPES " +
-                    "(${config.hardLimits.maxScopes}) scopes. Raise SPOOL_MAX_SCOPES, or clear SPOOL_DATA_DIR.",
+                    "(${config.hardLimits.maxScopes}) scopes, none of them empty. Raise SPOOL_MAX_SCOPES, or clear SPOOL_DATA_DIR.",
             )
         }
         log.info(
@@ -938,8 +953,9 @@ class SpoolServer(
             // reply already carries the applied bounds, so the client learns the truth in the
             // answer it was going to read anyway. Same shape as a truncated `pull` (§7.2).
             val declared = config.commons?.bounds?.takeIf { isCommons(scopeSub.scope) } ?: scopeSub.bounds
-            when (val result = withStore { store.subscribe(scopeSub.scope, declared, now) }) {
+            when (val result = withStore { store.subscribe(scopeSub.scope, declared, now, ::isHeld) }) {
                 is SubscribeResult.Subscribed -> {
+                    noteReclaimed(result.reclaimed)
                     // The *applied* bounds, so the push-recreate path below re-subscribes with them.
                     conn.subscriptions[scopeHex] = declared
                     subscribers.computeIfAbsent(scopeHex) { ConcurrentHashMap.newKeySet() }.add(conn)
@@ -1072,8 +1088,9 @@ class SpoolServer(
         if (withStore { store.isUnknownScope(aput.scope) }) {
             if (newScopeGates(conn, aput.scope, aput.pow?.d, aput.pow?.n, aput.q, now) != Gate.PASSED) return
             val declared = conn.subscriptions[hex(aput.scope)] ?: return
-            when (val result = withStore { store.subscribe(aput.scope, declared, now) }) {
+            when (val result = withStore { store.subscribe(aput.scope, declared, now, ::isHeld) }) {
                 is SubscribeResult.Subscribed -> {
+                    noteReclaimed(result.reclaimed)
                     conn.out.send(binary(RecordCodec.encode(digestRecord(aput.scope, result.digest))))
                 }
 
@@ -1155,8 +1172,9 @@ class SpoolServer(
             // new-scope gates apply, then the remembered bounds re-subscribe.
             if (newScopeGates(conn, push.scope, push.pow?.d, push.pow?.n, push.q, now) != Gate.PASSED) return
             val declared = conn.subscriptions[hex(push.scope)] ?: return
-            when (val result = withStore { store.subscribe(push.scope, declared, now) }) {
+            when (val result = withStore { store.subscribe(push.scope, declared, now, ::isHeld) }) {
                 is SubscribeResult.Subscribed -> {
+                    noteReclaimed(result.reclaimed)
                     conn.out.send(binary(RecordCodec.encode(digestRecord(push.scope, result.digest))))
                 }
 
@@ -1330,11 +1348,16 @@ class SpoolServer(
         }
     }
 
-    /** One sweeper pass: expiry broadcasts, cache pruning, watermark. Exposed for tests. */
+    /** One sweeper pass: expiry broadcasts, idle-scope reclaim, cache pruning, watermark. Exposed for tests. */
     internal suspend fun sweepTick() {
         val now = clock()
         val changes = withStore { store.sweep(now) }
         changes.forEach { broadcastDigest(it.scopeId, it.digest) }
+        val reclaimed = withStore { store.reclaimIdle(now, ::isHeld) }
+        if (reclaimed.isNotEmpty()) {
+            metrics.reclaimsTotal.add(reclaimed.size.toLong())
+            log.debug("sweep: reclaimed {} idle bare scope(s)", reclaimed.size)
+        }
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)

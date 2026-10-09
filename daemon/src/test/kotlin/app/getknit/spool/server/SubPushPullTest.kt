@@ -318,7 +318,8 @@ class SubPushPullTest {
     @Test
     fun maxScopesQuotaErrsPerScope() {
         withServer {
-            // hardLimits.maxScopes = 4
+            // hardLimits.maxScopes = 4, every one held by this live connection, so none is
+            // reclaimable however empty (ADR 2026-10.d2zb).
             connect {
                 helloHandshake()
                 (1..4).forEach { subscribe(testScope(it)) }
@@ -333,6 +334,33 @@ class SubPushPullTest {
                 assertEquals(ErrCode.QUOTA, err.code)
                 assertEquals(9L, err.q)
                 assertTrue(err.scope!!.contentEquals(testScope(5)))
+            }
+        }
+    }
+
+    /**
+     * A bare scope nobody subscribes to — a conversation that ended — gives its slot to a new
+     * one rather than answering `quota` (ADR 2026-10.d2zb). A scope holding a frame never does.
+     */
+    @Test
+    fun aNewScopeAtMaxScopesReclaimsTheLeastRecentlyActiveBareScope() {
+        withServer {
+            // hardLimits.maxScopes = 4; filled straight into the store, so no connection holds them.
+            val (id, data) = testBlob(1)
+            (1..4).forEach {
+                store.subscribe(testScope(it), testBounds(), clock.now + it)
+                if (it != 2) store.push(testScope(it), id, data, clock.now + it)
+            }
+            connect {
+                helloHandshake()
+                assertEquals(0, subscribe(testScope(5)).count)
+                assertTrue(store.isUnknownScope(testScope(2)))
+                assertEquals(4, store.scopeCount())
+                assertEquals(1L, spool.metrics.reclaimsTotal.sum())
+
+                // No bare scope left: the next newcomer is refused as before.
+                sendRecord(Sub(t = RecordType.SUB, q = 9L, subs = listOf(ScopeSub(scope = testScope(6), bounds = testBounds()))))
+                assertEquals(ErrCode.QUOTA, expectRecord<Err>(RecordType.ERR).code)
             }
         }
     }

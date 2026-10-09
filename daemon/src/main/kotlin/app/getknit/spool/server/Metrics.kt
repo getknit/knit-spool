@@ -39,6 +39,13 @@ class Metrics(
     val drainRefusedTotal = LongAdder()
 
     val shedsTotal = LongAdder()
+
+    /**
+     * Bare scopes given back (ADR 2026-10.d2zb): idle past their TTL, or evicted to admit a new
+     * scope at `SPOOL_MAX_SCOPES`. Apart from [shedsTotal] because nothing was lost: a shed drops
+     * held frames under byte pressure, a reclaim drops an empty row.
+     */
+    val reclaimsTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
 
     /**
@@ -104,6 +111,7 @@ class Metrics(
             line("knit_spool_max_conns", "gauge", maxConns.toLong())
             line("knit_spool_drain_refused_total", "counter", drainRefusedTotal.sum())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
+            line("knit_spool_reclaims_total", "counter", reclaimsTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())

@@ -39,6 +39,18 @@ document:
 - `:conformance`'s runner is callable: `runSuite` and `SuiteOptions` are public, and `Report`
   takes its output streams. The CLI's behaviour and exit codes are unchanged.
 
+### Fixed
+
+- **Empty scopes no longer hold `SPOOL_MAX_SCOPES` slots for ever** (ADR 2026-10.d2zb). Only the
+  byte watermark ever deleted a scope. The TTL sweep emptied scopes but kept their rows, so a quiet
+  spool, which never feels byte pressure, could fill all 64 slots with conversations that had ended
+  and answer every new one `quota`. A scope is now *bare* when it holds no frames, no attachments
+  and no tombstones. The sweeper drops bare scopes idle past their own `ttlMs`, and a new scope at
+  the cap evicts the least-recently-active bare scope before it is refused. Neither touches the
+  commons or a scope a live connection subscribes to, and neither ever drops a frame. A reclaimed
+  scope that comes back passes the new-scope gates (PoW, per-IP bucket) like any new one. Counted
+  in the new `knit_spool_reclaims_total`.
+
 ## [0.3.0](https://github.com/getknit/knit-spool/releases/tag/v0.3.0) — 2026-09-16T20:56:18Z
 
 > The hardening release. Every finding of the 2026-09-13 security review is closed: a wire id is

@@ -175,7 +175,7 @@ $ echo $?
 Exit **0** valid, **1** invalid (with the reason on stderr), **2** unknown command. The resolved
 config goes to stdout and warnings to stderr, so one can be parsed without filtering the other. It
 checks *configuration*, not store state: the one boot failure it cannot predict is a commons that
-will not fit because a persistent store already holds `SPOOL_MAX_SCOPES` scopes.
+will not fit because a persistent store already holds `SPOOL_MAX_SCOPES` scopes, none of them empty.
 
 ## 🔧 Configuration
 
@@ -193,7 +193,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
 | `SPOOL_POW_BITS` | `0` | PoW difficulty for unknown scopes (spec suggests 20; 0 = off) |
 | `SPOOL_MAX_BLOB` | `65536` | max sealed-blob bytes |
-| `SPOOL_MAX_SCOPES` | `64` | max scopes held; also the most scopes one `sub` may name — a longer one, or one naming a scope twice, is refused `malformed` whole |
+| `SPOOL_MAX_SCOPES` | `64` | max scopes held; at the cap a new scope evicts the least-recently-active empty scope nobody is subscribed to (and the sweeper drops ones idle past their TTL), and is refused `quota` only when there is none; also the most scopes one `sub` may name — a longer one, or one naming a scope twice, is refused `malformed` whole |
 | `SPOOL_MAX_FRAMES` | `1000` | per-scope frame-cap ceiling |
 | `SPOOL_MAX_TTL_MS` | `604800000` | per-scope TTL ceiling (7 d) |
 | `SPOOL_MAX_RECORD` | `131072` | max CBOR record bytes (must fit `SPOOL_MAX_BLOB` + 512) |
@@ -399,7 +399,7 @@ Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying ve
 `count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
 (current + total) and the `SPOOL_MAX_CONNS` cap they are measured against, records, pushes, events,
 PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
-sheds, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by code.
+sheds, bare scopes reclaimed, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by code.
 A Spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
 and how often its Spool-wide push budget throttled.
 

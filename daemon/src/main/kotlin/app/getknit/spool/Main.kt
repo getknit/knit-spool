@@ -138,8 +138,8 @@ private fun unknownVars(environment: Map<String, String>): List<String> =
  * Side-effect free by contract — it binds no port, opens no store, and creates no directory.
  *
  * What it therefore cannot tell you: whether the commons will actually be created. That fails at
- * boot only when a persistent store already holds `SPOOL_MAX_SCOPES` scopes, which needs the store
- * open to see. This checks configuration, not store state.
+ * boot only when a persistent store already holds `SPOOL_MAX_SCOPES` scopes, none of them empty,
+ * which needs the store open to see. This checks configuration, not store state.
  *
  * The resolved config goes to stdout and everything else to stderr, so a caller can parse one
  * without filtering the other.

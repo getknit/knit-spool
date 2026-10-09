@@ -95,9 +95,10 @@ vulnerabilities** — they are documented and out of scope for reports:
 - **Storage is not encrypted at rest.** SQLite holds bytes that were already sealed end-to-end; the
   Spool has no key that would make encrypting them meaningful.
 - **Capacity is bounded, not fair.** At the storage watermark the least-active scope is shed
-  wholesale, and within a scope the oldest frame by arrival is evicted. A well-behaved client that
-  shares a Spool with a noisy one can lose held frames — the client's answer is multi-homing and
-  re-push, not a promise from the Spool.
+  wholesale, and within a scope the oldest frame by arrival is evicted. At `SPOOL_MAX_SCOPES` a new
+  scope can displace only an empty scope nobody is subscribed to, never one holding frames. A
+  well-behaved client that shares a Spool with a noisy one can lose held frames — the client's
+  answer is multi-homing and re-push, not a promise from the Spool.
 - **A Spool can withhold, delay, or forget.** Availability from any single Spool is explicitly not
   guaranteed; that is why no Spool is load-bearing.
 - **`SPOOL_REQUIRE_MODERATION` is a request, not an enforcement.** The Spool holds ciphertext and

@@ -41,6 +41,13 @@ class SqliteScopeStore private constructor(
         /** One chunk row's charge in SQL — the same rule as [ScopeStore.chunkCharge]. */
         private const val CHUNK_CHARGE_SQL = "max(length(data), ${ScopeStore.ATTACH_CHUNK_FLOOR})"
 
+        /** A bare scope ([ScopeStore]) in SQL, over `scopes` aliased `s`: nothing but its row. */
+        private const val BARE_SQL =
+            "s.live_count = 0 " +
+                "AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.scope_id = s.scope_id) " +
+                "AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.scope_id = s.scope_id) " +
+                "AND NOT EXISTS (SELECT 1 FROM attachment_tombstones x WHERE x.scope_id = s.scope_id)"
+
         fun open(
             dataDir: Path,
             hardLimits: HardLimits,
@@ -269,6 +276,7 @@ class SqliteScopeStore private constructor(
         scopeId: ByteArray,
         declared: ScopeBounds,
         now: Long,
+        held: (ByteArray) -> Boolean,
     ): SubscribeResult =
         tx {
             val clamped =
@@ -278,13 +286,24 @@ class SqliteScopeStore private constructor(
                     maxBlob = declared.maxBlob.coerceIn(1, hardLimits.maxBlob),
                 )
             var row = readRow(scopeId)
+            var reclaimed: ByteArray? = null
             if (row == null) {
                 val count =
                     prep("SELECT COUNT(*) FROM scopes").executeQuery().use { rows ->
                         rows.next()
                         rows.getInt(1)
                     }
-                if (count >= hardLimits.maxScopes) return@tx SubscribeResult.QuotaExceeded
+                if (count >= hardLimits.maxScopes) {
+                    reclaimed =
+                        prep("SELECT s.scope_id FROM scopes s WHERE $BARE_SQL ORDER BY s.last_activity ASC")
+                            .executeQuery()
+                            .use { rows ->
+                                var found: ByteArray? = null
+                                while (found == null && rows.next()) found = rows.getBytes(1).takeUnless(held)
+                                found
+                            } ?: return@tx SubscribeResult.QuotaExceeded
+                    deleteScope(reclaimed)
+                }
                 val insert =
                     prep(
                         "INSERT INTO scopes (scope_id, max_frames, ttl_ms, max_blob, digest, live_count, live_bytes, last_activity) " +
@@ -303,7 +322,7 @@ class SqliteScopeStore private constructor(
             sweepScope(scopeId, row, now)
             enforceTombstoneCap(scopeId, row.bounds)
             writeRow(scopeId, row, now)
-            SubscribeResult.Subscribed(digestInfo(row))
+            SubscribeResult.Subscribed(digestInfo(row), reclaimed)
         }
 
     @Synchronized
@@ -470,17 +489,38 @@ class SqliteScopeStore private constructor(
                         freedBytes = rows.getLong(5),
                     )
                 }
-            // attachment_chunks has no foreign key of its own (see dropAttachment), so the scope
-            // cascade would leave its rows behind — a shed scope must take its bytes with it.
-            val deleteChunks = prep("DELETE FROM attachment_chunks WHERE scope_id = ?")
-            deleteChunks.setBytes(1, shed.scopeId)
-            deleteChunks.executeUpdate()
-            val delete = prep("DELETE FROM scopes WHERE scope_id = ?")
-            delete.setBytes(1, shed.scopeId)
-            delete.executeUpdate()
+            deleteScope(shed.scopeId)
             bytesTotal.addAndGet(-shed.freedBytes)
             shed
         }
+
+    @Synchronized
+    override fun reclaimIdle(
+        now: Long,
+        held: (ByteArray) -> Boolean,
+    ): List<ByteArray> =
+        tx {
+            val select = prep("SELECT s.scope_id FROM scopes s WHERE s.last_activity + s.ttl_ms < ? AND $BARE_SQL")
+            select.setLong(1, now)
+            val idle = ArrayList<ByteArray>()
+            select.executeQuery().use { rows ->
+                while (rows.next()) rows.getBytes(1).takeUnless(held)?.let(idle::add)
+            }
+            idle.forEach(::deleteScope)
+            idle
+        }
+
+    /** Deletes one scope and everything under it; the caller settles [bytesTotal]. */
+    private fun deleteScope(scopeId: ByteArray) {
+        // attachment_chunks has no foreign key of its own (see dropAttachment), so the scope
+        // cascade would leave its rows behind — a dropped scope must take its bytes with it.
+        val deleteChunks = prep("DELETE FROM attachment_chunks WHERE scope_id = ?")
+        deleteChunks.setBytes(1, scopeId)
+        deleteChunks.executeUpdate()
+        val delete = prep("DELETE FROM scopes WHERE scope_id = ?")
+        delete.setBytes(1, scopeId)
+        delete.executeUpdate()
+    }
 
     @Synchronized
     override fun attachmentPresence(

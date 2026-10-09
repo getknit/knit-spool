@@ -64,9 +64,19 @@ class InMemoryScopeStore(
         scopeId: ByteArray,
         declared: ScopeBounds,
         now: Long,
+        held: (ByteArray) -> Boolean,
     ): SubscribeResult {
         val key = hex(scopeId)
-        if (key !in scopes && scopes.size >= hardLimits.maxScopes) return SubscribeResult.QuotaExceeded
+        var reclaimed: ByteArray? = null
+        if (key !in scopes && scopes.size >= hardLimits.maxScopes) {
+            val victim =
+                scopes.entries
+                    .filter { isBare(it.value) }
+                    .sortedBy { it.value.lastActivity }
+                    .firstOrNull { !held(unhex(it.key)) } ?: return SubscribeResult.QuotaExceeded
+            scopes.remove(victim.key)
+            reclaimed = unhex(victim.key)
+        }
         val clamped =
             ScopeBounds(
                 maxFrames = declared.maxFrames.coerceIn(1, hardLimits.maxFramesCap),
@@ -78,7 +88,7 @@ class InMemoryScopeStore(
         scope.lastActivity = now
         sweepScope(scope, now)
         enforceTombstoneCap(scope)
-        return SubscribeResult.Subscribed(digestInfo(scope))
+        return SubscribeResult.Subscribed(digestInfo(scope), reclaimed)
     }
 
     @Synchronized
@@ -161,6 +171,27 @@ class InMemoryScopeStore(
         scopes.entries.mapNotNull { (key, scope) ->
             if (sweepScope(scope, now)) SweepChange(unhex(key), digestInfo(scope)) else null
         }
+
+    @Synchronized
+    override fun reclaimIdle(
+        now: Long,
+        held: (ByteArray) -> Boolean,
+    ): List<ByteArray> {
+        val idle =
+            scopes.entries
+                .filter { isBare(it.value) && it.value.lastActivity + it.value.bounds.ttlMs < now }
+                .map { it.key }
+                .filter { !held(unhex(it)) }
+        idle.forEach { scopes.remove(it) }
+        return idle.map(::unhex)
+    }
+
+    /** See [ScopeStore]: nothing but the row. A bare scope's byte counters are already zero. */
+    private fun isBare(scope: Scope): Boolean =
+        scope.live.isEmpty() &&
+            scope.tombstones.isEmpty() &&
+            scope.attachments.isEmpty() &&
+            scope.attachTombstones.isEmpty()
 
     @Synchronized
     override fun shedOldestScope(pinned: ByteArray?): ShedScope? {

@@ -171,14 +171,86 @@ abstract class ScopeStoreContractTest {
     @Test
     fun subscribeEnforcesTheScopeQuotaAtomically() {
         createStore().use { store ->
+            val (id, data) = blob(1)
             repeat(limits.maxScopes) { i ->
-                store.subscribed(ByteArray(32) { (i + 10).toByte() })
+                val held = ByteArray(32) { (i + 10).toByte() }
+                store.subscribed(held)
+                store.push(held, id, data, now = 0L) // not bare, so nothing to reclaim
             }
 
             assertIs<SubscribeResult.QuotaExceeded>(store.subscribe(ByteArray(32) { 99 }, bounds, now = 0L))
             // Re-subscribing a known scope is never quota-gated.
             store.subscribed(ByteArray(32) { 10 })
             assertEquals(limits.maxScopes, store.scopeCount())
+        }
+    }
+
+    @Test
+    fun subscribeAtTheCapEvictsTheLeastRecentlyActiveBareScope() {
+        createStore().use { store ->
+            val (id, data) = blob(1)
+            val scopes = List(limits.maxScopes) { i -> ByteArray(32) { (i + 10).toByte() } }
+            scopes.forEachIndexed { i, s ->
+                store.subscribed(s, now = i.toLong())
+                if (i != 3 && i != 5) store.push(s, id, data, now = i.toLong())
+            }
+            val newcomer = ByteArray(32) { 99 }
+
+            // Both bare scopes held: nothing may go, so the cap still refuses.
+            val bothHeld: (ByteArray) -> Boolean = { it.contentEquals(scopes[3]) || it.contentEquals(scopes[5]) }
+            assertIs<SubscribeResult.QuotaExceeded>(store.subscribe(newcomer, bounds, now = 10L, held = bothHeld))
+
+            // One held: the other goes, though it is the more recently active.
+            val heldOld = assertIs<SubscribeResult.Subscribed>(store.subscribe(newcomer, bounds, 10L) { it.contentEquals(scopes[3]) })
+            assertTrue(heldOld.reclaimed!!.contentEquals(scopes[5]))
+            assertTrue(store.isUnknownScope(scopes[5]))
+
+            // Nothing held: the least recently active bare scope goes, never one holding a frame.
+            val next = assertIs<SubscribeResult.Subscribed>(store.subscribe(ByteArray(32) { 98 }, bounds, now = 11L))
+            assertTrue(next.reclaimed!!.contentEquals(scopes[3]))
+            assertEquals(limits.maxScopes, store.scopeCount())
+            assertEquals(40L * (limits.maxScopes - 2), store.totalBytes())
+
+            // A known scope never reclaims anything.
+            assertNull(assertIs<SubscribeResult.Subscribed>(store.subscribe(scopes[0], bounds, now = 12L)).reclaimed)
+        }
+    }
+
+    @Test
+    fun reclaimIdleDropsOnlyBareScopesIdlePastTheirTtl() {
+        createStore().use { store ->
+            val bare = ByteArray(32) { 2 }
+            val recent = ByteArray(32) { 3 }
+            val held = ByteArray(32) { 4 }
+            val tombstoned = ByteArray(32) { 5 }
+            val attached = ByteArray(32) { 6 }
+            store.subscribed(bare, now = 0L)
+            store.subscribed(held, now = 0L)
+            store.subscribed(tombstoned, now = 0L)
+            store.subscribed(attached, now = 0L)
+            store.subscribed(recent, now = 9_000L)
+            val (id, data) = blob(1)
+            store.push(tombstoned, id, data, now = 0L)
+            val (cid, chunkData) = chunk(1)
+            assertIs<AputResult.Stored>(store.attachmentPut(attached, ByteArray(32) { 7 }, 0, 1, cid, chunkData, now = 0L))
+            val isHeld: (ByteArray) -> Boolean = { it.contentEquals(held) }
+
+            // Inside every scope's 10 s TTL: nothing is idle yet.
+            assertTrue(store.reclaimIdle(now = 10_000L, held = isHeld).isEmpty())
+
+            // The frame expires to a tombstone at 10_001, which outlives the scope's idleness.
+            store.sweep(now = 15_000L)
+            val first = store.reclaimIdle(now = 15_000L, held = isHeld)
+            assertEquals(listOf(bare.toList()), first.map { it.toList() })
+            assertTrue(store.isUnknownScope(bare))
+            assertTrue(!store.isUnknownScope(recent) && !store.isUnknownScope(held) && !store.isUnknownScope(tombstoned))
+
+            // Once the tombstone and the attachment have aged out, the rest go too — except held.
+            store.sweep(now = 40_000L)
+            val second = store.reclaimIdle(now = 40_000L, held = isHeld).map { it.toList() }.toSet()
+            assertEquals(setOf(recent.toList(), tombstoned.toList(), attached.toList()), second)
+            assertEquals(1, store.scopeCount())
+            assertEquals(0L, store.totalBytes())
         }
     }
 

@@ -188,6 +188,12 @@ class AttachmentErrTest {
                     subscribe(testScope(3), q = 2L)
                 }
                 assertEquals(limits.maxScopes, store.scopeCount())
+                // Each holds a frame, so neither is a bare scope the recreate could reclaim
+                // (ADR 2026-10.d2zb).
+                listOf(2, 3).forEach { seed ->
+                    val (heldId, heldBlob) = testBlob(seed)
+                    store.push(testScope(seed), heldId, heldBlob, clock.now)
+                }
 
                 val (id, blob) = testBlob(1)
                 sendRecord(Push(t = RecordType.PUSH, q = 10L, scope = shed, blobId = id, data = blob))
