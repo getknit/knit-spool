@@ -34,8 +34,13 @@ member re-push frames the scope had already expired.
 **Consequences / limits:** A dropped bare scope is unknown again, so its next `sub` or
 `push` goes through the new-scope gates: PoW on a mining spool, plus the per-IP new-scope
 bucket. The push-recreate path already handles a subscribed-but-missing scope after a
-shed. A connection that subscribes at the moment its scope is evicted can race the
-`held` check and land on that path; nothing is lost. This does not help a spool whose
+shed. A `sub` counts as held from before its store call until its subscriber entry
+exists (`SpoolServer.subscribing`), so a newcomer at the cap cannot evict a scope out from
+under a connection that is subscribing to it. `held` is a required argument, so no caller
+can forget it. A refused attempt at the cap scans the bare candidates each time. In one
+run of 300 attempts at 4,096 scopes it took a median of 0.5 ms with frames everywhere and
+1.2 ms with tombstones everywhere. The per-address new-scope bucket bounds how often that
+is paid. This does not help a spool whose
 slots are held by frames or by live subscribers. An attacker holding 64 subscriptions
 open still blocks creation exactly as before, bounded by the connection caps. The guards
 are `ScopeStoreContractTest` (`subscribeAtTheCapEvictsTheLeastRecentlyActiveBareScope`,

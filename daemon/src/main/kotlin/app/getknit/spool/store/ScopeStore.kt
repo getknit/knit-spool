@@ -186,13 +186,14 @@ interface ScopeStore : AutoCloseable {
     /**
      * Subscribe-time bounds declaration: clamps to the hard caps and (re)applies them. A new scope
      * on a spool at `maxScopes` evicts the least-recently-active bare scope not in [held] first,
-     * and is [SubscribeResult.QuotaExceeded] only when there is none.
+     * and is [SubscribeResult.QuotaExceeded] only when there is none. [held] has no default on
+     * purpose: a caller that forgot it would silently evict scopes live connections subscribe to.
      */
     fun subscribe(
         scopeId: ByteArray,
         declared: ScopeBounds,
         now: Long,
-        held: (ByteArray) -> Boolean = { false },
+        held: (ByteArray) -> Boolean,
     ): SubscribeResult
 
     fun digest(
@@ -248,7 +249,7 @@ interface ScopeStore : AutoCloseable {
      */
     fun reclaimIdle(
         now: Long,
-        held: (ByteArray) -> Boolean = { false },
+        held: (ByteArray) -> Boolean,
     ): List<ByteArray>
 
     /**

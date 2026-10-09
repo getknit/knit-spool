@@ -61,7 +61,7 @@ class SweeperTest {
     @Test
     fun theSweeperReclaimsIdleBareScopesNobodyHolds() {
         withServer(testConfig(commons = testCommons())) {
-            store.subscribe(testScope(2), testBounds(), clock.now)
+            store.subscribe(testScope(2), testBounds(), clock.now, held = { false })
             connect {
                 helloHandshake()
                 subscribe(testScope(1)) // ttlMs = 10_000

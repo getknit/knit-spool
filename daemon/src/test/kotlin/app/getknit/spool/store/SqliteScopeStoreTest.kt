@@ -33,14 +33,14 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
         val blobs = (1..4).map { blob(it) }
         var expectedDigest = 0L
         createStore().use { store ->
-            store.subscribe(scope, bounds, now = 0L)
+            store.subscribe(scope, bounds, now = 0L, held = { false })
             blobs.forEachIndexed { i, (id, data) -> store.push(scope, id, data, now = i.toLong()) }
             expectedDigest = assertIs<DigestInfo>(store.digest(scope, now = 4L)).digest
         }
 
         createStore().use { store ->
             assertEquals(false, store.isUnknownScope(scope))
-            val info = assertIs<SubscribeResult.Subscribed>(store.subscribe(scope, bounds, now = 5L)).digest
+            val info = assertIs<SubscribeResult.Subscribed>(store.subscribe(scope, bounds, now = 5L, held = { false })).digest
             assertEquals(expectedDigest, info.digest)
             assertEquals(3, info.count)
             assertEquals(bounds.maxFrames, info.bounds.maxFrames)
@@ -55,7 +55,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
     fun bootRecomputeHealsATamperedDigestColumn() {
         val (id, data) = blob(1)
         createStore().use { store ->
-            store.subscribe(scope, bounds, now = 0L)
+            store.subscribe(scope, bounds, now = 0L, held = { false })
             store.push(scope, id, data, now = 1L)
         }
 
@@ -78,7 +78,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
      */
     @Test
     fun aSchema1FileIsMigratedOnOpen() {
-        createStore().use { store -> store.subscribe(scope, bounds, now = 0L) }
+        createStore().use { store -> store.subscribe(scope, bounds, now = 0L, held = { false }) }
 
         DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { raw ->
             raw.createStatement().use {
@@ -111,7 +111,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
     @Test
     fun aClosedStoreRefusesInsteadOfAnsweringStale() {
         val store = createStore()
-        store.subscribe(scope, bounds, now = 0L)
+        store.subscribe(scope, bounds, now = 0L, held = { false })
         store.close()
 
         assertFailsWith<SQLException> { store.scopeCount() }
@@ -123,7 +123,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
         val cid = MessageDigest.getInstance("SHA-256").digest(data)
         val aid = ByteArray(32) { 9 }
         createStore().use { store ->
-            store.subscribe(scope, bounds, now = 0L)
+            store.subscribe(scope, bounds, now = 0L, held = { false })
             assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L))
         }
 
@@ -147,7 +147,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
         val cid = MessageDigest.getInstance("SHA-256").digest(data)
         val aid = ByteArray(32) { 9 }
         createStore().use { store ->
-            store.subscribe(scope, bounds, now = 0L)
+            store.subscribe(scope, bounds, now = 0L, held = { false })
             assertIs<AputResult.Stored>(store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L))
         }
 

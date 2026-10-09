@@ -15,6 +15,9 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.store.InMemoryScopeStore
+import app.getknit.spool.store.ScopeStore
+import app.getknit.spool.store.SubscribeResult
 import kotlinx.coroutines.TimeoutCancellationException
 import java.security.MessageDigest
 import kotlin.test.Test
@@ -348,7 +351,7 @@ class SubPushPullTest {
             // hardLimits.maxScopes = 4; filled straight into the store, so no connection holds them.
             val (id, data) = testBlob(1)
             (1..4).forEach {
-                store.subscribe(testScope(it), testBounds(), clock.now + it)
+                store.subscribe(testScope(it), testBounds(), clock.now + it, held = { false })
                 if (it != 2) store.push(testScope(it), id, data, clock.now + it)
             }
             connect {
@@ -363,5 +366,35 @@ class SubPushPullTest {
                 assertEquals(ErrCode.QUOTA, expectRecord<Err>(RecordType.ERR).code)
             }
         }
+    }
+
+    /**
+     * A `sub` holds its own scope from before the store call, so a newcomer at the cap cannot
+     * evict it between that call and the connection's subscriber entry (ADR 2026-10.d2zb).
+     */
+    @Test
+    fun aScopeIsHeldWhileItsSubIsInFlight() {
+        val config = testConfig()
+        val inner = InMemoryScopeStore(config.hardLimits)
+        val heldDuringSub = mutableListOf<Boolean>()
+        val probe =
+            object : ScopeStore by inner {
+                override fun subscribe(
+                    scopeId: ByteArray,
+                    declared: ScopeBounds,
+                    now: Long,
+                    held: (ByteArray) -> Boolean,
+                ): SubscribeResult {
+                    heldDuringSub.add(held(scopeId))
+                    return inner.subscribe(scopeId, declared, now, held)
+                }
+            }
+        withServer(config, store = probe) {
+            connect {
+                helloHandshake()
+                subscribe(testScope(1))
+            }
+        }
+        assertEquals(listOf(true), heldDuringSub)
     }
 }

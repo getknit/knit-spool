@@ -50,7 +50,7 @@ abstract class ScopeStoreContractTest {
         scopeId: ByteArray,
         declared: ScopeBounds = bounds,
         now: Long = 0L,
-    ): DigestInfo = assertIs<SubscribeResult.Subscribed>(subscribe(scopeId, declared, now)).digest
+    ): DigestInfo = assertIs<SubscribeResult.Subscribed>(subscribe(scopeId, declared, now, held = { false })).digest
 
     @Test
     fun pushFoldsTheDigestAndDuplicatesAreIdempotent() {
@@ -178,7 +178,7 @@ abstract class ScopeStoreContractTest {
                 store.push(held, id, data, now = 0L) // not bare, so nothing to reclaim
             }
 
-            assertIs<SubscribeResult.QuotaExceeded>(store.subscribe(ByteArray(32) { 99 }, bounds, now = 0L))
+            assertIs<SubscribeResult.QuotaExceeded>(store.subscribe(ByteArray(32) { 99 }, bounds, now = 0L, held = { false }))
             // Re-subscribing a known scope is never quota-gated.
             store.subscribed(ByteArray(32) { 10 })
             assertEquals(limits.maxScopes, store.scopeCount())
@@ -206,13 +206,13 @@ abstract class ScopeStoreContractTest {
             assertTrue(store.isUnknownScope(scopes[5]))
 
             // Nothing held: the least recently active bare scope goes, never one holding a frame.
-            val next = assertIs<SubscribeResult.Subscribed>(store.subscribe(ByteArray(32) { 98 }, bounds, now = 11L))
+            val next = assertIs<SubscribeResult.Subscribed>(store.subscribe(ByteArray(32) { 98 }, bounds, now = 11L, held = { false }))
             assertTrue(next.reclaimed!!.contentEquals(scopes[3]))
             assertEquals(limits.maxScopes, store.scopeCount())
             assertEquals(40L * (limits.maxScopes - 2), store.totalBytes())
 
             // A known scope never reclaims anything.
-            assertNull(assertIs<SubscribeResult.Subscribed>(store.subscribe(scopes[0], bounds, now = 12L)).reclaimed)
+            assertNull(assertIs<SubscribeResult.Subscribed>(store.subscribe(scopes[0], bounds, now = 12L, held = { false })).reclaimed)
         }
     }
 
