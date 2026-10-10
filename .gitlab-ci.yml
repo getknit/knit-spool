@@ -224,14 +224,18 @@ docker:
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:latest"
       fi
+      # A moving per-branch tag, so a lab box can track a branch without chasing short shas.
+      # $CI_COMMIT_REF_SLUG is the source branch in an MR pipeline too.
+      if [ -z "$CI_COMMIT_TAG" ]; then
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+      fi
       /kaniko/executor "$@"
     - echo "IMAGE_DIGEST=$(cat /kaniko/digest)" > build.env
   artifacts:
     reports:
       dotenv: build.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+  # Every pipeline, so any pushed branch gets an image. A branch with an open MR runs only the MR
+  # pipeline (see workflow:), which carries no $CI_COMMIT_BRANCH, so a branch-only rule would skip it.
 
 # Standalone tarballs for operators who run the daemon without Docker, and the artifact the
 # tagged release links to.
@@ -299,9 +303,7 @@ verify:trivy-image:
     when: always
     expire_in: 1 week
     paths: [trivy-image.json]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+  # Same rules as docker: every image this pipeline pushes gets scanned.
 
 # The repo already carries a tuned .mdlrc (relaxed style, three rules disabled with reasons) but
 # nothing ran it — the README is the project's front door and is hand-maintained, so lint it.
