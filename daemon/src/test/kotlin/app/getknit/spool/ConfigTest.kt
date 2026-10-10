@@ -297,6 +297,39 @@ class ConfigTest {
         assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_STUN_URLS" to five)) }
     }
 
+    /** Casts are off unless a rate is set, and need no secret, so they stand on their own like STUN. */
+    @Test
+    fun castsAreOffByDefaultAndParseAlone() {
+        val off = config(emptyMap())
+        assertEquals(0, off.rateCasts)
+        assertEquals(2_048, off.maxCast)
+        assertEquals(200, off.rateCastsTotal)
+        val on = config(mapOf("SPOOL_RATE_CASTS" to "4", "SPOOL_MAX_CAST" to "1500", "SPOOL_RATE_CASTS_TOTAL" to "50"))
+        assertEquals(4, on.rateCasts)
+        assertEquals(1_500, on.maxCast)
+        assertEquals(50, on.rateCastsTotal)
+    }
+
+    @Test
+    fun castBoundsAreRefusedOutsideTheirRange() {
+        for ((name, bad) in listOf(
+            "SPOOL_RATE_CASTS" to "-1",
+            "SPOOL_RATE_CASTS" to "101",
+            "SPOOL_MAX_CAST" to "0",
+            "SPOOL_RATE_CASTS_TOTAL" to "0",
+        )) {
+            val e = assertFailsWith<IllegalArgumentException>("$name=$bad") { config(mapOf(name to bad)) }
+            assertTrue(e.message!!.contains(name), e.message!!)
+        }
+    }
+
+    /** A cast is one record, so the largest one has to fit `SPOOL_MAX_RECORD` with its envelope. */
+    @Test
+    fun maxCastMustFitInARecord() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_MAX_CAST" to "131072")) }
+        assertTrue(e.message!!.contains("SPOOL_MAX_RECORD"), e.message!!)
+    }
+
     /** RFC 8032 §7.1 TEST 1's public key, as `ticket-keygen` prints one: unpadded base64url. */
     private val ticketKey =
         java.util.Base64

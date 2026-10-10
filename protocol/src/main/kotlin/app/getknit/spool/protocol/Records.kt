@@ -42,6 +42,10 @@ object RecordType {
     // Entitlement tickets (experimental; knit-next docs/VOICE_CALLS.md §2.6). Only ever sent to a
     // spool whose HELLO carried `ent`.
     const val ENT = "ent"
+
+    // Casts (experimental; knit-next docs/VOICE_CALLS.md §2.7, proposed spec §7.7): one name for both
+    // directions, like `hello` and `list`. Only ever sent to a spool whose HELLO carried `cast`.
+    const val CAST = "cast"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -175,6 +179,9 @@ class CommonsInfo(
  * needs one. [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
  * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
  * (VOICE_CALLS.md §2.6), and both omitted when off: `false` and an empty list are never sent.
+ *
+ * [cast] says the spool fans out [Cast]s, and within what (experimental, VOICE_CALLS.md §2.7). Omitted
+ * when casts are off. Beside [ent], a cast is admitted only on a scope a cast ticket has unlocked.
  */
 @Serializable
 class Hello(
@@ -188,6 +195,19 @@ class Hello(
     val turn: Boolean? = null,
     val ent: Boolean? = null,
     val stun: List<String>? = null,
+    val cast: CastInfo? = null,
+)
+
+/**
+ * The cast advertisement (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): this spool fans
+ * casts out. [maxBytes] bounds a cast's `data`, and [rate] is casts per second per connection, with a
+ * burst of four times that. Both are stated up front because a cast is never answered: a client that
+ * overshoots either is dropped without being told, so it has to know the bounds before it sends.
+ */
+@Serializable
+class CastInfo(
+    val maxBytes: Int,
+    val rate: Int,
 )
 
 @Serializable
@@ -318,6 +338,20 @@ class Ent(
     val q: Long,
     val tk: ByteArray,
     val sig: ByteArray,
+)
+
+/**
+ * A cast (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): one sealed frame for a scope's other
+ * live subscribers, never stored. Client→spool, it is the one client record with no `q`, and it is
+ * never answered — a refusal is a silent drop — because a shipped client reads a scoped `err` without
+ * a `q` as a refused `sub`. Spool→client it is relayed unchanged, uploader excluded, like an [Event]
+ * with no blob id: nothing about it is content-addressed, because nothing is kept.
+ */
+@Serializable
+class Cast(
+    val t: String,
+    val scope: ByteArray,
+    val data: ByteArray,
 )
 
 /** Client→spool: fetch up to [n] chunks from [from] (truncated at `maxAget`); [Achunk]s then a bare OK. */

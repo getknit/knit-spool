@@ -68,6 +68,7 @@ one conversation member.
 - [The commons](#-the-commons)
 - [Send-side moderation](#-send-side-moderation)
 - [TURN (experimental)](#-turn-experimental)
+- [Casts (experimental)](#-casts-experimental)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -227,6 +228,9 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
 | `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and `turnreq` needs a ticket. Reloadable |
 | `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
+| `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
+| `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
+| `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
 
 The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
@@ -368,7 +372,8 @@ knit-spool ticket-keygen                    # prints the signing key and SPOOL_T
 knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account alice
 ```
 
-`ticket-mint` prints a `knit-ticket:v1:…` line for a test client. Conformance takes the same key:
+`ticket-mint` prints a `knit-ticket:v1:…` line for a test client; `--cast` adds the cast flag
+([casts](#-casts-experimental)), and `--no-turn` drops TURN. Conformance takes the same key:
 `--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
 `knit_spool_ticket_refused_total{reason}` and `knit_spool_turn_issued_ticketed_total` count what
 happened. The Spool learns each holder's pseudonym and can link their connections within a day; it
@@ -378,6 +383,37 @@ What a relay sees that a Spool does not: **both callers' IP addresses, and how l
 Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed
 call setup. Run by the same operator as the Spool, the two logs can be joined. See
 [`HOSTING.md`](HOSTING.md#what-turn-costs) for the bandwidth.
+
+## 📻 Casts (experimental)
+
+> [!WARNING]
+> Experimental, on the `exp/turn` branch only. The record is a draft (knit-next
+> `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7), not yet in the spec, and may change without notice.
+
+When two phones in a call have no radio path and no live one, the call becomes a walkie-talkie:
+push to talk, a sealed chunk about every half second. Set `SPOOL_RATE_CASTS` and the Spool carries
+those chunks. **A cast is fanned out to the scope's other live subscribers and never stored**. It
+has no blob id, no digest entry, no tombstone, no listing and no row on disk. A phone that was not
+connected when it went out never gets it, which is what a walkie means.
+
+```
+{ t: "hello", …, cast: { maxBytes: 2048, rate: 4 } }
+{ t: "cast", scope, data }   // client → Spool: no q, never answered
+{ t: "cast", scope, data }   // Spool → every other subscriber of the scope
+```
+
+| | |
+|---|---|
+| **Never answered** | A cast carries no `q` and draws no `ok` or `err`. A refused one is dropped and counted: not subscribed, over `maxBytes`, over budget, the commons, or casts off. `hello` states the bounds up front, so a client can keep to them unprompted. |
+| **Never struck** | Past its budget a cast is just dropped. A flood still costs the record bucket every record does, and that bucket strikes. |
+| **Never a slow consumer** | A subscriber whose outbound channel is full loses that cast and nothing else. It is not counted toward the 4003 slow-consumer close. |
+| **Sold with tickets** | With `SPOOL_TICKET_KEY` set, a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One payer unlocks the scope both ways, so a free friend can talk back. Without a ticket key, any subscriber may cast. |
+| **Never logged** | No line names a cast or its scope. `knit_spool_casts_total`, `knit_spool_casts_fanned_total` and `knit_spool_casts_dropped_total{reason}` count them, and the status line shows `casts=+N`. |
+
+What a Spool sees of a cast: that a conversation is in a walkie session, who talks when and for how
+long, and both phones' addresses. It never sees what was said: each cast is sealed under the
+conversation's key, and the chunk inside it is sealed again under the pair's ratchet. Client-side
+padding hides chunk sizes. See [`HOSTING.md`](HOSTING.md#what-casts-cost) for the bandwidth.
 
 ## 🌐 Deploy
 
@@ -557,6 +593,8 @@ this feature exists to avoid.
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
+| `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
+| `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope

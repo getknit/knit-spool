@@ -36,7 +36,7 @@ class Ticket(
     val exp: Long,
     /** The daily pseudonym, [Tickets.PS_BYTES] opaque bytes the issuer derives. */
     val ps: ByteArray,
-    /** What it entitles: a bitmask of [Tickets.FL_TURN] and, later, more. */
+    /** What it entitles: a bitmask of [Tickets.FL_TURN], [Tickets.FL_CAST] and, later, more. */
     val fl: Long,
 ) {
     companion object {
@@ -87,6 +87,13 @@ object Tickets {
 
     /** [Ticket.fl] bit: the holder may ask for TURN credentials. */
     const val FL_TURN = 1L
+
+    /**
+     * [Ticket.fl] bit 3: the holder may cast, and unlocks casts for every other subscriber of each scope
+     * its connection holds (VOICE_CALLS.md §2.7). Bits 1 and 2 stay reserved for ADR 2026-10.bxsg's
+     * proposed files and scope-creation claims.
+     */
+    const val FL_CAST = 8L
 
     const val KEY_BYTES = 32
     const val SIG_BYTES = 64

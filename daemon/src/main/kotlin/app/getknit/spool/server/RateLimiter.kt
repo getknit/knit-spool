@@ -9,6 +9,8 @@ private const val MS_PER_SECOND = 1000.0
 private const val IP_TURN_FACTOR = 4.0
 private const val TURN_WINDOW_S = 600.0
 private const val TURN_IP_BURST = 2.0
+private const val IP_CAST_FACTOR = 4.0
+private const val CAST_BURST_FACTOR = 4.0
 
 /**
  * Token bucket for the spec §6.4 rate limits. `take()` returns 0 on success or the milliseconds
@@ -60,12 +62,12 @@ class StrikeWindow(
 
 /**
  * Per-client-IP state: connection count, the new-scope-creation bucket and, on a spool that issues
- * TURN credentials, their per-address budget — four times one connection's, so a household behind
- * one address is not one caller.
+ * TURN credentials or fans out casts, their per-address budgets — four times one connection's, so
+ * a household behind one address is not one caller.
  */
 class IpState(
     rateNewScopesPerMin: Int,
-    clock: () -> Long,
+    private val clock: () -> Long,
     turnRatePer10Min: Int? = null,
 ) {
     val connections = AtomicInteger(0)
@@ -81,6 +83,22 @@ class IpState(
         turnRatePer10Min?.let {
             TokenBucket(ratePerSec = IP_TURN_FACTOR * it / TURN_WINDOW_S, burst = IP_TURN_FACTOR * TURN_IP_BURST, clock = clock)
         }
+
+    private var castBucket: TokenBucket? = null
+    private var castRate = 0
+
+    /**
+     * This address's cast budget, four times one connection's like [turnBucket], built for [rate]
+     * casts a second. Built on first use and rebuilt when a reload moves the rate, because casts
+     * can be switched on long after this address first connected.
+     */
+    @Synchronized
+    fun castBucket(rate: Int): TokenBucket {
+        val current = castBucket
+        if (current != null && castRate == rate) return current
+        castRate = rate
+        return TokenBucket(IP_CAST_FACTOR * rate, IP_CAST_FACTOR * CAST_BURST_FACTOR * rate, clock).also { castBucket = it }
+    }
 
     @Volatile
     var lastSeen = 0L

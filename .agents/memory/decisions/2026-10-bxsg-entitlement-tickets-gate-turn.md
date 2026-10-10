@@ -72,7 +72,7 @@ Ticket {
   nbf: uint      // Unix seconds
   exp: uint      // Unix seconds; nbf + at most 48 h
   ps:  bstr(16)  // daily pseudonym = HMAC(storefront key, account ‖ aud ‖ UTC day of nbf)[0..16]
-  fl:  uint      // bit 0 turn, bit 1 files, bit 2 create scopes
+  fl:  uint      // bit 0 turn, bit 1 files, bit 2 create scopes, bit 3 cast
   ab:  uint?     // attachment bytes this pseudonym may upload per ticket day
   sc:  uint?     // new scopes this pseudonym may create per ticket day
 }
@@ -97,6 +97,9 @@ Ticket {
   S-7.6-7, "random per issue", is amended for ticketed issues only.
 - **`aput`** needs `fl.files`. Each stored chunk's `chunkCharge` is charged to the
   pseudonym's in-memory daily upload budget, `min(ab, SPOOL_TICKET_ATTACH_BYTES)`.
+- **`cast`** (amended 2026-10-10, ADR 2026-10.3wdy) needs bit 3, held by *some* live
+  subscriber of the cast's scope rather than by the caster, so one payer unlocks a walkie
+  both ways. A refusal is a silent drop, since a cast is never answered.
 - **Scope creation** (the unknown-scope path of `sub`, `push` and `aput`) needs
   `fl.create` and the `sc` budget when `SPOOL_TICKET_CREATE=true`. Existing scopes stay
   open to anyone who knows their id, so a customer's free friends can still text through

@@ -89,6 +89,18 @@ class TicketToolTest {
         assertEquals(48L * 3_600, ticket.exp - ticket.nbf)
     }
 
+    /** Casts are minted only on request, with TURN or without it. */
+    @Test
+    fun castMintsBitThreeBesideWhateverTurnSays() {
+        val (keyFile, _) = keygen()
+        val (_, both) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--cast")
+        assertEquals(Tickets.FL_TURN or Tickets.FL_CAST, claims(both.single()).fl)
+        val (_, castOnly) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--cast", "--no-turn")
+        assertEquals(Tickets.FL_CAST, claims(castOnly.single()).fl)
+        val (_, turnOnly) = mint("--key-file", keyFile.toString(), "--aud", "lab.example")
+        assertEquals(Tickets.FL_TURN, claims(turnOnly.single()).fl)
+    }
+
     @Test
     fun badInvocationsExitNonZeroWithoutPrintingAKey() {
         val (keyFile, _) = keygen()

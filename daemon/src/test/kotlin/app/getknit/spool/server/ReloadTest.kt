@@ -123,6 +123,25 @@ class ReloadTest {
         }
     }
 
+    /**
+     * Casts switch on for connections opened after the reload, like STUN, and every cast setting is
+     * runtime: a reload names none of them as ignored.
+     */
+    @Test
+    fun castsSwitchOnForNewConnections() {
+        withServer(testConfig()) {
+            connect {
+                assertNull(helloHandshake().cast)
+                assertTrue(spool.reload(testConfig(rateCasts = 4, maxCast = 1_024, rateCastsTotal = 20)).isEmpty())
+            }
+            connect {
+                val cast = helloHandshake().cast
+                assertEquals(4, cast?.rate)
+                assertEquals(1_024, cast?.maxBytes)
+            }
+        }
+    }
+
     /** A reload that changes nothing reports nothing. */
     @Test
     fun anIdenticalReloadIsSilent() {

@@ -29,6 +29,7 @@ the [README](README.md#-deploy) has the rest.
 - [Architecture](#architecture)
 - [What a commons costs](#what-a-commons-costs)
 - [What TURN costs](#what-turn-costs)
+- [What casts cost](#what-casts-cost)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
@@ -267,6 +268,27 @@ defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it. Each all
 UDP port from the 840-port default range (49160–49999), which leaves room to raise
 `TURN_TOTAL_QUOTA` without reopening the firewall; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the
 firewall rule) if the quota ever passes it.
+
+## What casts cost
+
+Casts (experimental, off by default, see the README) carry a walkie-talkie's chunks when two
+phones have no radio path. Nothing is stored, so the cost is bandwidth alone, and it is small: a
+talking phone sends a sealed chunk of about 800 bytes every 480 ms, about **1.8 KB/s** with the
+record around it. The Spool sends it once to each other subscriber of the conversation, one for a DM,
+so a walkie costs about **6 MB out per hour of talking** and as much in. A walkie is push to talk, one side at a time, so
+an hour on the call screen is usually much less. 1 TB a month covers on the order of 100,000
+talking-hours.
+
+The worst case is set by the Spool-wide budget, not by honest use. `SPOOL_RATE_CASTS_TOTAL` (200
+casts a second, burst 4×) bounds what comes in. What goes out is that times the cast size
+(`SPOOL_MAX_CAST`, 2 KB) times each scope's other subscribers, which is about 400 KB/s per
+listener at saturation. Anyone who learns a scope id can subscribe to it (spec §10.4), so a scope
+can have more listeners than the pair. Size the budget for what you will pay at saturation, as for
+TURN. On a ticketed Spool only a scope a cast ticket has unlocked carries any, which keeps strangers'
+casts off the bill.
+
+CPU and memory are noise beside the store's: a cast is one decode, a few table reads and one
+encode, and the Spool holds none of them.
 
 ## Upgrading without a reconnect storm
 

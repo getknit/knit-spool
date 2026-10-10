@@ -70,6 +70,9 @@ internal val KNOWN_VARS =
         "SPOOL_STUN_URLS",
         "SPOOL_TICKET_KEY",
         "SPOOL_TICKET_AUDIENCE",
+        "SPOOL_RATE_CASTS",
+        "SPOOL_MAX_CAST",
+        "SPOOL_RATE_CASTS_TOTAL",
     )
 
 /**
@@ -78,6 +81,12 @@ internal val KNOWN_VARS =
  * for the record around them.
  */
 private const val ID_RECORD_BYTES = 34
+
+/**
+ * The most casts a second one connection may be allowed. An honest walkie sends about two; past a
+ * hundred the per-connection bucket bounds nothing the record bucket does not already.
+ */
+private const val MAX_CAST_RATE = 100
 
 /** A coturn REST secret is an HMAC key; 32 characters is the floor `openssl rand -base64 24` clears. */
 private const val MIN_TURN_SECRET = 32
@@ -385,6 +394,11 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         "SPOOL_TOKEN_NEXT is set but SPOOL_TOKEN is not: set both during a rotation, then promote NEXT into TOKEN"
     }
     require(tokenNext == null || tokenNext != token) { "SPOOL_TOKEN_NEXT must differ from SPOOL_TOKEN" }
+    // Casts (experimental, VOICE_CALLS.md §2.7). A rate of 0 is the off switch and the default.
+    val maxCast = intVar(env, "SPOOL_MAX_CAST", default = 2_048, min = 1)
+    require(maxCast + RECORD_ENVELOPE <= maxRecord) {
+        "SPOOL_MAX_CAST ($maxCast) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
+    }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
         token = token,
@@ -412,6 +426,9 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         turn = turnFromEnv(env),
         stunUrls = stunFromEnv(env),
         ticket = ticketFromEnv(env),
+        rateCasts = intVar(env, "SPOOL_RATE_CASTS", default = 0, min = 0, max = MAX_CAST_RATE),
+        maxCast = maxCast,
+        rateCastsTotal = intVar(env, "SPOOL_RATE_CASTS_TOTAL", default = 200, min = 1),
     )
 }
 

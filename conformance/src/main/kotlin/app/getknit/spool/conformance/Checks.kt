@@ -8,6 +8,8 @@ import app.getknit.spool.protocol.Ahas
 import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
+import app.getknit.spool.protocol.Cast
+import app.getknit.spool.protocol.CastInfo
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.CommonsInfo
@@ -49,6 +51,15 @@ import kotlin.random.Random
 
 /** Grace window in which a record that must NOT arrive is awaited (uploader echo, duplicate event). */
 private const val EVENT_GRACE_MS = 500L
+
+/** A cast's payload in the cast checks: about a sealed walkie chunk. */
+private const val CAST_PROBE_BYTES = 797
+
+/** The burst a cast budget allows, as a multiple of its advertised rate (VOICE_CALLS.md §2.7). */
+private const val CAST_BURST_FACTOR = 4
+
+/** How many casts past the burst `cast-rate` sends. */
+private const val CAST_RATE_EXCESS = 10
 
 /** Generous CBOR envelope allowance for a push record beyond its `data` payload. */
 private const val PUSH_RECORD_OVERHEAD = 128L
@@ -147,6 +158,7 @@ class Ctx(
         aud: String = ticketAudience ?: FOREIGN_AUDIENCE,
         nbfS: Long = System.currentTimeMillis() / MS_PER_S - TICKET_BACKDATE_S,
         expS: Long = nbfS + TICKET_LIFETIME_S,
+        fl: Long = Tickets.FL_TURN,
     ): Ent {
         val ticket =
             Ticket.forKey(
@@ -155,7 +167,7 @@ class Ctx(
                 nbf = nbfS,
                 exp = expS,
                 ps = Random.nextBytes(Tickets.PS_BYTES),
-                fl = Tickets.FL_TURN,
+                fl = fl,
             )
         val (tk, sig) = Tickets.issue(signingKey, ticket)
         return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
@@ -247,6 +259,13 @@ fun allChecks(): List<Check> =
         entExpired(),
         entAudience(),
         stunShape(),
+        // Experimental (VOICE_CALLS.md §2.7): casts. cast-rate last of them, since it drains this
+        // address's cast budget.
+        castAdvertised(),
+        castFanout(),
+        castSilentRefusal(),
+        castTicket(),
+        castRate(),
         rateLimit(),
         quotaScopes(),
     )
@@ -463,6 +482,177 @@ private fun stunShape(): Check =
         ensure(stun.isNotEmpty()) { "hello carries an empty stun list; omitted is the off state" }
         stun.forEach { url ->
             ensure(STUN_URI.matches(url)) { "expected a stun:/stuns: URI with no credential, got \"$url\"" }
+        }
+    }
+
+/** Skips every cast check on a spool whose `hello` carried no `cast` (experimental, VOICE_CALLS.md §2.7). */
+private fun Ctx.requireCast(): CastInfo = serverHello.cast ?: throw SkipCheck("spool advertises no cast (VOICE_CALLS.md §2.7)")
+
+/**
+ * Lets [session] cast where the spool sells casts: on a spool whose `hello` carried `ent`, a cast
+ * ticket under this run's key. Without the key no cast is admissible there, so the check skips.
+ */
+private suspend fun Ctx.unlockCasts(session: Session) {
+    if (serverHello.ent != true) return
+    val ent = ent(session.nextQ(), fl = Tickets.FL_CAST)
+    session.send(ent)
+    ensure(session.expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a cast ticket" }
+}
+
+private fun Ctx.castOf(
+    scope: ByteArray,
+    size: Int = CAST_PROBE_BYTES,
+): Cast = Cast(t = RecordType.CAST, scope = scope, data = Random.nextBytes(size))
+
+/**
+ * Proves nothing was sent to [this] ahead of a `list` for [scope]: the spool handles a connection's
+ * records in order, so anything a cast drew would arrive before the listing. Digests are skipped.
+ */
+private suspend fun Session.nextIsListing(scope: ByteArray): ScopeList {
+    val q = nextQ()
+    send(ScopeList(t = RecordType.LIST, q = q, scope = scope))
+    while (true) {
+        val bytes = receiveBytes()
+        when (val t = RecordCodec.peekType(bytes)) {
+            RecordType.DIGEST -> {
+                Unit
+            }
+
+            RecordType.LIST -> {
+                val list = RecordCodec.decode<ScopeList>(bytes) ?: throw CheckFailure("expected a listing that decodes")
+                ensure(list.q == q) { "expected the listing for q=$q, got q=${list.q}" }
+                return list
+            }
+
+            else -> {
+                throw CheckFailure("expected nothing before the listing, got '$t'")
+            }
+        }
+    }
+}
+
+/** The next cast at [this], skipping digests, with what it should carry. */
+private suspend fun Session.expectCast(sent: Cast) {
+    val got = expect<Cast>(RecordType.CAST)
+    ensure(got.scope.contentEquals(sent.scope)) { "expected the cast for scope ${hex(sent.scope)}, got ${hex(got.scope)}" }
+    ensure(got.data.contentEquals(sent.data)) { "expected the cast's data unchanged" }
+}
+
+/** A `cast` advertisement is a positive size inside a record and a positive rate. */
+private fun castAdvertised(): Check =
+    Check(name = "cast-advertised") { ctx ->
+        val cast = ctx.requireCast()
+        ensure(cast.maxBytes in 1..ctx.limits().maxRecord) { "cast maxBytes ${cast.maxBytes} outside 1..maxRecord" }
+        ensure(cast.rate >= 1) { "cast rate ${cast.rate}; omitted is the off state, never 0" }
+    }
+
+/**
+ * A cast reaches the scope's other subscriber unchanged and never comes back to its caster, not even
+ * as an answer, and leaves nothing behind: the listing stays empty.
+ */
+private fun castFanout(): Check =
+    Check(name = "cast-fanout") { ctx ->
+        ctx.requireCast()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.unlockCasts(a)
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val sent = ctx.castOf(scope)
+                a.send(sent)
+                val listing = a.nextIsListing(scope)
+                b.expectCast(sent)
+                ensure(listing.blobIds.isNullOrEmpty()) { "expected a cast never to be listed, got ${listing.blobIds?.size} ids" }
+                ensure(listing.tombstones.isNullOrEmpty()) { "expected a cast never to leave a tombstone" }
+            }
+        }
+    }
+
+/** Casts the spool will not carry are dropped without a word, and the connection stays usable. */
+private fun castSilentRefusal(): Check =
+    Check(name = "cast-silent-refusal") { ctx ->
+        val cast = ctx.requireCast()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            hello()
+            ctx.unlockCasts(this)
+            ctx.subscribeFresh(this, scope)
+            send(ctx.castOf(ctx.randomScope())) // a scope this connection never subscribed
+            send(ctx.castOf(scope, size = cast.maxBytes + 1))
+            nextIsListing(scope)
+        }
+    }
+
+/**
+ * On a spool that sells casts, a scope nobody holds a cast ticket for carries none; once one
+ * subscriber presents one, an unticketed subscriber's cast is heard.
+ */
+private fun castTicket(): Check =
+    Check(name = "cast-ticket") { ctx ->
+        ctx.requireCast()
+        ctx.requireEnt()
+        if (ctx.ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no cast ticket can be made")
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                a.send(ctx.castOf(scope))
+                a.nextIsListing(scope)
+                b.nextIsListing(scope)
+                ctx.unlockCasts(b)
+                val heard = ctx.castOf(scope)
+                a.send(heard)
+                b.expectCast(heard)
+            }
+        }
+    }
+
+/**
+ * Advisory: a burst well past `rate × 4` fans out no more than the burst, give or take what refills
+ * while it is sent. A spool may hold casts to a tighter budget than it advertises; never a looser one.
+ */
+private fun castRate(): Check =
+    Check(name = "cast-rate", must = false) { ctx ->
+        val cast = ctx.requireCast()
+        val burst = CAST_BURST_FACTOR * cast.rate
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.unlockCasts(a)
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val started = System.currentTimeMillis()
+                repeat(burst + CAST_RATE_EXCESS) { a.send(ctx.castOf(scope)) }
+                a.nextIsListing(scope)
+                val elapsedS = (System.currentTimeMillis() - started + MS_PER_S - 1) / MS_PER_S
+                val allowed = burst + cast.rate * elapsedS
+                var heard = 0
+                val q = b.nextQ()
+                b.send(ScopeList(t = RecordType.LIST, q = q, scope = scope))
+                while (true) {
+                    val bytes = b.receiveBytes()
+                    when (RecordCodec.peekType(bytes)) {
+                        RecordType.CAST -> heard++
+                        RecordType.LIST -> break
+                        else -> Unit
+                    }
+                }
+                if (heard > allowed) throw Advisory("$heard casts fanned out of a burst the advertised rate allows $allowed of")
+            }
         }
     }
 

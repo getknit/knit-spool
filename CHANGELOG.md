@@ -48,6 +48,17 @@ document:
   ticket-keygen` and `ticket-mint` stand in for an issuer. New conformance checks `ent-advertised`,
   `ent-foreign-key`, `ent-required`, `ent-accepts`, `ent-expired`, `ent-audience` and `stun-shape`
   (`--ticket-key-file`, `--ticket-audience`); the TURN checks present a ticket where one is needed.
+- **Experimental: casts, a walkie-talkie's chunks relayed live and never stored** (draft in knit-next
+  `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7). With `SPOOL_RATE_CASTS` above 0, `hello` carries
+  `cast: { maxBytes, rate }` and a new `cast` record goes to every other subscriber of its scope. It
+  never touches the store: no blob, digest, tombstone, listing or disk. A cast has no `q` and is never
+  answered. A refused one is dropped and counted in `knit_spool_casts_dropped_total{reason}`, never
+  struck, and never counted toward the slow-consumer close. With a ticket key, a cast needs some
+  subscriber of its scope to hold a ticket with the new cast flag (bit 3, `ticket-mint --cast`), so
+  one payer unlocks the scope both ways. Budgets are per connection, per address and Spool-wide
+  (`SPOOL_RATE_CASTS_TOTAL`), with `SPOOL_MAX_CAST` bounding the size; all reloadable, and a rate of
+  0 stops casts at once. Off by default. New conformance checks `cast-advertised`, `cast-fanout`,
+  `cast-silent-refusal`, `cast-ticket` and the advisory `cast-rate`.
 
 ### Changed
 

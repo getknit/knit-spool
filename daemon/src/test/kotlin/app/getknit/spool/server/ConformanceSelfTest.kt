@@ -77,6 +77,7 @@ class ConformanceSelfTest {
         turn = testTurn(),
         stunUrls = stunUrls,
         ticket = ticket,
+        rateCasts = 4,
     )
 
     /** The CI job's shape — no token, no commons, no moderation — against the persistent store. */
@@ -233,9 +234,10 @@ class ConformanceSelfTest {
                 "ent-expired",
                 "ent-audience",
                 "stun-shape",
+                "cast-ticket",
             )
 
-        /** What skips without a token, a commons, a moderation flag or TURN — the CI job's exact SKIP set. */
+        /** What skips without a token, a commons, a moderation flag, TURN or casts — the CI job's exact SKIP set. */
         val BARE_SKIPS =
             setOf(
                 "auth-required",
@@ -246,6 +248,11 @@ class ConformanceSelfTest {
                 "turn-requires-sub",
                 "turn-cred-shape",
                 "turn-hmac",
+                // Casts are off by default.
+                "cast-advertised",
+                "cast-fanout",
+                "cast-silent-refusal",
+                "cast-rate",
             ) + TICKET_AND_STUN_CHECKS
     }
 }

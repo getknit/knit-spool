@@ -12,6 +12,11 @@ ships today. Two parts do not exist yet, and the diagram's notes mark them:
   answers 403), and coturn silently drops the free phone's checks. This gap, not the TURN
   protocol, is what decides the "one payer is enough" claim.
 
+When neither phone has a radio path to the other and the live call cannot connect, the call
+can fall back to a walkie-talkie whose chunks ride `cast` records (ADR 2026-10.3wdy). The
+payer's cast ticket unlocks that on any spool where both phones subscribe the DM scope, in
+both directions, and no TURN allocation is involved. The diagram leaves it out.
+
 What the diagram relies on, read in coturn 4.18.0 (tag `4.18.0`, commit `23c6c1d`):
 
 - **Permissions are keyed on the peer's IP, not its port** (`src/server/ns_turn_allocation.c`,

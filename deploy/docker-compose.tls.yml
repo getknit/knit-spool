@@ -105,6 +105,11 @@ services:
       # must name; with them, turnreq needs a ticket. Both or neither.
       SPOOL_TICKET_KEY:
       SPOOL_TICKET_AUDIENCE:
+      # Casts (experimental): a walkie's chunks fanned out to a scope's other subscribers and never
+      # stored. SPOOL_RATE_CASTS unset or 0 = off. With a ticket key, a cast needs a cast ticket.
+      SPOOL_RATE_CASTS:
+      SPOOL_MAX_CAST:
+      SPOOL_RATE_CASTS_TOTAL:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

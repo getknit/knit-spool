@@ -16,6 +16,7 @@ growing an explanation, that explanation belongs in the ADR.
 | `TURN_*` quotas, `bps-capacity` or the relay port range | [ADR 2026-10.y2ph](../memory/decisions/2026-10-y2ph-the-turn-overlay-s-default.md) |
 | `maxScopes`, scope deletion, `reclaimIdle` or `shedOldestScope` | [ADR 2026-10.d2zb](../memory/decisions/2026-10-d2zb-bare-scopes-are-reclaimed.md) |
 | `auto_vacuum`, `incremental_vacuum`, `reclaimSpace`, `temp_store_directory` or the store file's size | [ADR 2026-10.us34](../memory/decisions/2026-10-us34-freed-sqlite-pages-go-back.md) |
+| `cast`, `handleCast` / `fanOutCast`, `SPOOL_*CAST*` or `Tickets.FL_CAST` | [ADR 2026-10.3wdy](../memory/decisions/2026-10-3wdy-casts-fan-out-unstored.md) |
 
 ## Where they live
 

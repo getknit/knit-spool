@@ -73,6 +73,9 @@ fun testConfig(
     turn: SpoolServer.TurnConfig? = null,
     stunUrls: List<String> = emptyList(),
     ticket: SpoolServer.TicketConfig? = null,
+    rateCasts: Int = 0,
+    maxCast: Int = 2_048,
+    rateCastsTotal: Int = 200,
 ): SpoolServer.Config =
     SpoolServer.Config(
         port = 0,
@@ -100,6 +103,9 @@ fun testConfig(
         turn = turn,
         stunUrls = stunUrls,
         ticket = ticket,
+        rateCasts = rateCasts,
+        maxCast = maxCast,
+        rateCastsTotal = rateCastsTotal,
     )
 
 /** Whether [needle] occurs anywhere in this array — for asserting what an encoded record does *not* carry. */
