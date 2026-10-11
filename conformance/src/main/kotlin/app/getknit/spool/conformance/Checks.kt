@@ -159,6 +159,7 @@ class Ctx(
         nbfS: Long = System.currentTimeMillis() / MS_PER_S - TICKET_BACKDATE_S,
         expS: Long = nbfS + TICKET_LIFETIME_S,
         fl: Long = Tickets.FL_TURN,
+        ab: Long? = null,
     ): Ent {
         val ticket =
             Ticket.forKey(
@@ -168,10 +169,14 @@ class Ctx(
                 exp = expS,
                 ps = Random.nextBytes(Tickets.PS_BYTES),
                 fl = fl,
+                ab = ab,
             )
         val (tk, sig) = Tickets.issue(signingKey, ticket)
         return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
     }
+
+    /** Whether this spool requires a ticket for [flag] (S-7.6-13): `entGates`, or 9 beside a bare `ent`. */
+    fun gated(flag: Long): Boolean = serverHello.ticketGates and flag != 0L
 
     /**
      * A stamp for [scope] at the advertised difficulty: null when PoW is off, [SkipCheck] when the
@@ -259,6 +264,10 @@ fun allChecks(): List<Check> =
         entExpired(),
         entAudience(),
         stunShape(),
+        // Experimental (VOICE_CALLS.md §2.6, S-7.6-22/23): which capabilities a ticket gates, and files.
+        entGates(),
+        filesTicket(),
+        filesReceive(),
         // Experimental (VOICE_CALLS.md §2.7): casts. cast-rate last of them, since it drains this
         // address's cast budget.
         castAdvertised(),
@@ -314,12 +323,12 @@ private fun Ctx.requireTurn() {
 }
 
 /**
- * Earns one credential the way this spool asks (a ticket where `hello` carried `ent`, a fresh
+ * Earns one credential the way this spool asks (a ticket where `hello` gates `turn`, a fresh
  * subscription otherwise), then asks for it — the shape every TURN check needs. Call once per
  * connection: a second call presents or subscribes again.
  */
 private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
-    if (ctx.serverHello.ent == true) {
+    if (ctx.gated(Tickets.FL_TURN)) {
         val ent = ctx.ent(nextQ())
         send(ent)
         ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for the ticket" }
@@ -336,7 +345,7 @@ private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
 /**
  * Proposed §7.6 (S-7.6-4): a connection holding no subscription is refused `not_subscribed`, echoing
  * `q` and naming no scope — the request has none, and the refusal must not invent one. Where `hello`
- * carried `ent`, the ticket gate replaces this one (S-7.6-16) and the refusal is `ticket`.
+ * gates `turn` (S-7.6-13), the ticket gate replaces this one (S-7.6-16) and the refusal is `ticket`.
  */
 private fun turnRequiresSub(): Check =
     Check(name = "turn-requires-sub") { ctx ->
@@ -345,7 +354,7 @@ private fun turnRequiresSub(): Check =
             hello()
             val q = nextQ()
             send(TurnReq(t = RecordType.TURNREQ, q = q))
-            val err = expectErr(if (ctx.serverHello.ent == true) ErrCode.TICKET else ErrCode.NOT_SUBSCRIBED)
+            val err = expectErr(if (ctx.gated(Tickets.FL_TURN)) ErrCode.TICKET else ErrCode.NOT_SUBSCRIBED)
             ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
             ensure(err.scope == null) { "a turnreq names no scope, but the refusal carried one" }
         }
@@ -375,7 +384,7 @@ private fun turnCredShape(): Check =
             send(TurnReq(t = RecordType.TURNREQ, q = q))
             val second = expect<TurnCred>(RecordType.TURNCRED)
             val suffix = first.user.substringAfter(':')
-            if (ctx.serverHello.ent == true) {
+            if (ctx.gated(Tickets.FL_TURN)) {
                 // S-7.6-17: one ticket, one pseudonym, one suffix — what lets the TURN server's
                 // per-user quota count the holder rather than the credential.
                 ensure(second.user.substringAfter(':') == suffix) { "two issues under one ticket must share a suffix (S-7.6-17)" }
@@ -424,11 +433,12 @@ private fun entForeignKey(): Check =
         }
     }
 
-/** S-7.6-16: on an `ent` spool, a subscription does not substitute for a ticket. */
+/** S-7.6-16: where `turn` is gated, a subscription does not substitute for a ticket. */
 private fun entRequired(): Check =
     Check(name = "ent-required") { ctx ->
         ctx.requireEnt()
         ctx.requireTurn()
+        if (!ctx.gated(Tickets.FL_TURN)) throw SkipCheck("entGates leaves turn open")
         ctx.client.connect {
             hello()
             ctx.subscribeFresh(this, ctx.randomScope())
@@ -485,15 +495,94 @@ private fun stunShape(): Check =
         }
     }
 
+/** S-7.6-13: `entGates` rides beside `ent`, always, and never without it. */
+private fun entGates(): Check =
+    Check(name = "ent-gates") { ctx ->
+        val gates = ctx.serverHello.entGates
+        if (ctx.serverHello.ent == null) {
+            ensure(gates == null) { "hello carries entGates=$gates without ent" }
+            throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+        }
+        ctx.requireEnt()
+        val present = gates ?: throw CheckFailure("hello carries ent without entGates; S-7.6-13 sends them together")
+        ensure(present >= 0) { "entGates=$present is negative" }
+    }
+
+/** Skips a files check unless this spool gates uploads and this run can mint a files ticket for it. */
+private fun Ctx.requireFilesGate() {
+    requireAttachments()
+    requireEnt()
+    if (!gated(Tickets.FL_FILES)) throw SkipCheck("entGates leaves files open")
+    if (ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no files ticket can be made")
+}
+
+/**
+ * S-7.6-22: where `files` is gated, an unticketed `aput` is refused `ticket`, echoing its `q` and
+ * scope, even while another subscriber of the scope holds a files ticket; the uploader's own admits it.
+ */
+private fun filesTicket(): Check =
+    Check(name = "files-ticket") { ctx ->
+        ctx.requireFilesGate()
+        val scope = ctx.randomScope()
+        val aid = ctx.randomScope()
+        val (cid, data) = ctx.randomBlob(64)
+        val aput = { q: Long -> Aput(t = RecordType.APUT, q = q, scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data) }
+        ctx.client.connect {
+            val free = this
+            free.hello()
+            ctx.subscribeFresh(free, scope)
+            ctx.client.connect {
+                val paid = this
+                paid.hello()
+                ctx.unlockFiles(paid)
+                ctx.subscribeFresh(paid, scope)
+                val q = free.nextQ()
+                free.send(aput(q))
+                val err = free.expectErr(ErrCode.TICKET)
+                ensure(err.q == q) { "expected the ticket refusal to echo q=$q, got ${err.q}" }
+                ensure(err.scope?.contentEquals(scope) == true) { "expected the ticket refusal to carry the aput's scope" }
+            }
+            ctx.unlockFiles(free)
+            val q = free.nextQ()
+            free.send(aput(q))
+            ensure(free.expect<Ok>(RecordType.OK).q == q) { "expected ok q=$q once the uploader holds a files ticket" }
+        }
+    }
+
+/** S-7.6-23: a connection with no ticket fetches a chunk a files-ticket holder stored. */
+private fun filesReceive(): Check =
+    Check(name = "files-receive") { ctx ->
+        ctx.requireFilesGate()
+        val scope = ctx.randomScope()
+        val aid = ctx.randomScope()
+        val (cid, data) = ctx.randomBlob(64)
+        ctx.client.connect {
+            hello()
+            ctx.unlockFiles(this)
+            ctx.subscribeFresh(this, scope)
+            val putQ = nextQ()
+            send(Aput(t = RecordType.APUT, q = putQ, scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data))
+            ensure(expect<Ok>(RecordType.OK).q == putQ) { "expected aput ok q=$putQ" }
+            ctx.client.connect {
+                hello()
+                ctx.subscribeFresh(this, scope)
+                val getQ = nextQ()
+                send(Aget(t = RecordType.AGET, q = getQ, scope = scope, aid = aid, from = 0, n = 1))
+                ensure(expect<Achunk>(RecordType.ACHUNK).data.contentEquals(data)) { "achunk data differs from what was put" }
+                ensure(expect<Ok>(RecordType.OK).q == getQ) { "expected aget ok q=$getQ for a member with no ticket" }
+            }
+        }
+    }
+
 /** Skips every cast check on a spool whose `hello` carried no `cast` (experimental, VOICE_CALLS.md §2.7). */
 private fun Ctx.requireCast(): CastInfo = serverHello.cast ?: throw SkipCheck("spool advertises no cast (VOICE_CALLS.md §2.7)")
 
 /**
- * Lets [session] cast where the spool sells casts: on a spool whose `hello` carried `ent`, a cast
+ * Lets [session] cast where the spool sells casts: on a spool whose `hello` gates `cast`, a cast
  * ticket under this run's key. Without the key no cast is admissible there, so the check skips.
  */
 private suspend fun Ctx.unlockCasts(session: Session) {
-    if (serverHello.ent != true) return
+    if (!gated(Tickets.FL_CAST)) return
     val ent = ent(session.nextQ(), fl = Tickets.FL_CAST)
     session.send(ent)
     ensure(session.expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a cast ticket" }
@@ -596,6 +685,7 @@ private fun castTicket(): Check =
     Check(name = "cast-ticket") { ctx ->
         ctx.requireCast()
         ctx.requireEnt()
+        if (!ctx.gated(Tickets.FL_CAST)) throw SkipCheck("entGates leaves cast open")
         if (ctx.ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no cast ticket can be made")
         val scope = ctx.randomScope()
         ctx.client.connect {
@@ -755,12 +845,24 @@ private fun Ctx.requireAttachments(): app.getknit.spool.protocol.Limits {
     return limits
 }
 
+/**
+ * Lets [session] upload where the spool gates files (S-7.6-22): a files ticket under this run's key.
+ * Without the key no upload is admissible there, so the check skips rather than fails.
+ */
+private suspend fun Ctx.unlockFiles(session: Session) {
+    if (!gated(Tickets.FL_FILES)) return
+    val ent = ent(session.nextQ(), fl = Tickets.FL_FILES)
+    session.send(ent)
+    ensure(session.expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a files ticket" }
+}
+
 /** §4.5/§7.3: an attachment chunk stores, shows up in the presence bitmap, and reads back byte-exact. */
 private fun attachmentRoundTrip(): Check =
     Check(name = "attachment-round-trip") { ctx ->
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -799,6 +901,7 @@ private fun attachmentBadId(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val (_, data) = ctx.randomBlob(32)
@@ -824,6 +927,7 @@ private fun attachmentFirstWriteWins(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -867,6 +971,7 @@ private fun attachmentGetTruncated(): Check =
         }
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -899,6 +1004,7 @@ private fun aputTotalOverQuota(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()

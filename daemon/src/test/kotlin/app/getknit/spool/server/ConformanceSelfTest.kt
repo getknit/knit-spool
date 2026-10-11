@@ -3,6 +3,7 @@ package app.getknit.spool.server
 
 import app.getknit.spool.conformance.SuiteOptions
 import app.getknit.spool.conformance.runSuite
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.ScopeStore
@@ -38,7 +39,7 @@ class ConformanceSelfTest {
     fun everyCheckPassesWithTokenPowCommonsModerationTurnAndTickets() {
         val run =
             runSuiteAgainst(
-                everyFeature(ticket = testTicketConfig(), stunUrls = listOf("stun:spool.example:3478")),
+                everyFeature(ticket = testTicketConfig(gates = EVERY_GATE), stunUrls = listOf("stun:spool.example:3478")),
                 token = TOKEN,
                 commonsSecret = TEST_COMMONS_SECRET,
                 turnSecret = TEST_TURN_SECRET,
@@ -46,6 +47,42 @@ class ConformanceSelfTest {
                 ticketAudience = TEST_TICKET_AUD,
             )
         run.assertClean(expectedSkips = emptySet())
+    }
+
+    /**
+     * A key with the default gates (ADR 2026-10.h6pt): uploads stay open, so the attachment checks pass
+     * with no files ticket and only the two files checks skip. What every keyed spool does on upgrade.
+     */
+    @Test
+    fun aKeyWithTheDefaultGatesLeavesUploadsOpen() {
+        val run =
+            runSuiteAgainst(
+                everyFeature(ticket = testTicketConfig(), stunUrls = listOf("stun:spool.example:3478")),
+                token = TOKEN,
+                commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+                ticketSigningKey = TEST_TICKET_SIGNING_KEY,
+                ticketAudience = TEST_TICKET_AUD,
+            )
+        run.assertClean(expectedSkips = setOf("files-ticket", "files-receive"))
+    }
+
+    /**
+     * Only `files` gated: TURN takes the subscription path and casts need no ticket, so the checks
+     * that probe those two gates skip and the rest pass under a key.
+     */
+    @Test
+    fun onlyFilesGatedLeavesTurnAndCastsOpen() {
+        val run =
+            runSuiteAgainst(
+                everyFeature(ticket = testTicketConfig(gates = Tickets.FL_FILES), stunUrls = listOf("stun:spool.example:3478")),
+                token = TOKEN,
+                commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+                ticketSigningKey = TEST_TICKET_SIGNING_KEY,
+                ticketAudience = TEST_TICKET_AUD,
+            )
+        run.assertClean(expectedSkips = setOf("ent-required", "cast-ticket"))
     }
 
     /**
@@ -234,8 +271,14 @@ class ConformanceSelfTest {
                 "ent-expired",
                 "ent-audience",
                 "stun-shape",
+                "ent-gates",
+                "files-ticket",
+                "files-receive",
                 "cast-ticket",
             )
+
+        /** Every capability `SPOOL_TICKET_GATES` can gate today. */
+        val EVERY_GATE = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST
 
         /** What skips without a token, a commons, a moderation flag, TURN or casts — the CI job's exact SKIP set. */
         val BARE_SKIPS =
