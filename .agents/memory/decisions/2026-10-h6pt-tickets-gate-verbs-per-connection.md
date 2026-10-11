@@ -8,7 +8,7 @@ topics: [tickets, attachments, auth, abuse]
 
 # ADR 2026-10.h6pt — tickets gate verbs per connection, and only an uploader's ticket pays for attachments
 
-Status: Proposed (2026-10-10). Draft for review; nothing here is built. Amends ADR
+Status: Proposed (2026-10-10). Built on `exp/turn` (2026-10-11), awaiting acceptance. Amends ADR
 2026-10.bxsg's `aput` and scope-creation gates.
 
 **Context:** an operator should be able to run one kind of spool, with each ticketed
@@ -127,6 +127,24 @@ Sending an attachment needs the sender's own ticket. Receiving one needs nothing
   avoid. Clients would have to send attachments to a different host from the
   conversation's text, every scope would need a second set of relay hints and a second
   `sub`, and the operator would run and monitor two spools for one service.
+
+## What shipped
+
+Commits `17a6b84` through `319f0ce` on `exp/turn`, with the spec rows in knit-next `74a327b7`
+(`docs/VOICE_CALLS.md` §2.6, S-7.6-22/23, C-7.6-24):
+
+- `FL_FILES`, the `ab` claim, `Reason.BUDGET` and `hello.entGates`, with vectors from the spec.
+- `SPOOL_TICKET_GATES` (`turn`, `files`, `cast`) and `SPOOL_TICKET_ATTACH_BYTES`. The `create`
+  word is refused at boot until bxsg's creation budget is built, so no operator believes scope
+  creation is gated when it is not.
+- The `aput` gate in `SpoolServer.filesAdmitted`, the per-pseudonym ledger in `UploadBudgets`, and
+  `ticket-mint --files --ab`.
+- The guards listed below, all present. The conformance checks run in process three ways: every
+  gate, the default gates, and `files` alone.
+
+A choice the draft left open: with `turn` left out of the gates, a live TURN ticket still waives
+the subscription gate, as it does when `turn` is gated. The gate decides only whether a connection
+without a ticket is refused.
 
 **Consequences / limits:**
 

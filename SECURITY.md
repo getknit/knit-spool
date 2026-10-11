@@ -56,6 +56,13 @@ conversation is in a walkie session, which side talks when and for how long, and
 addresses. It still shows nothing of what was said, and none of it reaches the disk or the log. A
 cast, or the scope it names, in this daemon's log is a reportable vulnerability.
 
+A Spool with a ticket key (`SPOOL_TICKET_KEY`, experimental) also learns each ticket holder's daily
+pseudonym, and can link that holder's connections, and the scopes they hold, within a day. Where
+`files` is gated it keeps an upload budget per pseudonym: how many attachment bytes that holder
+stored today, in memory only and dropped once the ticket expires. None of it reaches the disk or
+the log, and a restart forgets it. A ticket or a pseudonym in this daemon's log, or on its disk, is
+a reportable vulnerability.
+
 ### The commons
 
 A Spool running a commons (`SPOOL_COMMONS_ID`) holds the same shape of secret it always did. The

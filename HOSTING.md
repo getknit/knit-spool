@@ -30,6 +30,7 @@ the [README](README.md#-deploy) has the rest.
 - [What a commons costs](#what-a-commons-costs)
 - [What TURN costs](#what-turn-costs)
 - [What casts cost](#what-casts-cost)
+- [What ticketed uploads hold](#what-ticketed-uploads-hold)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
@@ -289,6 +290,21 @@ casts off the bill.
 
 CPU and memory are noise beside the store's: a cast is one decode, a few table reads and one
 encode, and the Spool holds none of them.
+
+## What ticketed uploads hold
+
+With `files` in `SPOOL_TICKET_GATES` (experimental, ADR 2026-10.h6pt), sending an attachment needs
+the sender's own ticket, and each stored chunk counts against that holder's daily budget,
+`SPOOL_TICKET_ATTACH_BYTES` (128 MiB by default) or less if the ticket says so. **It is an upload
+budget, not a storage cap.** Attachments live as long as their scope's TTL, so one holder keeps at
+most the budget times the number of days that fit in that window plus one: **3 × 128 MiB = 384 MiB**
+at the 48 h default. Budgets are memory only, so a restart refills every one.
+
+The disk stays bounded by `SPOOL_MAX_BYTES`, ticketed or not: past it the least-active scope is
+shed whatever paid for it. What the budget buys is fairness. One customer's uploads can push out
+only as much as their own budget, rather than everything other customers hold. Size the watermark
+for the number of holders you expect to be active at once times what each may keep. Receiving is
+never gated, so download egress is what holders stored times the members who fetch it.
 
 ## Upgrading without a reconnect storm
 

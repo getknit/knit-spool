@@ -226,8 +226,10 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it |
 | `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
 | `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
-| `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and `turnreq` needs a ticket. Reloadable |
+| `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
 | `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
+| `SPOOL_TICKET_GATES` | `turn,cast` | *experimental:* which capabilities need a ticket, from `turn`, `files` and `cast`; `hello` says so in `entGates`. `files` gates **sending** attachments only. Needs the key. Reloadable |
+| `SPOOL_TICKET_ATTACH_BYTES` | `134217728` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (128 MiB). Needs the key. Reloadable |
 | `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
 | `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
 | `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
@@ -354,7 +356,8 @@ Prefer TURN on a tokened Spool.
 ### Tickets and STUN
 
 Two further switches, for an operator who sells TURN to some callers and not others (knit-next
-`docs/VOICE_CALLS.md` §2.6; ADR 2026-10.bxsg):
+`docs/VOICE_CALLS.md` §2.6; ADR 2026-10.bxsg), plus the choice of what else a ticket unlocks (ADR
+2026-10.h6pt):
 
 - **`SPOOL_STUN_URLS`** puts a credential-free `stun` list in every `hello`. A phone with no TURN of
   its own needs one: without it, it offers only private addresses, and a paying peer's relay —
@@ -364,6 +367,12 @@ Two further switches, for an operator who sells TURN to some callers and not oth
   no subscription is needed, and the TURN username's suffix is derived from the ticket's daily
   pseudonym, so every credential one holder fetches shares it and `TURN_USER_QUOTA` counts the
   holder. A refusal is `err ticket` with a `msg` (`expired`, `audience`, …), never a strike.
+- **`SPOOL_TICKET_GATES`** picks what a ticket unlocks on this one Spool, so paid and free callers
+  share it instead of needing a Spool each. It defaults to `turn,cast`, what a key gated before the
+  list existed. Adding `files` makes **sending** an attachment need the sender's own ticket minted
+  with `--files`: each stored chunk is charged to that holder's daily budget,
+  `min(ab, SPOOL_TICKET_ATTACH_BYTES)`, and a spent budget is refused `err ticket` with `msg`
+  `budget`. Another member's ticket never pays for an upload, and **receiving** never needs one.
 
 The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
 
@@ -373,11 +382,13 @@ knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account a
 ```
 
 `ticket-mint` prints a `knit-ticket:v1:…` line for a test client; `--cast` adds the cast flag
-([casts](#-casts-experimental)), and `--no-turn` drops TURN. Conformance takes the same key:
+([casts](#-casts-experimental)), `--files` the upload flag, `--ab BYTES` a smaller upload budget,
+and `--no-turn` drops TURN. Conformance takes the same key:
 `--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
-`knit_spool_ticket_refused_total{reason}` and `knit_spool_turn_issued_ticketed_total` count what
-happened. The Spool learns each holder's pseudonym and can link their connections within a day; it
-never logs a ticket or a pseudonym.
+`knit_spool_ticket_refused_total{reason}`, `knit_spool_turn_issued_ticketed_total` and
+`knit_spool_ticket_attach_bytes_charged_total` count what happened. The Spool learns each holder's
+pseudonym and can link their connections within a day; it never logs a ticket or a pseudonym, and
+the upload budgets live in memory only, so a restart resets them.
 
 What a relay sees that a Spool does not: **both callers' IP addresses, and how long they talked**.
 Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed
@@ -407,7 +418,7 @@ connected when it went out never gets it, which is what a walkie means.
 | **Never answered** | A cast carries no `q` and draws no `ok` or `err`. A refused one is dropped and counted: not subscribed, over `maxBytes`, over budget, the commons, or casts off. `hello` states the bounds up front, so a client can keep to them unprompted. |
 | **Never struck** | Past its budget a cast is just dropped. A flood still costs the record bucket every record does, and that bucket strikes. |
 | **Never a slow consumer** | A subscriber whose outbound channel is full loses that cast and nothing else. It is not counted toward the 4003 slow-consumer close. |
-| **Sold with tickets** | With `SPOOL_TICKET_KEY` set, a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One payer unlocks the scope both ways, so a free friend can talk back. Without a ticket key, any subscriber may cast. |
+| **Sold with tickets** | With `cast` in `SPOOL_TICKET_GATES` (the default once `SPOOL_TICKET_KEY` is set), a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One payer unlocks the scope both ways, so a free friend can talk back. Without a ticket key, any subscriber may cast. |
 | **Never logged** | No line names a cast or its scope. `knit_spool_casts_total`, `knit_spool_casts_fanned_total` and `knit_spool_casts_dropped_total{reason}` count them, and the status line shows `casts=+N`. |
 
 What a Spool sees of a cast: that a conversation is in a walkie session, who talks when and for how
@@ -591,7 +602,8 @@ this feature exists to avoid.
 | | Takes effect |
 |---|---|
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
-| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE`, `SPOOL_TICKET_GATES` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_TICKET_ATTACH_BYTES` | immediately — read on every gated `aput`; what holders already spent stays spent |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
 | `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |

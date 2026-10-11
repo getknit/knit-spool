@@ -149,9 +149,13 @@ What shipped on `exp/turn` for the paid-versus-free call trial (commits `0891e58
   - the metrics, and the conformance checks `ent-advertised`, `ent-foreign-key`, `ent-required`,
     `ent-accepts`, `ent-expired`, `ent-audience` and `stun-shape`. The `turn-user-is-pseudonym`
     guard lives inside `turn-cred-shape`.
+- **Shipped later, by ADR 2026-10.h6pt** (commits `17a6b84` through `319f0ce`): the `ab` claim, the
+  `files` gate and the daily upload budget, charged to the uploader only and opt-in through
+  `SPOOL_TICKET_GATES`.
 - **Still proposed:**
-  - the `ab` and `sc` claims and the upload budget;
-  - ticket-gated scope creation and public ticketed spools;
+  - the `sc` claim;
+  - ticket-gated scope creation (`create` in `SPOOL_TICKET_GATES` is refused at boot until then)
+    and public ticketed spools;
   - `SPOOL_TICKET_KEY_NEXT` and per-pseudonym spool rate limits.
 
 **Consequences / limits:**

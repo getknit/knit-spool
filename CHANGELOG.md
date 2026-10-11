@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-09-16T20:56:18Z
+  updated: 2026-10-11T07:42:41Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -59,6 +59,18 @@ document:
   (`SPOOL_RATE_CASTS_TOTAL`), with `SPOOL_MAX_CAST` bounding the size; all reloadable, and a rate of
   0 stops casts at once. Off by default. New conformance checks `cast-advertised`, `cast-fanout`,
   `cast-silent-refusal`, `cast-ticket` and the advisory `cast-rate`.
+- **Experimental: ticket gates and uploader-paid attachments** (draft in knit-next
+  `docs/VOICE_CALLS.md` §2.6, S-7.6-22/23; ADR 2026-10.h6pt). `SPOOL_TICKET_GATES` picks which
+  capabilities a ticket key gates, from `turn`, `files` and `cast`. It defaults to `turn,cast`, so a
+  keyed Spool behaves as before, and `hello` names the choice in a new `entGates` beside `ent`. With
+  `files` gated, an `aput` needs the uploader's own ticket with the new files flag (bit 1,
+  `ticket-mint --files`). Each stored chunk is charged to that holder's daily budget,
+  `min(ab, SPOOL_TICKET_ATTACH_BYTES)` (128 MiB by default; `ticket-mint --ab`), and the refusal is
+  `err ticket` with its `q`, its scope and a `msg`, including the new `budget`. No other member's
+  ticket pays for an upload, and `aget` is never gated. Budgets live in memory and are never logged,
+  and `knit_spool_ticket_attach_bytes_charged_total` counts them. New conformance checks
+  `ent-gates`, `files-ticket` and `files-receive`. The TURN, cast and attachment checks now follow
+  `entGates`.
 
 ### Changed
 
