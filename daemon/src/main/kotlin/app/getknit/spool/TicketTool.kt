@@ -33,7 +33,7 @@ private val PS_LABEL = "knit/anywhere/v1/ps".toByteArray()
 private val TICKET_AUD = Regex("^[a-z0-9.-]{1,253}$")
 
 private const val MINT_USAGE =
-    "usage: knit-spool ticket-mint --key-file PATH --aud HOST [--account NAME] [--hours 25] [--no-turn] [--cast]"
+    "usage: knit-spool ticket-mint --key-file PATH --aud HOST [--account NAME] [--hours 25] [--no-turn] [--cast] [--files] [--ab BYTES]"
 
 /** Mints a signing key and prints both halves: the private half for the issuer, the public for the spool. */
 internal fun ticketKeygen(out: (String) -> Unit) {
@@ -80,12 +80,20 @@ internal fun ticketMint(
     if (account != null && account.toByteArray().size !in 1..MAX_ACCOUNT_BYTES) {
         return fail(err, "--account must be 1-$MAX_ACCOUNT_BYTES bytes")
     }
+    // An upload budget below the spool's own; absent, the spool's SPOOL_TICKET_ATTACH_BYTES applies.
+    val ab =
+        options["--ab"]?.let {
+            it.toLongOrNull()?.takeIf { bytes -> bytes >= 0 }
+                ?: return fail(err, "--ab must be a byte count, 0 or more")
+        }
     val nowS = nowMs / MS_PER_SECOND
     val ps = account?.let { pseudonym(signingKey, it, aud, Math.floorDiv(nowS, SECONDS_PER_HOUR * 24)) } ?: randomPseudonym()
-    // TURN unless refused; casts only when asked, since the walkie relay is sold on its own.
+    // TURN unless refused; casts and file uploads only when asked, since each is sold on its own.
     val turn = if ("--no-turn" in options) 0L else Tickets.FL_TURN
-    val fl = turn or if ("--cast" in options) Tickets.FL_CAST else 0L
-    val ticket = Ticket.forKey(signingKey, aud = aud, nbf = nowS, exp = nowS + hours * SECONDS_PER_HOUR, ps = ps, fl = fl)
+    val cast = if ("--cast" in options) Tickets.FL_CAST else 0L
+    val files = if ("--files" in options) Tickets.FL_FILES else 0L
+    val exp = nowS + hours * SECONDS_PER_HOUR
+    val ticket = Ticket.forKey(signingKey, aud = aud, nbf = nowS, exp = exp, ps = ps, fl = turn or cast or files, ab = ab)
     val (tk, sig) = Tickets.issue(signingKey, ticket)
     out(Tickets.encodeText(tk, sig))
     return 0
@@ -110,14 +118,14 @@ internal fun pseudonym(
 
 private fun randomPseudonym(): ByteArray = ByteArray(Tickets.PS_BYTES).also(SecureRandom()::nextBytes)
 
-/** `--flag value` pairs plus the bare `--no-turn` and `--cast`, or null on anything else. */
+/** `--flag value` pairs plus the bare `--no-turn`, `--cast` and `--files`, or null on anything else. */
 private fun parseMintArgs(args: List<String>): Map<String, String>? {
     val options = HashMap<String, String>()
     var i = 0
     while (i < args.size) {
         when (val flag = args[i]) {
-            "--no-turn", "--cast" -> options[flag] = ""
-            "--key-file", "--aud", "--account", "--hours" -> options[flag] = args.getOrNull(++i) ?: return null
+            "--no-turn", "--cast", "--files" -> options[flag] = ""
+            "--key-file", "--aud", "--account", "--hours", "--ab" -> options[flag] = args.getOrNull(++i) ?: return null
             else -> return null
         }
         i++

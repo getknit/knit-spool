@@ -15,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -101,6 +102,19 @@ class TicketToolTest {
         assertEquals(Tickets.FL_TURN, claims(turnOnly.single()).fl)
     }
 
+    /** Files are minted only on request, and a budget only when given; absent, the spool's own applies. */
+    @Test
+    fun filesMintsBitOneAndAbClaimsABudget() {
+        val (keyFile, _) = keygen()
+        val (_, files) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--files", "--ab", "1024")
+        val ticket = claims(files.single())
+        assertEquals(Tickets.FL_TURN or Tickets.FL_FILES, ticket.fl)
+        assertEquals(1_024L, ticket.ab)
+        val (_, plain) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--files", "--no-turn")
+        assertEquals(Tickets.FL_FILES, claims(plain.single()).fl)
+        assertNull(claims(plain.single()).ab)
+    }
+
     @Test
     fun badInvocationsExitNonZeroWithoutPrintingAKey() {
         val (keyFile, _) = keygen()
@@ -116,6 +130,9 @@ class TicketToolTest {
                 listOf("--key-file", key, "--aud", "lab.example", "--hours", "0") to 1,
                 listOf("--key-file", dir.resolve("missing").toString(), "--aud", "lab.example") to 1,
                 listOf("--key-file", wrongFile, "--aud", "lab.example") to 1,
+                listOf("--key-file", key, "--aud", "lab.example", "--ab", "-1") to 1,
+                listOf("--key-file", key, "--aud", "lab.example", "--ab", "lots") to 1,
+                listOf("--key-file", key, "--aud", "lab.example", "--ab") to 2,
             )
         val secret = Files.readString(keyFile).trim()
         cases.forEach { (args, expected) ->
