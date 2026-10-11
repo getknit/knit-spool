@@ -17,6 +17,7 @@ growing an explanation, that explanation belongs in the ADR.
 | `maxScopes`, scope deletion, `reclaimIdle` or `shedOldestScope` | [ADR 2026-10.d2zb](../memory/decisions/2026-10-d2zb-bare-scopes-are-reclaimed.md) |
 | `auto_vacuum`, `incremental_vacuum`, `reclaimSpace`, `temp_store_directory` or the store file's size | [ADR 2026-10.us34](../memory/decisions/2026-10-us34-freed-sqlite-pages-go-back.md) |
 | `cast`, `handleCast` / `fanOutCast`, `SPOOL_*CAST*` or `Tickets.FL_CAST` | [ADR 2026-10.3wdy](../memory/decisions/2026-10-3wdy-casts-fan-out-unstored.md) |
+| `aput` gating, `Tickets.FL_FILES`, `SPOOL_TICKET_GATES` or `entGates` | [ADR 2026-10.h6pt](../memory/decisions/2026-10-h6pt-tickets-gate-verbs-per-connection.md) |
 
 ## Where they live
 
