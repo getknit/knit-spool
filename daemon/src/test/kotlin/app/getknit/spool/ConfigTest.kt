@@ -2,6 +2,7 @@
 package app.getknit.spool
 
 import app.getknit.spool.protocol.Commons
+import app.getknit.spool.protocol.Tickets
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -356,6 +357,44 @@ class ConfigTest {
         assertTrue(orphan.message!!.contains("SPOOL_TICKET_KEY"), orphan.message!!)
         val bare = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_KEY" to ticketKey)) }
         assertTrue(bare.message!!.contains("SPOOL_TICKET_AUDIENCE"), bare.message!!)
+    }
+
+    /** Unset gates keep what a key gated before the list existed, so a keyed spool's upgrade changes nothing. */
+    @Test
+    fun ticketGatesDefaultToTurnAndCastAndParseAsAList() {
+        val default = assertNotNull(withTicket().ticket)
+        assertEquals(Tickets.LEGACY_GATES, default.gates)
+        assertEquals(134_217_728L, default.attachBytes)
+        assertEquals(Tickets.LEGACY_GATES, assertNotNull(withTicket("SPOOL_TICKET_GATES" to "").ticket).gates)
+        val files = assertNotNull(withTicket("SPOOL_TICKET_GATES" to " files , turn,cast", "SPOOL_TICKET_ATTACH_BYTES" to "0").ticket)
+        assertEquals(Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST, files.gates)
+        assertEquals("turn,files,cast", files.gateWords())
+        assertEquals(0L, files.attachBytes)
+        assertEquals(Tickets.FL_FILES, assertNotNull(withTicket("SPOOL_TICKET_GATES" to "files").ticket).gates)
+    }
+
+    /** `create` is named so its refusal says why, rather than reading like a typo. */
+    @Test
+    fun anUnknownGateAndTheUnbuiltCreateGateRefuseToStart() {
+        val create = assertFailsWith<IllegalArgumentException> { withTicket("SPOOL_TICKET_GATES" to "turn,create") }
+        assertTrue(create.message!!.contains("not supported yet"), create.message!!)
+        for (bad in listOf("tun", "turn,", "files;cast")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_GATES" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_GATES"), e.message!!)
+        }
+        for (bad in listOf("-1", "", "lots")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_ATTACH_BYTES" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_ATTACH_BYTES"), e.message!!)
+        }
+    }
+
+    /** Gates or a budget with no key means an operator who believes uploads are being metered. */
+    @Test
+    fun gatesOrAnAttachBudgetWithoutAKeyRefuseToStart() {
+        for (name in listOf("SPOOL_TICKET_GATES", "SPOOL_TICKET_ATTACH_BYTES")) {
+            val e = assertFailsWith<IllegalArgumentException>(name) { config(mapOf(name to "files")) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_KEY"), e.message!!)
+        }
     }
 
     @Test

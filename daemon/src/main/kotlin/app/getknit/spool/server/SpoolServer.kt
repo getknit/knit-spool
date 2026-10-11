@@ -336,6 +336,10 @@ class SpoolServer(
                 // whether a connection may present one at all is fixed by the hello it was sent.
                 "ticketKey" to if (ticket == null) "unset" else "set",
                 "ticketAud" to (ticket?.audience ?: "unset"),
+                // Snapshotted per connection, like the key's presence: a reload reaches new ones only.
+                "ticketGates" to (ticket?.gateWords() ?: "unset"),
+                // Read live by every gated `aput`, so a lower cap bites on a pseudonym's next chunk.
+                "ticketAttachBytes" to (ticket?.attachBytes ?: "unset"),
                 "rateCasts" to rateCasts,
                 "maxCast" to maxCast,
                 "rateCastsTotal" to rateCastsTotal,
@@ -409,7 +413,30 @@ class SpoolServer(
         /** [Tickets.kid] of [key], computed once rather than on every `ent`. */
         val kid: ByteArray,
         val audience: String,
-    )
+        /**
+         * The [Ticket.fl] bits a connection needs a ticket for, `SPOOL_TICKET_GATES` (ADR 2026-10.h6pt).
+         * Advertised as `entGates` and snapshotted per connection from the hello it was sent.
+         */
+        val gates: Long = Tickets.LEGACY_GATES,
+        /** `SPOOL_TICKET_ATTACH_BYTES`: the most a pseudonym may upload in a day, whatever its `ab` claims. */
+        val attachBytes: Long = DEFAULT_ATTACH_BYTES,
+    ) {
+        /** [gates] as the words `SPOOL_TICKET_GATES` takes, comma-joined so describe() keeps one field. */
+        fun gateWords(): String =
+            GATE_WORDS
+                .filterValues { gates and it != 0L }
+                .keys
+                .joinToString(",")
+                .ifEmpty { "none" }
+
+        companion object {
+            /** Eight full scopes a day at the default `SPOOL_MAX_ATTACH_BYTES` (ADR 2026-10.h6pt). */
+            const val DEFAULT_ATTACH_BYTES = 134_217_728L
+
+            /** What `SPOOL_TICKET_GATES` accepts. `create` waits on ADR 2026-10.bxsg's creation budget. */
+            val GATE_WORDS = linkedMapOf("turn" to Tickets.FL_TURN, "files" to Tickets.FL_FILES, "cast" to Tickets.FL_CAST)
+        }
+    }
 
     /**
      * One operator-declared scope shared by everyone on the spool who holds the invite.
@@ -717,6 +744,9 @@ class SpoolServer(
      *  - `rateCasts` and `maxCast` are announced in `hello` and snapshotted per connection, except
      *    that a rate of 0 stops every cast at once: it is the operator's kill switch.
      *    `rateCastsTotal` rebuilds the spool-wide bucket here, so it bites immediately.
+     *  - The ticket gates are announced in `hello` as `entGates` and snapshotted per connection, so
+     *    a reload that gates `files` leaves connections opened before it uploading freely. The
+     *    attach budget is read on every gated `aput`, and the budgets already spent survive.
      *
      * Returns the boot-only fields [candidate] tried to change, which the caller logs. They are
      * ignored rather than fatal: refusing the whole reload over one would mean a stale `SPOOL_PORT`

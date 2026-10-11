@@ -70,6 +70,8 @@ internal val KNOWN_VARS =
         "SPOOL_STUN_URLS",
         "SPOOL_TICKET_KEY",
         "SPOOL_TICKET_AUDIENCE",
+        "SPOOL_TICKET_GATES",
+        "SPOOL_TICKET_ATTACH_BYTES",
         "SPOOL_RATE_CASTS",
         "SPOOL_MAX_CAST",
         "SPOOL_RATE_CASTS_TOTAL",
@@ -438,15 +440,20 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
  * as `knit-spool ticket-keygen` prints it; it is decoded and tried as a verifier here, so a key the
  * JDK cannot use stops the spool at boot rather than refusing the first paying caller.
  *
- * An audience without a key is refused rather than ignored, for the TURN settings' reason. Neither
- * is a secret, but the key is still never echoed: a refusal that printed it would invite pasting
- * the private half next time to "check".
+ * An audience, gates or an attach budget without a key is refused rather than ignored, for the TURN
+ * settings' reason. None is a secret, but the key is still never echoed: a refusal that printed it
+ * would invite pasting the private half next time to "check".
  */
 internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? {
     val rawKey = env("SPOOL_TICKET_KEY")?.takeIf { it.isNotEmpty() }
     val audience = env("SPOOL_TICKET_AUDIENCE")?.takeIf { it.isNotEmpty() }
+    // Read before the early return, so a gate list with no key is refused rather than never looked at.
+    val rawGates = env("SPOOL_TICKET_GATES")?.takeIf { it.isNotEmpty() }
+    val rawAttach = env("SPOOL_TICKET_ATTACH_BYTES")
     if (rawKey == null) {
         require(audience == null) { "SPOOL_TICKET_AUDIENCE needs SPOOL_TICKET_KEY; set it, or unset the audience" }
+        require(rawGates == null) { "SPOOL_TICKET_GATES needs SPOOL_TICKET_KEY; set it, or unset the gates" }
+        require(rawAttach == null) { "SPOOL_TICKET_ATTACH_BYTES needs SPOOL_TICKET_KEY; set it, or unset the budget" }
         return null
     }
     requireNotNull(audience) { "SPOOL_TICKET_KEY is set but SPOOL_TICKET_AUDIENCE is not: tickets must name the spool they are for" }
@@ -461,7 +468,28 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
         } catch (e: GeneralSecurityException) {
             throw IllegalArgumentException("SPOOL_TICKET_KEY is not a usable Ed25519 public key (${raw.size} bytes decoded)", e)
         }
-    return SpoolServer.TicketConfig(key = key, kid = Tickets.kid(raw), audience = audience)
+    return SpoolServer.TicketConfig(
+        key = key,
+        kid = Tickets.kid(raw),
+        audience = audience,
+        gates = ticketGates(rawGates),
+        attachBytes = longVar(env, "SPOOL_TICKET_ATTACH_BYTES", default = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES, min = 0),
+    )
+}
+
+/**
+ * `SPOOL_TICKET_GATES` as [Tickets] flag bits (ADR 2026-10.h6pt): unset is `turn,cast`, what a key
+ * gated before the list existed. `create` is refused by name, so no operator believes scope creation
+ * is gated before ADR 2026-10.bxsg's creation budget is built.
+ */
+private fun ticketGates(raw: String?): Long {
+    if (raw == null) return Tickets.LEGACY_GATES
+    return raw.split(',').map(String::trim).fold(0L) { gates, word ->
+        require(word != "create") { "SPOOL_TICKET_GATES: \"create\" is not supported yet; scope creation is not ticket-gated" }
+        val bit = SpoolServer.TicketConfig.GATE_WORDS[word]
+        requireNotNull(bit) { "SPOOL_TICKET_GATES entries must be turn, files or cast, got \"$word\"" }
+        gates or bit
+    }
 }
 
 /**

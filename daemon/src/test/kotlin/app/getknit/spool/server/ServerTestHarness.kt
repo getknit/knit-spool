@@ -151,9 +151,19 @@ val TEST_TICKET_SIGNING_KEY =
 
 const val TEST_TICKET_AUD = "spool.test"
 
-fun testTicketConfig(audience: String = TEST_TICKET_AUD): SpoolServer.TicketConfig {
+fun testTicketConfig(
+    audience: String = TEST_TICKET_AUD,
+    gates: Long = Tickets.LEGACY_GATES,
+    attachBytes: Long = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES,
+): SpoolServer.TicketConfig {
     val public = Tickets.publicHalf(TEST_TICKET_SIGNING_KEY)
-    return SpoolServer.TicketConfig(key = Tickets.publicKey(public), kid = Tickets.kid(public), audience = audience)
+    return SpoolServer.TicketConfig(
+        key = Tickets.publicKey(public),
+        kid = Tickets.kid(public),
+        audience = audience,
+        gates = gates,
+        attachBytes = attachBytes,
+    )
 }
 
 /**
@@ -169,8 +179,9 @@ fun testEnt(
     nbfS: Long = nowMs / 1_000 - 60,
     expS: Long = nowMs / 1_000 + 86_400,
     signingKey: ByteArray = TEST_TICKET_SIGNING_KEY,
+    ab: Long? = null,
 ): Ent {
-    val (tk, sig) = Tickets.issue(signingKey, Ticket.forKey(signingKey, aud = aud, nbf = nbfS, exp = expS, ps = ps, fl = fl))
+    val (tk, sig) = Tickets.issue(signingKey, Ticket.forKey(signingKey, aud = aud, nbf = nbfS, exp = expS, ps = ps, fl = fl, ab = ab))
     return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
 }
 
