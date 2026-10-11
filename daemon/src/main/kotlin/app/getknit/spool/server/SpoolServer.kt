@@ -172,6 +172,8 @@ class SpoolServer(
     /** Test seams for the two client-keyed tables' bounds; see [CLIENT_TABLE_CAP] and [POW_CACHE_CAP]. */
     private val clientTableCap: Int = CLIENT_TABLE_CAP,
     private val powCacheCap: Int = POW_CACHE_CAP,
+    /** Test seam for [uploadBudgets]' bound; see [UPLOAD_BUDGETS_CAP]. */
+    uploadBudgetsCap: Int = UPLOAD_BUDGETS_CAP,
 ) {
     /**
      * The live configuration, swapped as a whole object by [reload].
@@ -517,6 +519,9 @@ class SpoolServer(
      */
     private val ips = ConcurrentHashMap<String, IpState>()
 
+    /** Each ticket holder's uploads today where `files` is gated; pruned by the sweeper (ADR 2026-10.h6pt). */
+    private val uploadBudgets = UploadBudgets(uploadBudgetsCap)
+
     /**
      * The commons is a shared write surface, which the per-connection push bucket does not bound:
      * 200 members at 10/s each is 2,000 pushes/s into one scope, churning a 500-frame room four
@@ -600,6 +605,12 @@ class SpoolServer(
          * bounds it was given, and a reload that tightened them under it would drop it silently.
          */
         val castInfo: CastInfo?,
+        /**
+         * The [Ticket.fl] bits this connection needs a ticket for: the `entGates` its hello carried,
+         * fixed for its life like [entAdvertised], so a reload that gates `files` never starts refusing
+         * uploads on a connection that was told they were open.
+         */
+        val gates: Long,
     ) {
         val out: SendChannel<Frame> get() = session.outgoing
 
@@ -921,7 +932,7 @@ class SpoolServer(
         ipState: IpState,
     ) {
         val hello = serverHello()
-        val conn = Conn(session, ipState, entAdvertised = hello.ent == true, castInfo = hello.cast)
+        val conn = Conn(session, ipState, entAdvertised = hello.ent == true, castInfo = hello.cast, gates = hello.ticketGates)
         activeSessions.add(session)
         try {
             conn.out.send(binary(RecordCodec.encode(hello)))
@@ -1285,7 +1296,14 @@ class SpoolServer(
             sendErr(conn, ErrCode.MALFORMED, q = req.q)
             return
         }
-        val ticket = if (conn.entAdvertised) liveTurnTicket(conn, req.q) ?: return else null
+        // Ungated, a live TURN ticket still earns the pseudonym suffix and waives the subscription gate,
+        // as it does gated: the gate decides only whether a connection without one is refused.
+        val ticket =
+            if (conn.gates and Tickets.FL_TURN != 0L) {
+                liveTurnTicket(conn, req.q) ?: return
+            } else {
+                conn.ticket?.takeIf { ticketShortfall(it, Tickets.FL_TURN) == null }
+            }
         if (ticket == null && conn.subscriptions.isEmpty()) {
             sendErr(conn, ErrCode.NOT_SUBSCRIBED, q = req.q)
             return
@@ -1385,9 +1403,46 @@ class SpoolServer(
         conn: Conn,
         q: Long,
         reason: Tickets.Reason,
+        scope: ByteArray? = null,
     ) {
         metrics.ticketRefused(reason)
-        sendErr(conn, ErrCode.TICKET, q = q, msg = reason.word)
+        sendErr(conn, ErrCode.TICKET, q = q, scope = scope, msg = reason.word)
+    }
+
+    /**
+     * Whether this `aput` may proceed where `files` is gated, and whose budget pays (S-7.6-22, ADR
+     * 2026-10.h6pt): the uploading connection's own live files ticket, with room left for this chunk
+     * under `min(ab, SPOOL_TICKET_ATTACH_BYTES)`. Another subscriber's ticket never admits an upload,
+     * unlike casts' `castUnlocked`: that is the sponsorship the ADR rejected. Refuses with a scoped
+     * `err ticket`, never a strike, and returns false; on true, [payer] is what [handleAput] charges.
+     */
+    private suspend fun filesAdmitted(
+        conn: Conn,
+        aput: Aput,
+        payer: Ticket?,
+    ): Boolean {
+        if (conn.gates and Tickets.FL_FILES == 0L) return true
+        // Read live, so a lowered cap bites on the next chunk. A key reloaded away leaves the gate on
+        // for connections told about it (their snapshot), metered at the default.
+        val cap = config.ticket?.attachBytes ?: TicketConfig.DEFAULT_ATTACH_BYTES
+        val shortfall = ticketShortfall(payer, Tickets.FL_FILES)
+        val reason =
+            when {
+                shortfall != null -> shortfall
+                payer != null && uploadBudgets.admits(payer, ScopeStore.chunkCharge(aput.data.size), cap) -> return true
+                else -> Tickets.Reason.BUDGET
+            }
+        refuseTicket(conn, aput.q, reason, scope = aput.scope)
+        return false
+    }
+
+    private fun chargeUpload(
+        payer: Ticket,
+        bytes: Long,
+        nowMs: Long,
+    ) {
+        uploadBudgets.charge(payer, bytes, nowMs / MS_PER_S)
+        metrics.ticketAttachBytesChargedTotal.add(bytes)
     }
 
     private suspend fun handleAget(
@@ -1430,6 +1485,10 @@ class SpoolServer(
         if (!requireIds(conn, aput.q, aput.scope, listOf(aput.aid, aput.cid))) return
         if (!requireAttachments(conn, aput.q, aput.scope)) return
         if (!requireSub(conn, aput.scope, aput.q)) return
+        // Read once: the chunk is charged to the ticket that admitted it, even if a newer `ent` lands.
+        val payer = conn.ticket.takeIf { conn.gates and Tickets.FL_FILES != 0L }
+        // Before every bucket, so a refused upload spends no push token, no new-scope token and no PoW.
+        if (!filesAdmitted(conn, aput, payer)) return
         val retryMs = conn.pushBucket.take()
         if (retryMs > 0) {
             rateLimited(conn, q = aput.q, scope = aput.scope, retryMs = retryMs)
@@ -1457,6 +1516,8 @@ class SpoolServer(
         when (withStore { store.attachmentPut(aput.scope, aput.aid, aput.idx, aput.total, aput.cid, aput.data, now) }) {
             is AputResult.Stored -> {
                 metrics.attachChunksStoredTotal.increment()
+                // Charged only once held: a duplicate or refused chunk costs its uploader nothing.
+                if (payer != null) chargeUpload(payer, ScopeStore.chunkCharge(aput.data.size), now)
                 out(conn, Ok(t = RecordType.OK, q = aput.q))
                 maybeShed()
             }
@@ -1723,7 +1784,7 @@ class SpoolServer(
 
             cast.data.size > info.maxBytes -> CastDrop.TOO_LARGE
 
-            conn.entAdvertised && !castUnlocked(conn, scopeHex) -> CastDrop.TICKET
+            conn.gates and Tickets.FL_CAST != 0L && !castUnlocked(conn, scopeHex) -> CastDrop.TICKET
 
             !castBudget(conn) -> CastDrop.RATE
 
@@ -1823,6 +1884,7 @@ class SpoolServer(
         }
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
+        uploadBudgets.prune(now / MS_PER_S)
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
         reclaimSpace()
@@ -1856,6 +1918,9 @@ class SpoolServer(
 
     /** How many client entries the table holds. Exposed for tests. */
     internal fun clientTableSize(): Int = ips.size
+
+    /** How many pseudonyms hold an upload budget entry. Exposed for tests. */
+    internal fun uploadBudgetCount(): Int = uploadBudgets.size
 
     /** Live subscribers of [scope]: what a test waits on to know a closed connection has left the fan-out table. */
     internal fun subscriberCount(scope: ByteArray): Int = subscribers[hex(scope)]?.size ?: 0
@@ -1964,6 +2029,8 @@ class SpoolServer(
             // Present only with a key (S-7.6-13). The connection snapshots it, so what it was told
             // here is what its `turnreq` gate follows for its whole life.
             ent = true.takeIf { config.ticket != null },
+            // Only beside `ent`, and always beside it (S-7.6-13), so a client never guesses the gates.
+            entGates = config.ticket?.gates,
             // Omitted when empty, never `[]` (S-7.6-13). Read per connection, so a reload reaches
             // every client that connects after it.
             stun = config.stunUrls.takeIf { it.isNotEmpty() },

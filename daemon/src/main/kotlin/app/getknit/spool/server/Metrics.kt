@@ -68,6 +68,9 @@ class Metrics(
     /** `ent` records accepted (experimental). */
     val ticketAcceptedTotal = LongAdder()
 
+    /** Attachment bytes charged to ticket holders' daily upload budgets, at their charged size (ADR 2026-10.h6pt). */
+    val ticketAttachBytesChargedTotal = LongAdder()
+
     /**
      * Ticket refusals by [Tickets.Reason] — on `ent` and on a `turnreq` that needed one. A closed
      * set, every member rendered from zero, so a field test can tell an expired ticket from a
@@ -174,6 +177,7 @@ class Metrics(
             if (tickets) {
                 line("knit_spool_ticket_accepted_total", "counter", ticketAcceptedTotal.sum())
                 line("knit_spool_turn_issued_ticketed_total", "counter", turnIssuedTicketedTotal.sum())
+                line("knit_spool_ticket_attach_bytes_charged_total", "counter", ticketAttachBytesChargedTotal.sum())
                 append("# TYPE knit_spool_ticket_refused_total counter\n")
                 ticketRefusedTotal.forEach { (reason, adder) ->
                     append("knit_spool_ticket_refused_total{reason=\"")

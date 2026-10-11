@@ -275,6 +275,20 @@ class CastTest {
         }
     }
 
+    /** A keyed spool that leaves `cast` out of `SPOOL_TICKET_GATES` admits any subscriber (ADR 2026-10.h6pt). */
+    @Test
+    fun aKeyedSpoolWithCastsUngatedHearsAFreeCaster() {
+        val scope = testScope(40)
+        val sent = cast(scope, seed = 1)
+        withServer(casting(ticket = testTicketConfig(gates = Tickets.FL_TURN)), clock = FakeClock(now)) {
+            pair(scope, listener = { receivesCast(sent) }) {
+                sendRecord(sent)
+                nextIsList(scope, q = 4L)
+            }
+            assertEquals(0L, spool.metrics.castDroppedCount(CastDrop.TICKET))
+        }
+    }
+
     /** A cast ticket on the caster's own connection unlocks its casts. */
     @Test
     fun aTicketedCasterIsHeard() {
