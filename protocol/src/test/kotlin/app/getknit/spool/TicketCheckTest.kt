@@ -48,7 +48,8 @@ class TicketCheckTest {
         exp: Long = this.exp,
         ps: ByteArray = fixture().ps,
         fl: Long = Tickets.FL_TURN,
-    ) = Ticket(v = v, kid = kid, aud = "lab.example", nbf = nbf, exp = exp, ps = ps, fl = fl)
+        ab: Long? = null,
+    ) = Ticket(v = v, kid = kid, aud = "lab.example", nbf = nbf, exp = exp, ps = ps, fl = fl, ab = ab)
 
     @Test
     fun aGoodTicketIsAcceptedWithItsClaims() {
@@ -63,6 +64,13 @@ class TicketCheckTest {
         assertEquals(Reason.EARLY, refusal(check(nowS = nbf - Tickets.SKEW_S - 1)))
         assertIs<Outcome.Accepted>(check(nowS = exp + Tickets.SKEW_S))
         assertEquals(Reason.EXPIRED, refusal(check(nowS = exp + Tickets.SKEW_S + 1)))
+    }
+
+    @Test
+    fun anUploadBudgetIsCarriedWhenClaimedAndAbsentOtherwise() {
+        assertEquals(1_024L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, ab = 1_024))).ticket.ab)
+        assertEquals(0L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, ab = 0))).ticket.ab)
+        assertNull(assertIs<Outcome.Accepted>(check()).ticket.ab)
     }
 
     @Test
@@ -104,6 +112,7 @@ class TicketCheckTest {
                 "exp before nbf" to with(exp = nbf - 1),
                 "a window over two days" to with(exp = nbf + Tickets.MAX_LIFETIME_S + 1),
                 "negative flags" to with(fl = -1),
+                "a negative upload budget" to with(ab = -1),
             )
         cases.forEach { (name, ticket) -> assertEquals(Reason.MALFORMED, refusal(check(ticket)), name) }
     }

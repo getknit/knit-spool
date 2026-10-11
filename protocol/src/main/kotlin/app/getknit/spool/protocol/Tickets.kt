@@ -17,10 +17,11 @@ import java.util.Base64
  * 2026-10.bxsg). Encoded with [RecordCodec] and signed as bytes; the spool verifies those bytes, never
  * a re-encoding.
  *
- * Every field is required and none has a default, because [RecordCodec] omits a field equal to its
- * default and the signed bytes must not depend on which defaults a decoder happens to declare.
- * Unknown keys are ignored, so later claims (an upload budget, a creation budget) add without a
- * version bump.
+ * Every field but [ab] is required and none has a default, because [RecordCodec] omits a field equal
+ * to its default and the signed bytes must not depend on which defaults a decoder happens to declare.
+ * [ab] is the one optional claim: its default is null, which is only ever omitted, so a ticket that
+ * carries it always encodes it. Unknown keys are ignored, so later claims (a creation budget) add
+ * without a version bump.
  */
 @Serializable
 class Ticket(
@@ -36,8 +37,13 @@ class Ticket(
     val exp: Long,
     /** The daily pseudonym, [Tickets.PS_BYTES] opaque bytes the issuer derives. */
     val ps: ByteArray,
-    /** What it entitles: a bitmask of [Tickets.FL_TURN], [Tickets.FL_CAST] and, later, more. */
+    /** What it entitles: a bitmask of [Tickets.FL_TURN], [Tickets.FL_FILES], [Tickets.FL_CAST] and, later, more. */
     val fl: Long,
+    /**
+     * Attachment bytes this pseudonym may upload on its day (ADR 2026-10.h6pt); null means the spool's
+     * own `SPOOL_TICKET_ATTACH_BYTES`, which also caps it.
+     */
+    val ab: Long? = null,
 ) {
     companion object {
         /** A current-version ticket for [signingKey], its [kid] filled in from the key's public half. */
@@ -48,6 +54,7 @@ class Ticket(
             exp: Long,
             ps: ByteArray,
             fl: Long,
+            ab: Long? = null,
         ): Ticket =
             Ticket(
                 v = Tickets.VERSION,
@@ -57,6 +64,7 @@ class Ticket(
                 exp = exp,
                 ps = ps,
                 fl = fl,
+                ab = ab,
             )
     }
 }
@@ -89,11 +97,20 @@ object Tickets {
     const val FL_TURN = 1L
 
     /**
+     * [Ticket.fl] bit 1: the holder may upload attachments where a spool gates them, charged to its own
+     * daily budget (S-7.6-22, ADR 2026-10.h6pt). Unlike [FL_CAST] it unlocks nothing for anyone else.
+     */
+    const val FL_FILES = 2L
+
+    /**
      * [Ticket.fl] bit 3: the holder may cast, and unlocks casts for every other subscriber of each scope
-     * its connection holds (VOICE_CALLS.md §2.7). Bits 1 and 2 stay reserved for ADR 2026-10.bxsg's
-     * proposed files and scope-creation claims.
+     * its connection holds (VOICE_CALLS.md §2.7). Bit 2 stays reserved for ADR 2026-10.bxsg's proposed
+     * scope-creation claim.
      */
     const val FL_CAST = 8L
+
+    /** What a HELLO with `ent` and no `entGates` gates: the spool predates S-7.6-13's `entGates`. */
+    const val LEGACY_GATES = FL_TURN or FL_CAST
 
     const val KEY_BYTES = 32
     const val SIG_BYTES = 64
@@ -133,11 +150,14 @@ object Tickets {
         EARLY("early"),
         EXPIRED("expired"),
 
-        /** A `turnreq` on a connection that holds no live ticket. */
+        /** A gated `turnreq` or `aput` on a connection that holds no live ticket. */
         MISSING("missing"),
 
         /** A live ticket that does not grant what was asked. */
         FLAGS("flags"),
+
+        /** A gated `aput` whose pseudonym has spent its upload budget for the day (S-7.6-22). */
+        BUDGET("budget"),
     }
 
     /** The outcome of [check]: the verified claims, or the first reason they were refused. */
@@ -248,7 +268,8 @@ object Tickets {
             ticket.nbf >= 0 &&
             ticket.exp >= ticket.nbf &&
             ticket.exp - ticket.nbf <= MAX_LIFETIME_S &&
-            ticket.fl >= 0
+            ticket.fl >= 0 &&
+            (ticket.ab ?: 0L) >= 0
 
     private fun verify(
         key: PublicKey,

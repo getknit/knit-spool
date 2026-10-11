@@ -65,8 +65,9 @@ object ErrCode {
     const val CONFLICT = "conflict"
 
     /**
-     * An `ent` the spool will not accept, or a `turnreq` that needs a ticket the connection does not
-     * hold (experimental, VOICE_CALLS.md §2.6). `msg` carries one [Tickets.Reason] word.
+     * An `ent` the spool will not accept, or a gated `turnreq` or `aput` that needs a ticket the
+     * connection does not hold (experimental, VOICE_CALLS.md §2.6). `msg` carries one [Tickets.Reason]
+     * word.
      */
     const val TICKET = "ticket"
 }
@@ -175,13 +176,15 @@ class CommonsInfo(
  * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, proposed spec
  * §7.6). Nullable for [moderation]'s reason: presence is the signal, and `false` is never sent.
  *
- * [ent] says the spool accepts entitlement tickets ([Ent]), and that a `turnreq` on this connection
- * needs one. [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
+ * [ent] says the spool accepts entitlement tickets ([Ent]), and [entGates] which [Ticket.fl] bits it
+ * requires one for on this connection; [ticketGates] reads the pair, absent `entGates` included.
+ * [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
  * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
  * (VOICE_CALLS.md §2.6), and both omitted when off: `false` and an empty list are never sent.
  *
  * [cast] says the spool fans out [Cast]s, and within what (experimental, VOICE_CALLS.md §2.7). Omitted
- * when casts are off. Beside [ent], a cast is admitted only on a scope a cast ticket has unlocked.
+ * when casts are off. Where [ticketGates] has [Tickets.FL_CAST], a cast is admitted only on a scope a
+ * cast ticket has unlocked.
  */
 @Serializable
 class Hello(
@@ -196,7 +199,15 @@ class Hello(
     val ent: Boolean? = null,
     val stun: List<String>? = null,
     val cast: CastInfo? = null,
-)
+    val entGates: Long? = null,
+) {
+    /**
+     * The [Ticket.fl] bits this spool requires a ticket for (S-7.6-13): none without [ent], and
+     * [Tickets.LEGACY_GATES] from a spool that sent [ent] but predates [entGates].
+     */
+    val ticketGates: Long
+        get() = if (ent == true) entGates ?: Tickets.LEGACY_GATES else 0L
+}
 
 /**
  * The cast advertisement (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): this spool fans

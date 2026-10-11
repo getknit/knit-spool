@@ -50,6 +50,28 @@ class TicketVectorTest {
     }
 
     @Test
+    fun aFilesTicketWithABudgetAndAGatedHelloMatchTheDraft() {
+        val (tk, sig) = Tickets.issue(SIGNING_KEY, filesFixture())
+        assertEquals(EXPECTED.getValue("tkFiles"), tk.toHexString(), "files ticket body diverges from the draft")
+        assertEquals(EXPECTED.getValue("sigFiles"), sig.toHexString(), "files ticket signature diverges from the draft")
+        val decoded = RecordCodec.decode<Ticket>(tk)
+        assertEquals(Tickets.FL_TURN or Tickets.FL_FILES, decoded?.fl)
+        assertEquals(134_217_728L, decoded?.ab)
+        val gates = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST
+        val hello = Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, entGates = gates)
+        assertEquals(EXPECTED.getValue("helloEntGates"), RecordCodec.encode(hello).toHexString())
+        assertEquals(gates, RecordCodec.decode<Hello>(EXPECTED.getValue("helloEntGates").hexToByteArray())?.ticketGates)
+    }
+
+    @Test
+    fun aHelloReadsItsGatesFromEntAndEntGates() {
+        assertEquals(0L, Hello(t = RecordType.HELLO, v = RECORD_VERSION).ticketGates)
+        assertEquals(0L, Hello(t = RecordType.HELLO, v = RECORD_VERSION, entGates = Tickets.FL_FILES).ticketGates)
+        assertEquals(Tickets.LEGACY_GATES, Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true).ticketGates)
+        assertEquals(0L, Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, entGates = 0).ticketGates)
+    }
+
+    @Test
     fun aHelloWithNeitherFieldOmitsBoth() {
         val hello = RecordCodec.encode(Hello(t = RecordType.HELLO, v = RECORD_VERSION))
         assertEquals("a261746568656c6c6f617601", hello.toHexString())
@@ -86,6 +108,18 @@ class TicketVectorTest {
                 fl = Tickets.FL_TURN,
             )
 
+        /** The [fixture] with files beside TURN and the default 128 MiB budget claimed outright. */
+        fun filesFixture(): Ticket =
+            Ticket.forKey(
+                signingKey = SIGNING_KEY,
+                aud = "lab.example",
+                nbf = 1_800_000_000L,
+                exp = 1_800_086_400L,
+                ps = ByteArray(Tickets.PS_BYTES) { it.toByte() },
+                fl = Tickets.FL_TURN or Tickets.FL_FILES,
+                ab = 134_217_728L,
+            )
+
         val EXPECTED =
             mapOf(
                 "kid" to "21fe31dfa154a261",
@@ -102,6 +136,13 @@ class TicketVectorTest {
                     "5818b809",
                 "helloEntStun" to
                     "a461746568656c6c6f61760163656e74f5647374756e81757374756e3a6c61622e6578616d706c653a33343738",
+                "tkFiles" to
+                    "a8617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c65636e62661a6b49d200636578701a6b4b2380" +
+                    "62707350000102030405060708090a0b0c0d0e0f62666c036261621a08000000",
+                "sigFiles" to
+                    "1942b4b07f1ef10f7e4061e822d909876b2e5a1597469c5aa70c87c5909dbc9c" +
+                    "c24dc7703dfcb8a33ea190b19e4b9a9f460319f9ec2d11d17e787afe551b5d0a",
+                "helloEntGates" to "a461746568656c6c6f61760163656e74f568656e7447617465730b",
             )
     }
 }
