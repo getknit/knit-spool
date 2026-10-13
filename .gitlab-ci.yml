@@ -326,6 +326,9 @@ verify:adr-index:
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
+  # `light` sends this to the small `service` runner, which takes only tagged jobs.
+  tags:
+    - light
   needs: ["docker", "dist"]
   script:
     - echo "releasing $CI_COMMIT_TAG"
