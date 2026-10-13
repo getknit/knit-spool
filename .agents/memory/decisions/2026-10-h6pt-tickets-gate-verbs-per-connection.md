@@ -130,7 +130,7 @@ Sending an attachment needs the sender's own ticket. Receiving one needs nothing
 
 ## What shipped
 
-Commits `17a6b84` through `319f0ce` on `exp/turn`, with the spec rows in knit-next `74a327b7`
+Commits `17a6b84` through `319f0ce` on `exp/turn`, with the spec rows in knit-next `0874ea3b`
 (`docs/VOICE_CALLS.md` §2.6, S-7.6-22/23, C-7.6-24):
 
 - `FL_FILES`, the `ab` claim, `Reason.BUDGET` and `hello.entGates`, with vectors from the spec.
