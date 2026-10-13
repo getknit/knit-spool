@@ -44,3 +44,12 @@ Nothing tests these numbers; `DeployConfigTest` checks only that the overlay wir
 halves. The guard is that the defaults appear in `deploy/coturn/entrypoint.sh`,
 `deploy/.env.example`, the overlay's comment, README, HOSTING.md and CHANGELOG, and a
 grep for the old value must come back empty after any change.
+
+**Amended 2026-10-12** (`feat/turn-allocations`, knit-next S-7.6-25): the overlay's default
+`SPOOL_TURN_URLS` drops `turn:…:3478?transport=tcp` and lists only the UDP URL, then `turns:`
+on 5349. A phone opened an allocation for every URL on every network it tried, and the plain
+TCP URL seldom reached a network the other two missed, so cutting it is the cheapest way to
+carry more calls inside the same `total-quota`. The quotas above are unchanged until a
+measured call sizes them. An operator who sets `SPOOL_TURN_URLS` keeps their list, and
+3478/tcp needs opening only for a TCP URL they add back. `DeployConfigTest`'s
+`theTurnOverlayDefaultsToOneUrlPerTransport` pins the default list and its order.

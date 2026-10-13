@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-11T07:42:41Z
+  updated: 2026-10-13T06:13:46Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -74,6 +74,13 @@ document:
 
 ### Changed
 
+- **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
+  now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
+  `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/VOICE_CALLS.md` S-7.6-25). The plain
+  `turn:…:3478?transport=tcp` URL is gone from it: a phone opened an allocation for it on every
+  network on every call, and it seldom reached a network the other two missed. A deployment that
+  sets `SPOOL_TURN_URLS` itself keeps exactly what it set. 3478/tcp no longer needs to be open on
+  the firewall unless such a URL is added back; the daemon and the wire are unchanged.
 - **The conformance suite runs in-process on every `check`.** `:daemon`'s `ConformanceSelfTest`
   boots the reference daemon on an ephemeral port and runs every check against it three ways: with
   a token, proof-of-work, a commons and moderation all on (nothing skips); the CI job's bare shape

@@ -43,7 +43,7 @@ the [README](README.md#-deploy) has the rest.
 | CPU | 1 shared vCPU | The store runs on one thread and sustains order-1000 pushes/s on a $5 tier. TLS and PoW verification are the only other work. CPU won't be your constraint. |
 | Disk | 10–25 GB | Payload is bounded by `SPOOL_MAX_BYTES` (256 MB default) and the image is ~150 MB. The rest is logs, so cap them. |
 | Transfer | 1 TB/month, minimum | The one to shop on. See below. |
-| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp+tcp, 5349/tcp and the relay range (49160–49999/udp). |
+| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp, 5349/tcp and the relay range (49160–49999/udp); 3478/tcp only if you add a `turn:…?transport=tcp` URL to `SPOOL_TURN_URLS` (S-7.6-25). |
 | Uptime | Whatever the tier gives you | Clients treat a missing Spool as a missing Spool. Don't buy an SLA for this. |
 
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
@@ -332,8 +332,9 @@ With too little free space it logs a warning, boots unchanged, and tries again o
 - [ ] Included transfer you're comfortable with, and you've read the overage rate.
 - [ ] A public IPv4 with inbound :80 and :443, and a DNS name already pointing at it. ACME issuance
       fails otherwise.
-- [ ] Running TURN: 3478/udp, 3478/tcp, 5349/tcp and 49160–49999/udp open too — on the host firewall
-      *and* any provider-side one.
+- [ ] Running TURN: 3478/udp, 5349/tcp and 49160–49999/udp open too — on the host firewall *and*
+      any provider-side one. 3478/tcp only if `SPOOL_TURN_URLS` lists a `turn:…?transport=tcp` URL:
+      the default hands out UDP and `turns:` alone (S-7.6-25), and STUN is UDP.
 - [ ] A persistent volume for `SPOOL_DATA_DIR`, or a deliberate choice to run in memory.
 - [ ] A region with a sane path to the people who'll use it, and ideally not the region their other
       Spool is in.
