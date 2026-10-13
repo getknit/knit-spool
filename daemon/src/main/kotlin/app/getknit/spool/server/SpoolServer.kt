@@ -1238,6 +1238,11 @@ class SpoolServer(
      * refusal strikes the abuse window only when [strike] says so — a `sub` naming many new scopes
      * is one record and strikes once for all of them — and [Gate.CLOSED] reports that the strike
      * closed the session, so a caller in a loop stops sending into it.
+     *
+     * A stamp-less record is turned away with `err pow` before the bucket: clients mine only when
+     * asked (C-8-4), so taking a token here would charge every new scope twice, once for the ask
+     * and again for the stamped retry. The refusal creates nothing and hashes nothing, so it needs
+     * no limit; a record that does carry a stamp still pays the bucket before it is verified.
      */
     private suspend fun newScopeGates(
         conn: Conn,
@@ -1248,6 +1253,10 @@ class SpoolServer(
         now: Long,
         strike: Boolean = true,
     ): Gate {
+        if (config.powBits > 0 && (powDay == null || powN == null)) {
+            sendErr(conn, ErrCode.POW, q = q, scope = scope)
+            return Gate.POW_REFUSED
+        }
         val retryMs = conn.ipState.newScopeBucket.take()
         if (retryMs > 0) {
             val closed = rateLimited(conn, q = q, scope = scope, retryMs = retryMs, strike = strike)

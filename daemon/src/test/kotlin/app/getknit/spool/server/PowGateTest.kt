@@ -11,6 +11,7 @@ import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.store.HardLimits
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -38,6 +39,41 @@ class PowGateTest {
                     ),
                 )
                 assertEquals(ErrCode.POW, expectRecord<Err>(RecordType.ERR).code)
+            }
+        }
+    }
+
+    @Test
+    fun aStamplessAskSpendsNoNewScopeToken() {
+        val roomy = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 32)
+        withServer(testConfig(powBits = bits, hardLimits = roomy, rateNewScopesPerMin = 1)) {
+            // burst 4; the fake clock never refills
+            connect {
+                helloHandshake()
+                val day = Pow.utcDay(clock.now)
+                // A client that mines only when asked (C-8-4) sends each new scope bare first. More
+                // bare asks than the burst holds, and every one is `pow`, never `rate`.
+                (1..6).forEach {
+                    sendRecord(
+                        Sub(
+                            t = RecordType.SUB,
+                            q = it.toLong(),
+                            subs = listOf(ScopeSub(scope = testScope(it), bounds = testBounds())),
+                        ),
+                    )
+                    assertEquals(ErrCode.POW, expectRecord<Err>(RecordType.ERR).code)
+                }
+                // So the whole burst is left for the stamped retries, and each of those takes a token.
+                (1..4).forEach { subscribe(testScope(it), q = 10L + it, pow = stampFor(testScope(it), day)) }
+                sendRecord(
+                    Sub(
+                        t = RecordType.SUB,
+                        q = 15L,
+                        subs = listOf(ScopeSub(scope = testScope(5), bounds = testBounds(), pow = stampFor(testScope(5), day))),
+                    ),
+                )
+                assertEquals(ErrCode.RATE, expectRecord<Err>(RecordType.ERR).code)
+                assertEquals(4L, spool.metrics.powVerifiedTotal.sum(), "a rate-refused stamp is not hashed")
             }
         }
     }
