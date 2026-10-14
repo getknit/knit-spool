@@ -4,11 +4,14 @@ package app.getknit.spool.store
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
 import java.security.MessageDigest
 import java.sql.DriverManager
 import java.sql.SQLException
+import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -280,4 +283,58 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
             assertEquals(40L, store.totalBytes())
         }
     }
+
+    /**
+     * The conversion's rebuilt copy is a temp database the size of the live data. Left to SQLite it
+     * spills to the temp directory once it outgrows the page cache, and under a read-only root that
+     * is a small `/tmp` tmpfs, while the space check reads the data directory. With SQLite's temp
+     * directory pointed elsewhere, the copy must still land in the data directory. SQLite unlinks a
+     * temp file as soon as it opens it, so an inotify watch is what sees where it went. 10 MiB live
+     * is well past the default 2 MiB page cache.
+     */
+    @Test
+    fun theConversionKeepsItsTempCopyInTheDataDirectory() {
+        var digest = 0L
+        SqliteScopeStore.open(tempDir, roomy).use { store ->
+            store.bigBlobs(160)
+            digest = assertIs<DigestInfo>(store.digest(scope, now = 1L)).digest
+        }
+        DriverManager.getConnection("jdbc:sqlite:$dbFile").use { raw ->
+            raw.createStatement().use {
+                it.execute("PRAGMA auto_vacuum=NONE")
+                it.execute("VACUUM")
+                it.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+        }
+        assertEquals(0L, pragma("auto_vacuum"))
+
+        val elsewhere = Files.createDirectory(tempDir.resolve("elsewhere"))
+        setTempDirectory(elsewhere.toString())
+        val created = mutableMapOf<Path, MutableList<String>>()
+        try {
+            FileSystems.getDefault().newWatchService().use { watcher ->
+                val keys = listOf(tempDir, elsewhere).associateBy { it.register(watcher, ENTRY_CREATE) }
+                SqliteScopeStore.open(tempDir, roomy).use { store ->
+                    assertEquals(2L, pragma("auto_vacuum"))
+                    assertEquals(digest, assertIs<DigestInfo>(store.digest(scope, now = 2L)).digest)
+                }
+                while (true) {
+                    val key = watcher.poll(1, TimeUnit.SECONDS) ?: break
+                    val dir = keys.getValue(key)
+                    key.pollEvents().forEach { created.getOrPut(dir) { mutableListOf() } += it.context().toString() }
+                    key.reset()
+                }
+            }
+        } finally {
+            setTempDirectory("")
+        }
+        assertEquals(emptyList(), created[elsewhere].orEmpty(), "temp files outside the data directory")
+        assertTrue(created[tempDir].orEmpty().any { it.startsWith("etilqs_") }, "no temp copy in the data directory: $created")
+    }
+
+    /** SQLite's temp directory is process-wide, so setting it on any connection sets it for the store's. */
+    private fun setTempDirectory(dir: String) =
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { raw ->
+            raw.createStatement().use { it.execute("PRAGMA temp_store_directory = '$dir'") }
+        }
 }

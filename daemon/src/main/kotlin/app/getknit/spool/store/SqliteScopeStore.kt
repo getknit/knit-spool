@@ -58,7 +58,10 @@ class SqliteScopeStore private constructor(
         /** Caps the `-wal` file between checkpoints, which otherwise keeps its own high-water size. */
         private const val JOURNAL_SIZE_LIMIT = 64L * 1024 * 1024
 
-        /** What a one-off conversion `VACUUM` needs free: the rebuilt copy plus the WAL that carries it. */
+        /**
+         * What a one-off conversion `VACUUM` needs free in the data directory: the rebuilt copy, which
+         * [inDataDirectoryTemp] keeps there, plus the WAL that carries it back into the file.
+         */
         private const val VACUUM_SPACE_FACTOR = 2
 
         /** One chunk row's charge in SQL — the same rule as [ScopeStore.chunkCharge]. */
@@ -228,8 +231,10 @@ class SqliteScopeStore private constructor(
      * applies it to an existing file only through a `VACUUM`. Runs once per file, before the store
      * serves anything. Never fatal: a file that cannot be rebuilt (too little free disk, an I/O
      * error) is left exactly as it was, the spool boots as before, and the next boot tries again.
+     * A `VACUUM` can also throw after the rebuilt file is already in place, so a failure is judged
+     * by the file, not by the exception.
      */
-    @Suppress("TooGenericExceptionCaught") // any failure leaves the file untouched; boot carries on
+    @Suppress("TooGenericExceptionCaught") // a failed rebuild leaves the file as it was; boot carries on
     private fun convertToIncremental() {
         val before = storeFileBytes()
         val live =
@@ -250,12 +255,15 @@ class SqliteScopeStore private constructor(
         val started = System.nanoTime()
         try {
             connection.createStatement().use { statement ->
-                statement.execute("VACUUM")
+                inDataDirectoryTemp(statement) { statement.execute("VACUUM") }
                 statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             }
         } catch (e: Exception) {
-            log.warn("store: incremental auto-vacuum conversion failed, file left as it was: {}", e.message)
-            return
+            if (!convertedAnyway()) {
+                log.warn("store: incremental auto-vacuum conversion failed, file left as it was: {}", e.message)
+                return
+            }
+            log.warn("store: the conversion VACUUM threw after the file had converted: {}", e.message)
         }
         log.info(
             "store: converted {} to incremental auto-vacuum, {} -> {} bytes in {} ms",
@@ -265,6 +273,44 @@ class SqliteScopeStore private constructor(
             (System.nanoTime() - started) / 1_000_000,
         )
     }
+
+    /**
+     * Runs [block] with SQLite's temp files in the data directory. The conversion `VACUUM` builds
+     * its copy in a temp database that spills to a file once it outgrows the page cache. SQLite
+     * picks that file's directory itself and skips any it cannot write, so under a read-only root
+     * the copy lands in `/tmp`, often a small tmpfs, where the free-space check never looked.
+     * `temp_store_directory` is deprecated and process-wide. The conversion runs while the store
+     * opens, before anything else uses SQLite, and the setting goes back to SQLite's default after.
+     */
+    private fun inDataDirectoryTemp(
+        statement: Statement,
+        block: () -> Unit,
+    ) {
+        val dir =
+            dbFile
+                .toAbsolutePath()
+                .parent
+                .toString()
+                .replace("'", "''")
+        statement.execute("PRAGMA temp_store_directory = '$dir'")
+        try {
+            block()
+        } finally {
+            statement.execute("PRAGMA temp_store_directory = ''")
+        }
+    }
+
+    /**
+     * True when a `VACUUM` that threw had already put the rebuilt file in place: a disk that fills
+     * as SQLite cleans up raises `SQLITE_FULL` after the conversion has landed.
+     */
+    private fun convertedAnyway(): Boolean =
+        runCatching {
+            connection.createStatement().use { statement ->
+                pragmaLong(statement, "auto_vacuum") == AUTO_VACUUM_INCREMENTAL.toLong() &&
+                    statement.executeQuery("PRAGMA integrity_check").use { it.next() && it.getString(1) == "ok" }
+            }
+        }.getOrDefault(false)
 
     private fun pragmaLong(
         statement: Statement,

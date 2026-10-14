@@ -248,7 +248,9 @@ coming back. The README's reload section has the detail.
 
 The first start on a database written by 0.3.x or earlier runs one `VACUUM` to switch it to incremental
 auto-vacuum. That rebuild takes about as long as copying the live data and needs about twice the
-live data in free disk. A spool that has been running a while drops to its live size on the spot.
+live data free on the data volume. Its temporary copy goes there too, never to `/tmp`, so a read-only
+root with a small `/tmp` tmpfs is fine. A spool that has been running a while drops to its live size
+on the spot.
 With too little free space it logs a warning, boots unchanged, and tries again on the next start.
 
 ## Before you commit

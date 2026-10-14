@@ -52,7 +52,9 @@ document:
   `auto_vacuum=INCREMENTAL`, and the sweeper hands free space back once more than 4 MiB has built
   up: 8 MiB batches, up to 512 MiB per sweep, each batch a separate store call. The first start on
   an older file converts it with one `VACUUM`, which shrinks it to its live size on the spot and
-  needs about twice the live data in free disk. With too little room it warns and boots as before.
+  needs about twice the live data free in the data directory. The rebuild keeps its temporary copy
+  there too, not in `/tmp`, so a read-only root with a small `/tmp` tmpfs does not stop it. With too
+  little room it warns and boots as before.
   The write-ahead log is capped at 64 MiB between checkpoints.
 - **Empty scopes no longer hold `SPOOL_MAX_SCOPES` slots for ever** (ADR 2026-10.d2zb). Only the
   byte watermark ever deleted a scope. The TTL sweep emptied scopes but kept their rows, so a quiet
