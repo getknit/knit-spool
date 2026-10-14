@@ -1,21 +1,27 @@
 # Ticketed call sequence
 
 How a ticket holder calls a friend who has no ticket, as far as STUN, TURN and the spool are
-concerned. This is the **proposed** design from ADR 2026-10.bxsg (draft), not what `exp/turn`
-ships today. Two parts do not exist yet, and the diagram's notes mark them:
+concerned, from ADR 2026-10.bxsg. Both parts the first draft of this page marked as missing now
+exist:
 
-- **The daily ticket and the `ent` record** (steps 1–2 and 5–6). Today any subscribed connection
-  gets a credential, and the TURN username ends in a random suffix rather than a pseudonym.
-- **A STUN server for the free phone** (steps 16–17). The knit-next client configures STUN only
-  from TURN credentials it has already received. A phone with no TURN-advertising spool therefore
-  offers only private host addresses. The payer's relay cannot permit those (`denied-peer-ip`
-  answers 403), and coturn silently drops the free phone's checks. This gap, not the TURN
-  protocol, is what decides the "one payer is enough" claim.
+- **The daily ticket and the `ent` record** (steps 1–2 and 5–6) are built on `exp/turn`. On a
+  spool with `SPOOL_TICKET_KEY` and `turn` in `SPOOL_TICKET_GATES`, `turnreq` needs a live ticket,
+  and the TURN username ends in a hash of the ticket's pseudonym. On a spool with no key, any
+  subscribed connection gets a credential with a random suffix.
+- **A STUN server for the free phone** (steps 16–17). The spool lists `SPOOL_STUN_URLS` in every
+  `hello`, and knit-next's `feat/voip-calling` gathers from it on every call (C-7.6-20). Without
+  it, a phone with no TURN-advertising spool offers only private host addresses. The payer's
+  relay cannot permit those (`denied-peer-ip` answers 403), and coturn silently drops the free
+  phone's checks. This, not the TURN protocol, is what decides the "one payer is enough" claim.
 
 When neither phone has a radio path to the other and the live call cannot connect, the call
 can fall back to a walkie-talkie whose chunks ride `cast` records (ADR 2026-10.3wdy). The
 payer's cast ticket unlocks that on any spool where both phones subscribe the DM scope, in
 both directions, and no TURN allocation is involved. The diagram leaves it out.
+
+Attachments follow a different rule (ADR 2026-10.h6pt). With `files` in `SPOOL_TICKET_GATES`, an
+`aput` needs the uploader's own ticket, so the free friend receives the payer's attachments but
+cannot send any through that spool. One payer is enough for a call or a walkie, not for files.
 
 What the diagram relies on, read in coturn 4.18.0 (tag `4.18.0`, commit `23c6c1d`):
 
@@ -37,14 +43,14 @@ sequenceDiagram
     participant T as coturn<br/>(TURN + STUN)
     participant B as Free friend's phone<br/>(no ticket)
 
-    Note over A,W: Daily, in the background (proposed)
+    Note over A,W: Daily, in the background
     A->>W: account key from the invite
     W-->>A: signed ticket (pseudonym, flags, budgets)
 
     Note over A,AS: Spool session (WSS)
     A->>AS: hello
-    AS-->>A: hello (turn: true, ent: true)
-    A->>AS: ent (ticket) - proposed
+    AS-->>A: hello (turn, ent, entGates, stun)
+    A->>AS: ent (ticket)
     AS-->>A: ok (Ed25519 checked, bound to this connection)
 
     Note over A,T: Call setup on the payer's side
@@ -61,8 +67,8 @@ sequenceDiagram
     A->>AS: push OFFER (same sealed bytes)
     SS-->>B: event (opaque blob)
 
-    Note over B,T: Free side needs a STUN server - missing in today's client
-    B->>T: STUN Binding (stun URL from hello or the OFFER - proposed)
+    Note over B,T: Free side needs a STUN server
+    B->>T: STUN Binding (stun URL from a spool's hello)
     T-->>B: server-reflexive address (carrier NAT's public IP)
     B->>SS: push ANSWER (host, srflx candidates)
     SS-->>A: event (opaque blob)

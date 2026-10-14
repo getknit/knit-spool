@@ -8,7 +8,8 @@ topics: [tickets, turn, attachments, auth]
 
 # ADR 2026-10.bxsg — entitlement tickets gate turn, files and scope creation on a spool
 
-Status: Proposed (2026-10-08). Draft, not yet reviewed; nothing here is built.
+Status: Proposed (2026-10-08). The trial subset is built on `exp/turn`, ADR 2026-10.h6pt has since
+built the `files` gate, and the rest is unbuilt and awaits review. See [Trial subset](#trial-subset).
 
 **Context:** an operator may offer TURN and files to some callers and not others, and the
 spool must tell them apart without holding an account. In the shape considered, a storefront
@@ -133,8 +134,8 @@ Ticket {
 
 ## Trial subset
 
-What shipped on `exp/turn` for the paid-versus-free call trial (commits `0891e58` through
-`62de11d`), and what is still only proposed here:
+What shipped on `exp/turn` for the paid-versus-free call trial (commits `7b1414c` through
+`2f159d1`), and what is still only proposed here:
 
 - **Shipped:**
   - the `ent` record, `err ticket` with a reason in `msg`, and `hello.ent`;

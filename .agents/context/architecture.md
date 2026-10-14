@@ -27,4 +27,5 @@ cross.
 
 - [`HOSTING.md`](../../HOSTING.md): sizing, providers, upgrade without a reconnect storm.
 - [`SECURITY.md`](../../SECURITY.md): what a Spool is trusted with, known limits, hardening.
-- README sections: configuration table, the commons, send-side moderation, TURN, operating.
+- README sections: configuration table, the commons, send-side moderation, TURN, casts,
+  operating.
