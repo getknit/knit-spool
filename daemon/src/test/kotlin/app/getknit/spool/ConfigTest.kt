@@ -364,7 +364,7 @@ class ConfigTest {
     fun ticketGatesDefaultToTurnAndCastAndParseAsAList() {
         val default = assertNotNull(withTicket().ticket)
         assertEquals(Tickets.LEGACY_GATES, default.gates)
-        assertEquals(134_217_728L, default.attachBytes)
+        assertEquals(33_554_432L, default.attachBytes)
         assertEquals(Tickets.LEGACY_GATES, assertNotNull(withTicket("SPOOL_TICKET_GATES" to "").ticket).gates)
         val files = assertNotNull(withTicket("SPOOL_TICKET_GATES" to " files , turn,cast", "SPOOL_TICKET_ATTACH_BYTES" to "0").ticket)
         assertEquals(Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST, files.gates)

@@ -106,7 +106,7 @@ services:
       SPOOL_TICKET_KEY:
       SPOOL_TICKET_AUDIENCE:
       # Which capabilities need a ticket (turn, files, cast; default turn,cast), and the most one
-      # ticket holder may upload a day when files is gated (default 128 MiB). Both need the key.
+      # ticket holder may upload a day when files is gated (default 32 MiB). Both need the key.
       SPOOL_TICKET_GATES:
       SPOOL_TICKET_ATTACH_BYTES:
       # Casts (experimental): a walkie's chunks fanned out to a scope's other subscribers and never

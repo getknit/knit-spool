@@ -90,9 +90,15 @@ Sending an attachment needs the sender's own ticket. Receiving one needs nothing
   pseudonym's concurrent connections can overshoot its budget by at most one chunk each.
 - **The budget** is bxsg's daily upload budget, `min(ab, SPOOL_TICKET_ATTACH_BYTES)` per
   pseudonym. The pseudonym already changes each day, so the budget does too.
-  `SPOOL_TICKET_ATTACH_BYTES` defaults to 128 MiB, eight full scopes at the 16 MiB
-  default `SPOOL_MAX_ATTACH_BYTES`. That is a draft number, to be sized against the
-  watermark before this is accepted. An absent `ab` means the spool's value.
+  `SPOOL_TICKET_ATTACH_BYTES` defaults to 32 MiB, two full scopes at the 16 MiB default
+  `SPOOL_MAX_ATTACH_BYTES`. An absent `ab` means the spool's value.
+- **Sized against the disk, 2026-10-13.** The draft's 128 MiB was cut to 32 MiB. The
+  planning case is a 2,000-connection public spool with 1,000 holders active at once,
+  each keeping up to 3 × the budget. At 128 MiB that is 375 GiB held, more than the whole
+  160 GB disk of the box in the planning case. At 32 MiB it is
+  94 GiB, and 4,096 scopes × 16 MiB caps attachments at 64 GiB before that. The cost of
+  the cut is about ten phone photos a day per holder. Fitting even that on a box is the
+  deployment's sizing problem, not this daemon's.
 - **A refusal is `err ticket`** with the record's `q`, and with `missing`, `expired` or
   `flags` in `msg` as bxsg defines them. A new reason, `budget`, means the pseudonym's
   budget for the day is spent. `quota` was the alternative and was rejected: the shipped

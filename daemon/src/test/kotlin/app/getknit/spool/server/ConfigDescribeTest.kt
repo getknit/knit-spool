@@ -36,7 +36,7 @@ class ConfigDescribeTest {
         assertEquals(TEST_TICKET_AUD, ticketed["ticketAud"])
         assertEquals("unset", fields["ticketGates"])
         assertEquals("turn,cast", ticketed["ticketGates"])
-        assertEquals("134217728", ticketed["ticketAttachBytes"])
+        assertEquals("33554432", ticketed["ticketAttachBytes"])
         assertEquals("2", fields(testConfig(stunUrls = listOf("stun:a.example:3478", "stun:b.example:3478")).describe())["stun"])
     }
 

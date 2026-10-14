@@ -108,7 +108,7 @@ class TicketVectorTest {
                 fl = Tickets.FL_TURN,
             )
 
-        /** The [fixture] with files beside TURN and the default 128 MiB budget claimed outright. */
+        /** The [fixture] with files beside TURN and a 128 MiB budget claimed outright, as the spec's vector has it. */
         fun filesFixture(): Ticket =
             Ticket.forKey(
                 signingKey = SIGNING_KEY,

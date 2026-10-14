@@ -432,8 +432,8 @@ class SpoolServer(
                 .ifEmpty { "none" }
 
         companion object {
-            /** Eight full scopes a day at the default `SPOOL_MAX_ATTACH_BYTES` (ADR 2026-10.h6pt). */
-            const val DEFAULT_ATTACH_BYTES = 134_217_728L
+            /** Two full scopes a day at the default `SPOOL_MAX_ATTACH_BYTES`, sized against the disk (ADR 2026-10.h6pt). */
+            const val DEFAULT_ATTACH_BYTES = 33_554_432L
 
             /** What `SPOOL_TICKET_GATES` accepts. `create` waits on ADR 2026-10.bxsg's creation budget. */
             val GATE_WORDS = linkedMapOf("turn" to Tickets.FL_TURN, "files" to Tickets.FL_FILES, "cast" to Tickets.FL_CAST)

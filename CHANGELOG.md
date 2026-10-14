@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-13T06:13:46Z
+  updated: 2026-10-14T06:54:51Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -65,7 +65,7 @@ document:
   keyed Spool behaves as before, and `hello` names the choice in a new `entGates` beside `ent`. With
   `files` gated, an `aput` needs the uploader's own ticket with the new files flag (bit 1,
   `ticket-mint --files`). Each stored chunk is charged to that holder's daily budget,
-  `min(ab, SPOOL_TICKET_ATTACH_BYTES)` (128 MiB by default; `ticket-mint --ab`), and the refusal is
+  `min(ab, SPOOL_TICKET_ATTACH_BYTES)` (32 MiB by default; `ticket-mint --ab`), and the refusal is
   `err ticket` with its `q`, its scope and a `msg`, including the new `budget`. No other member's
   ticket pays for an upload, and `aget` is never gated. Budgets live in memory and are never logged,
   and `knit_spool_ticket_attach_bytes_charged_total` counts them. New conformance checks

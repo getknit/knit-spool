@@ -229,7 +229,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
 | `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
 | `SPOOL_TICKET_GATES` | `turn,cast` | *experimental:* which capabilities need a ticket, from `turn`, `files` and `cast`; `hello` says so in `entGates`. `files` gates **sending** attachments only. Needs the key. Reloadable |
-| `SPOOL_TICKET_ATTACH_BYTES` | `134217728` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (128 MiB). Needs the key. Reloadable |
+| `SPOOL_TICKET_ATTACH_BYTES` | `33554432` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (32 MiB). Needs the key. Reloadable |
 | `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
 | `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
 | `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
