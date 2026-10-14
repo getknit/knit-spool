@@ -98,7 +98,7 @@ Ticket {
   S-7.6-7, "random per issue", is amended for ticketed issues only.
 - **`aput`** needs `fl.files`. Each stored chunk's `chunkCharge` is charged to the
   pseudonym's in-memory daily upload budget, `min(ab, SPOOL_TICKET_ATTACH_BYTES)`.
-  Amended 2026-10-10 by ADR 2026-10.h6pt (proposed): the gate is on only when `files` is
+  Amended 2026-10-10 by ADR 2026-10.h6pt (accepted 2026-10-14): the gate is on only when `files` is
   in `SPOOL_TICKET_GATES`, only the uploader's own ticket counts, and `aget` stays open.
 - **`cast`** (amended 2026-10-10, ADR 2026-10.3wdy) needs bit 3, held by *some* live
   subscriber of the cast's scope rather than by the caster, so one payer unlocks a walkie

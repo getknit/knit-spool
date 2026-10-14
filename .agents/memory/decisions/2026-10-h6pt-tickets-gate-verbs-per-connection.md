@@ -8,7 +8,7 @@ topics: [tickets, attachments, auth, abuse]
 
 # ADR 2026-10.h6pt — tickets gate verbs per connection, and only an uploader's ticket pays for attachments
 
-Status: Proposed (2026-10-10). Built on `exp/turn` (2026-10-11), awaiting acceptance. Amends ADR
+Status: Accepted (2026-10-14). Proposed 2026-10-10, built on `exp/turn` 2026-10-11. Amends ADR
 2026-10.bxsg's `aput` and scope-creation gates.
 
 **Context:** an operator should be able to run one kind of spool, with each ticketed
