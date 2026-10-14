@@ -94,6 +94,12 @@ private const val RATE_STRIKE_WINDOW_MS = 10_000L
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
 private const val IP_IDLE_MS = 600_000L
 
+/** Pages one [ScopeStore.reclaimSpace] call frees: 8 MiB at SQLite's default 4 KiB page. */
+private const val RECLAIM_BATCH_PAGES = 2_048
+
+/** Batches per sweep: up to 512 MiB handed back a tick, the rest on the next one. */
+private const val RECLAIM_BATCHES_PER_TICK = 64
+
 /**
  * Most client entries the per-IP table holds before an accept sheds every idle one. Entries with a
  * live connection number at most the connections, so the idle ones are what a client rotating
@@ -541,8 +547,9 @@ class SpoolServer(
                             return@get
                         }
                         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
+                        val fileBytes = withStore { store.storeFileBytes() }
                         call.respondText(
-                            metrics.render(scopeCount, liveBytes, config.maxConns, commonsSubscribers()),
+                            metrics.render(scopeCount, liveBytes, config.maxConns, commonsSubscribers(), fileBytes),
                             ContentType.Text.Plain,
                         )
                     }
@@ -1386,6 +1393,17 @@ class SpoolServer(
         powAccepted.entries.removeIf { it.value < minDay }
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
+        reclaimSpace()
+    }
+
+    /**
+     * Hands freed file space back to the disk (ADR 2026-10.us34), after the expiry, reclaim and shed
+     * above have freed it. One store call per batch, so records queued behind the sweep run between
+     * batches instead of waiting out the whole pass.
+     */
+    private suspend fun reclaimSpace() {
+        var batches = 0
+        while (batches++ < RECLAIM_BATCHES_PER_TICK && withStore { store.reclaimSpace(RECLAIM_BATCH_PAGES) }) continue
     }
 
     /**

@@ -399,7 +399,8 @@ Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying ve
 `count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
 (current + total) and the `SPOOL_MAX_CONNS` cap they are measured against, records, pushes, events,
 PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
-sheds, bare scopes reclaimed, attachment chunks stored, egress bytes, scopes held, live bytes, and `err` counts by code.
+sheds, bare scopes reclaimed, attachment chunks stored, egress bytes, scopes held, live bytes, the
+store file's size on disk (`knit_spool_store_file_bytes`, SQLite only), and `err` counts by code.
 A Spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
 and how often its Spool-wide push budget throttled.
 

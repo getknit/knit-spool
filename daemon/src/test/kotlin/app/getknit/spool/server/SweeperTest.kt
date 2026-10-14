@@ -9,14 +9,54 @@ import app.getknit.spool.protocol.Pow
 import app.getknit.spool.protocol.PowStamp
 import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.store.HardLimits
+import app.getknit.spool.store.PushResult
+import app.getknit.spool.store.SqliteScopeStore
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.security.MessageDigest
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** The periodic sweeper: TTL expiry re-anchors, PoW-cache pruning. Driven via sweepTick(). */
 class SweeperTest {
+    @TempDir
+    lateinit var tempDir: Path
+
+    /**
+     * ADR 2026-10.us34: the tick that expires a scope's frames also hands their pages back, so the
+     * file follows what the spool holds rather than the most it ever held.
+     */
+    @Test
+    fun theSweepGivesExpiredFramesFileSpaceBack() {
+        val limits = HardLimits(maxBlob = 65_536, maxFramesCap = 1_000, maxTtlMs = 86_400_000L, maxScopes = 4)
+        val store = SqliteScopeStore.open(tempDir, limits)
+        withServer(testConfig(hardLimits = limits), store = store) {
+            store.subscribe(testScope(1), ScopeBounds(maxFrames = 1_000, ttlMs = 10_000L, maxBlob = 65_536), clock.now, held = { false })
+            val random = Random(7)
+            repeat(320) {
+                // 20 MiB
+                val data = random.nextBytes(65_536)
+                val id = MessageDigest.getInstance("SHA-256").digest(data)
+                assertTrue(store.push(testScope(1), id, data, clock.now) is PushResult.Stored)
+            }
+            val full = assertNotNull(store.storeFileBytes())
+
+            clock.advance(20_000)
+            spool.sweepTick()
+
+            val after = assertNotNull(store.storeFileBytes())
+            assertTrue(after < full / 2 && after <= SqliteScopeStore.RECLAIM_FLOOR_BYTES + 1024 * 1024, "$full -> $after bytes")
+            store.close()
+        }
+    }
+
     /** The loop `start()` launches is what runs [SpoolServer.sweepTick] in production: nothing here calls it. */
     @Test
     fun theScheduledSweeperRunsOnItsCadence() {

@@ -73,6 +73,20 @@ class OpsTest {
         }
     }
 
+    /** The file's size is reported only where there is a file (ADR 2026-10.us34). */
+    @Test
+    fun metricsReportTheStoreFileOnlyForASqliteSpool() {
+        withServer {
+            assertTrue(!http.get("http://127.0.0.1:$port/metrics").bodyAsText().contains("knit_spool_store_file_bytes"))
+        }
+        withServer(store = SqliteScopeStore.open(tempDir, testConfig().hardLimits)) {
+            val body = http.get("http://127.0.0.1:$port/metrics").bodyAsText()
+            val line = body.lineSequence().single { it.startsWith("knit_spool_store_file_bytes ") }
+            assertTrue(line.substringAfter(' ').toLong() > 0L, line)
+            store.close()
+        }
+    }
+
     /**
      * The point of the egress counter is that it measures what *leaves*, which fan-out makes a
      * multiple of what arrives — so a single 1 KiB push to three subscribers must move the counter

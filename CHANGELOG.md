@@ -39,8 +39,21 @@ document:
 - `:conformance`'s runner is callable: `runSuite` and `SuiteOptions` are public, and `Report`
   takes its output streams. The CLI's behaviour and exit codes are unchanged.
 
+### Added
+
+- `knit_spool_store_file_bytes`: the SQLite file plus its write-ahead log, on disk. Absent on an
+  in-memory spool.
+
 ### Fixed
 
+- **The SQLite file gives freed space back** (ADR 2026-10.us34). SQLite reuses freed pages but never
+  truncates its file, so a spool's database stayed the size of the most it had ever held. One
+  hosted spool had a 58 MB file holding 1.3 MB of live data. The store now runs
+  `auto_vacuum=INCREMENTAL`, and the sweeper hands free space back once more than 4 MiB has built
+  up: 8 MiB batches, up to 512 MiB per sweep, each batch a separate store call. The first start on
+  an older file converts it with one `VACUUM`, which shrinks it to its live size on the spot and
+  needs about twice the live data in free disk. With too little room it warns and boots as before.
+  The write-ahead log is capped at 64 MiB between checkpoints.
 - **Empty scopes no longer hold `SPOOL_MAX_SCOPES` slots for ever** (ADR 2026-10.d2zb). Only the
   byte watermark ever deleted a scope. The TTL sweep emptied scopes but kept their rows, so a quiet
   spool, which never feels byte pressure, could fill all 64 slots with conversations that had ended

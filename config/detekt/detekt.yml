@@ -55,11 +55,12 @@ complexity:
     # Counted as API surface. Private helpers and interface implementations do not widen a class's
     # contract, so the server's forty-odd private handlers and the two stores' overrides are not
     # what this rule is for. What remains over the default is the ScopeStore contract itself: one
-    # method per store operation, fourteen today, under a ceiling of sixteen so that growing it by
-    # more than a couple is a conscious bump rather than a silent one.
+    # method per store operation, eighteen today, at a ceiling of eighteen so that growing it at all
+    # is a conscious bump rather than a silent one. Raised from sixteen for the file-size gauge and
+    # the space reclaim (ADR 2026-10.us34).
     ignorePrivate: true
     ignoreOverridden: true
-    allowedFunctionsPerInterface: 16
+    allowedFunctionsPerInterface: 18
     excludes: ['**/test/**', '**/conformance/**']
 
 coroutines:

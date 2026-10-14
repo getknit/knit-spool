@@ -65,7 +65,8 @@ Everything else has an order of magnitude in hand at that number:
 | Store thread | ~4,000 pushes/s | 2,000 clients at a message a minute is 33/s |
 | Sweeper | ~26 µs per scope, on the store thread | 4096 scopes is a ~110 ms stall every 5 min |
 | Transfer | 1 TB/month = 386 KB/s | ~14 GB/month of sealed text; ~230 GB even at 16 KiB a frame |
-| Disk | ~1.2× payload, ~160 B per scope row | 8 GiB of payload is ~10 GB of the 18 GB free |
+| Disk | ~1.2× payload, ~160 B per scope row, plus up to 4 MiB free | 8 GiB of payload is ~10 GB of the 18 GB free |
+| Space reclaim | ~20 ms per 8 MiB handed back, on the store thread | Up to 512 MiB per sweep, in 8 MiB batches that let records through between them |
 
 Two failure modes are worth knowing before you meet them. Caddy at the old 128 MB ceiling was
 OOM-killed at ~1,100 connections, and `restart: unless-stopped` then walks every client back into
@@ -73,6 +74,13 @@ the same wall. And the daemon does not OOM when its heap fills — it full-GCs e
 at a time, which looks like a network problem and is not one. Both are why
 [`deploy/docker-compose.tiny.yml`](deploy/docker-compose.tiny.yml) splits the box's ~640 MB of
 container budget 352/288 and targets ~2,000 rather than the ~2,400 the hardware will technically do.
+
+The disk row is what the file holds *now*. SQLite reuses freed pages but never shrinks its file on
+its own, so the sweeper hands free space back once more than 4 MiB has built up (ADR 2026-10.us34).
+After a burst expires or the watermark sheds, the file follows within one sweep, 5 minutes by
+default. The disk must still hold the peak: size it for `SPOOL_MAX_BYTES`, not for a quiet day.
+`knit_spool_store_file_bytes` reports the file and its write-ahead log, next to
+`knit_spool_live_bytes`, so you can see the gap between the two.
 
 Neither failure announces itself, which is what `SPOOL_MAX_CONNS` is for. Set it and the Spool
 stops accepting at the number you chose: the WebSocket upgrade is refused `503` with a
@@ -237,6 +245,11 @@ Use `docker exec`, never `docker kill --signal=USR1`: any `docker kill` marks th
 manually stopped whatever signal it sends, and `restart: unless-stopped` then skips it on the next
 reboot — so the command you run to make an upgrade graceful is the one that quietly stops the Spool
 coming back. The README's reload section has the detail.
+
+The first start on a database written by 0.3.x or earlier runs one `VACUUM` to switch it to incremental
+auto-vacuum. That rebuild takes about as long as copying the live data and needs about twice the
+live data in free disk. A spool that has been running a while drops to its live size on the spot.
+With too little free space it logs a warning, boots unchanged, and tries again on the next start.
 
 ## Before you commit
 

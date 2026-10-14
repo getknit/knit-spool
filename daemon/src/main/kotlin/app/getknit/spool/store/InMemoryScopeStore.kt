@@ -59,6 +59,10 @@ class InMemoryScopeStore(
     @Synchronized
     override fun totalBytes(): Long = bytesTotal
 
+    override fun storeFileBytes(): Long? = null
+
+    override fun reclaimSpace(maxPages: Int): Boolean = false
+
     @Synchronized
     override fun subscribe(
         scopeId: ByteArray,

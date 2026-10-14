@@ -184,6 +184,20 @@ interface ScopeStore : AutoCloseable {
     fun totalBytes(): Long
 
     /**
+     * Bytes the store occupies on disk (the database file and its write-ahead log), or null for a
+     * store with no file. Not [totalBytes]: freed space stays in the file until [reclaimSpace]
+     * hands it back, so the two differ by up to a floor plus whatever one sweep freed.
+     */
+    fun storeFileBytes(): Long?
+
+    /**
+     * Hands up to [maxPages] freed pages back to the disk; true while more than the store's floor
+     * is still free, so the caller can run another batch after letting queued work through. A
+     * store with no file has nothing to give back. Call periodically, after [sweep].
+     */
+    fun reclaimSpace(maxPages: Int): Boolean
+
+    /**
      * Subscribe-time bounds declaration: clamps to the hard caps and (re)applies them. A new scope
      * on a spool at `maxScopes` evicts the least-recently-active bare scope not in [held] first,
      * and is [SubscribeResult.QuotaExceeded] only when there is none. [held] has no default on

@@ -85,6 +85,7 @@ class Metrics(
         liveBytes: Long,
         maxConns: Int = 0,
         commonsSubscribers: Int? = null,
+        storeFileBytes: Long? = null,
     ): String =
         buildString {
             // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
@@ -116,6 +117,8 @@ class Metrics(
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())
             line("knit_spool_live_bytes", "gauge", liveBytes)
+            // Absent on an in-memory spool: a 0 there would read as a file that costs nothing.
+            if (storeFileBytes != null) line("knit_spool_store_file_bytes", "gauge", storeFileBytes)
             // Absent entirely on a spool with no commons, rather than three flat zeroes that read
             // as a room nobody is using.
             if (commonsSubscribers != null) {

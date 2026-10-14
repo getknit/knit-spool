@@ -11,6 +11,7 @@ import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
+import java.sql.Statement
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -23,10 +24,16 @@ import java.util.concurrent.atomic.AtomicLong
  * and self-healed, so the incrementally maintained columns can never drift permanently; the
  * attachment bytes are re-summed the same way at their charged size ([ScopeStore.chunkCharge]), so
  * a store written under an older counting rule is re-counted on its first boot.
+ *
+ * The file runs `auto_vacuum=INCREMENTAL` and [reclaimSpace] hands freed pages back to the disk
+ * (ADR 2026-10.us34). Without it SQLite reuses freed pages but never truncates, so the file stays
+ * the size of the most the spool ever held. A file written before that is converted with one
+ * `VACUUM` on its first open.
  */
 class SqliteScopeStore private constructor(
     private val connection: Connection,
     private val hardLimits: HardLimits,
+    private val dbFile: Path,
 ) : ScopeStore {
     companion object {
         private val log = LoggerFactory.getLogger(SqliteScopeStore::class.java)
@@ -37,6 +44,22 @@ class SqliteScopeStore private constructor(
         private const val HIGH_BIT = 0x80
 
         private val ABSENT = AttachmentInfo(total = 0, bits = ByteArray(0), dead = false)
+
+        /** `PRAGMA auto_vacuum`'s value for INCREMENTAL. */
+        private const val AUTO_VACUUM_INCREMENTAL = 2
+
+        /**
+         * Free space [reclaimSpace] leaves alone. Ordinary push-and-expire churn frees and reuses a
+         * few pages every tick; handing those back only to grow the file again is write I/O for
+         * nothing, so the file is allowed this much slack above live data.
+         */
+        const val RECLAIM_FLOOR_BYTES = 4L * 1024 * 1024
+
+        /** Caps the `-wal` file between checkpoints, which otherwise keeps its own high-water size. */
+        private const val JOURNAL_SIZE_LIMIT = 64L * 1024 * 1024
+
+        /** What a one-off conversion `VACUUM` needs free: the rebuilt copy plus the WAL that carries it. */
+        private const val VACUUM_SPACE_FACTOR = 2
 
         /** One chunk row's charge in SQL — the same rule as [ScopeStore.chunkCharge]. */
         private const val CHUNK_CHARGE_SQL = "max(length(data), ${ScopeStore.ATTACH_CHUNK_FLOOR})"
@@ -53,8 +76,9 @@ class SqliteScopeStore private constructor(
             hardLimits: HardLimits,
         ): SqliteScopeStore {
             Files.createDirectories(dataDir)
-            val connection = DriverManager.getConnection("jdbc:sqlite:${dataDir.resolve("spool.db")}")
-            val store = SqliteScopeStore(connection, hardLimits)
+            val dbFile = dataDir.resolve("spool.db")
+            val connection = DriverManager.getConnection("jdbc:sqlite:$dbFile")
+            val store = SqliteScopeStore(connection, hardLimits, dbFile)
             store.initialize()
             return store
         }
@@ -79,11 +103,8 @@ class SqliteScopeStore private constructor(
     )
 
     private fun initialize() {
+        val convert = configure()
         connection.createStatement().use { statement ->
-            statement.execute("PRAGMA journal_mode=WAL")
-            statement.execute("PRAGMA synchronous=NORMAL")
-            statement.execute("PRAGMA busy_timeout=5000")
-            statement.execute("PRAGMA foreign_keys=ON")
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS meta (
@@ -178,9 +199,77 @@ class SqliteScopeStore private constructor(
             }
             statement.executeUpdate("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')")
         }
+        if (convert) convertToIncremental()
         connection.autoCommit = false
         recomputeOnBoot()
     }
+
+    /**
+     * Sets the connection's pragmas, asking for `auto_vacuum=INCREMENTAL` first: it must precede
+     * the first `CREATE TABLE`. True when the file needs [convertToIncremental] for the mode to
+     * take. A file with no tables yet takes it as it is, and one already INCREMENTAL needs nothing.
+     */
+    private fun configure(): Boolean =
+        connection.createStatement().use { statement ->
+            val mode = pragmaLong(statement, "auto_vacuum")
+            val hasTables =
+                statement.executeQuery("SELECT COUNT(*) FROM sqlite_schema").use { it.next() && it.getInt(1) > 0 }
+            statement.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            statement.execute("PRAGMA journal_mode=WAL")
+            statement.execute("PRAGMA journal_size_limit=$JOURNAL_SIZE_LIMIT")
+            statement.execute("PRAGMA synchronous=NORMAL")
+            statement.execute("PRAGMA busy_timeout=5000")
+            statement.execute("PRAGMA foreign_keys=ON")
+            hasTables && mode != AUTO_VACUUM_INCREMENTAL.toLong()
+        }
+
+    /**
+     * Rebuilds a file written before `auto_vacuum=INCREMENTAL` so the mode takes effect: SQLite
+     * applies it to an existing file only through a `VACUUM`. Runs once per file, before the store
+     * serves anything. Never fatal: a file that cannot be rebuilt (too little free disk, an I/O
+     * error) is left exactly as it was, the spool boots as before, and the next boot tries again.
+     */
+    @Suppress("TooGenericExceptionCaught") // any failure leaves the file untouched; boot carries on
+    private fun convertToIncremental() {
+        val before = storeFileBytes()
+        val live =
+            connection.createStatement().use {
+                (pragmaLong(it, "page_count") - pragmaLong(it, "freelist_count")) * pragmaLong(it, "page_size")
+            }
+        val usable = runCatching { Files.getFileStore(dbFile).usableSpace }.getOrDefault(Long.MAX_VALUE)
+        if (usable < VACUUM_SPACE_FACTOR * live) {
+            log.warn(
+                "store: not converting {} to incremental auto-vacuum — {} bytes free, needs ~{}; " +
+                    "freed space stays in the file until a later boot",
+                dbFile.fileName,
+                usable,
+                VACUUM_SPACE_FACTOR * live,
+            )
+            return
+        }
+        val started = System.nanoTime()
+        try {
+            connection.createStatement().use { statement ->
+                statement.execute("VACUUM")
+                statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            }
+        } catch (e: Exception) {
+            log.warn("store: incremental auto-vacuum conversion failed, file left as it was: {}", e.message)
+            return
+        }
+        log.info(
+            "store: converted {} to incremental auto-vacuum, {} -> {} bytes in {} ms",
+            dbFile.fileName,
+            before,
+            storeFileBytes(),
+            (System.nanoTime() - started) / 1_000_000,
+        )
+    }
+
+    private fun pragmaLong(
+        statement: Statement,
+        name: String,
+    ): Long = statement.executeQuery("PRAGMA $name").use { if (it.next()) it.getLong(1) else 0L }
 
     /**
      * Recomputes digest/count/bytes per scope from the blob rows; heals and warns on drift.
@@ -270,6 +359,34 @@ class SqliteScopeStore private constructor(
         }
 
     override fun totalBytes(): Long = bytesTotal.get()
+
+    override fun storeFileBytes(): Long = sizeOrZero(dbFile) + sizeOrZero(dbFile.resolveSibling("${dbFile.fileName}-wal"))
+
+    private fun sizeOrZero(file: Path): Long = runCatching { Files.size(file) }.getOrDefault(0L)
+
+    /**
+     * Frees up to [maxPages] pages from the end of the file once more than [RECLAIM_FLOOR_BYTES] are
+     * free, then checkpoints with TRUNCATE so the shorter file and an empty WAL reach the disk now
+     * rather than at the next auto-checkpoint. Runs in autocommit, outside [tx]: the checkpoint
+     * cannot run inside this connection's own transaction.
+     */
+    @Synchronized
+    override fun reclaimSpace(maxPages: Int): Boolean {
+        connection.autoCommit = true
+        try {
+            connection.createStatement().use { statement ->
+                val pageSize = pragmaLong(statement, "page_size")
+                if (pragmaLong(statement, "freelist_count") * pageSize <= RECLAIM_FLOOR_BYTES) return false
+                // executeUpdate, not execute: SQLite frees one page per step of this pragma, and
+                // sqlite-jdbc's execute() steps once, freeing one page however many were asked for.
+                statement.executeUpdate("PRAGMA incremental_vacuum($maxPages)")
+                statement.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                return pragmaLong(statement, "freelist_count") * pageSize > RECLAIM_FLOOR_BYTES
+            }
+        } finally {
+            connection.autoCommit = false
+        }
+    }
 
     @Synchronized
     override fun subscribe(
