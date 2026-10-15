@@ -1,0 +1,18 @@
+version: 2
+
+# Actions are deliberately ungrouped: each bump is its own pull request, so upgrade-notes.yml
+# comments on one Action's release notes at a time. Gradle moves as one group, since the version
+# catalog's entries are usually bumped together.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      gradle:
+        patterns: ['*']
