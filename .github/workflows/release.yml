@@ -279,7 +279,7 @@ jobs:
       DIGEST: ${{ needs.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: distributions
           path: dist
