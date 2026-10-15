@@ -44,15 +44,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Both of these only fail at publish time otherwise — once the tag is public and the fix costs
-      # a re-tag. They cost seconds here.
+      # This and the CHANGELOG check below only fail at publish time otherwise — once the tag is
+      # public and the fix costs a re-tag. They cost seconds here.
       - id: check
-        name: Tag must be v<semver> and CHANGELOG must have its section
+        name: Tag must be v<semver>
         env:
           TAG: ${{ github.ref_name }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, pathlib, re, sys
+          import os, re, sys
 
           tag = os.environ["TAG"]
           errs = []
@@ -68,16 +68,6 @@ jobs:
           if "SNAPSHOT" in version:
               errs.append(f"{version} is a SNAPSHOT; tag a real version")
 
-          # Keep a Changelog: cutting a release means renaming `## Unreleased` to `## <version>`.
-          # Refusing here is what stops a release shipping with no notes at all.
-          changelog = pathlib.Path("CHANGELOG.md").read_text()
-          heading = re.compile(rf"^##\s+\[?{re.escape(version)}\]?\b", re.M)
-          if not heading.search(changelog):
-              errs.append(
-                  f"CHANGELOG.md has no `## {version}` section — rename `## Unreleased` to "
-                  f"`## {version}` (optionally with the date) and re-tag"
-              )
-
           if errs:
               for e in errs:
                   print(f"::error::{e}", file=sys.stderr)
@@ -89,6 +79,18 @@ jobs:
           print(f"prerelease={prerelease}")
           print(f"OK: {tag} -> {version} (prerelease={prerelease})", file=sys.stderr)
           PY
+
+      # Keep a Changelog: cutting a release means renaming `## Unreleased` to `## <version>`.
+      # Refusing here is what stops a release shipping with no notes at all. The same extract
+      # writes the notes in `publish`, so a section this finds is the section that ships.
+      - name: CHANGELOG must have the version's section
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          if ! npx --yes declarative-changelog@0.4.0 extract CHANGELOG.md "$VERSION" > /dev/null; then
+            echo "::error::CHANGELOG.md has no \`## $VERSION\` section — rename \`## Unreleased\` to \`## $VERSION\` (optionally with the date) and re-tag"
+            exit 1
+          fi
 
   build:
     name: Build, push image & attest
@@ -293,48 +295,44 @@ jobs:
       # Notes are the CHANGELOG section preflight already proved exists, plus how to actually get
       # the thing. The pull line uses the digest, not the tag: a tag is mutable and a release note
       # that says `:1.2.3` cannot prove which bytes were reviewed.
+      #
+      # `extract` prints the entry without its heading. The footer's heredoc is unquoted so the
+      # variables expand, which is why its backticks are escaped.
       - name: Compose release notes
         run: |
-          python3 - <<'PY' > out/notes.md
-          import os, pathlib, re
+          repo="$GITHUB_REPOSITORY"
+          {
+            npx --yes declarative-changelog@0.4.0 extract CHANGELOG.md "$VERSION"
+            cat <<EOF
 
-          version, digest = os.environ["VERSION"], os.environ["DIGEST"]
-          repo = os.environ["GITHUB_REPOSITORY"]
-          text = pathlib.Path("CHANGELOG.md").read_text()
-
-          start = re.search(rf"^##\s+\[?{re.escape(version)}\]?\b.*$", text, re.M)
-          rest = text[start.end():]
-          end = re.search(r"^##\s+", rest, re.M)
-          print((rest[: end.start()] if end else rest).strip())
-
-          print(f"""
           ---
 
           ### Container image
 
-          Published to GHCR and Docker Hub for `linux/amd64` and `linux/arm64`:
+          Published to GHCR and Docker Hub for \`linux/amd64\` and \`linux/arm64\`:
 
-          ```sh
-          docker pull ghcr.io/{repo}@{digest}
-          docker pull docker.io/{repo}@{digest}
-          ```
+          \`\`\`sh
+          docker pull ghcr.io/$repo@$DIGEST
+          docker pull docker.io/$repo@$DIGEST
+          \`\`\`
 
-          Pin the digest in `SPOOL_IMAGE` rather than a tag — see `deploy/.env.example`. The GHCR
+          Pin the digest in \`SPOOL_IMAGE\` rather than a tag — see \`deploy/.env.example\`. The GHCR
           image carries a signed build provenance attestation:
 
-          ```sh
-          gh attestation verify oci://ghcr.io/{repo}:{version} --repo {repo}
-          ```
+          \`\`\`sh
+          gh attestation verify oci://ghcr.io/$repo:$VERSION --repo $repo
+          \`\`\`
 
           ### Standalone archives
 
-          For running the daemon without Docker. `SHA256SUMS` covers every archive attached here.
-          Both need a JDK 21 runtime on the host; unpack and run `bin/knit-spool`.
+          For running the daemon without Docker. \`SHA256SUMS\` covers every archive attached here.
+          Both need a JDK 21 runtime on the host; unpack and run \`bin/knit-spool\`.
 
-          Upgrading a live spool? `HOSTING.md` covers the operational side, and `CHANGELOG.md` calls
+          Upgrading a live spool? \`HOSTING.md\` covers the operational side, and \`CHANGELOG.md\` calls
           out anything that moves the wire, the on-disk store, or a configuration default.
-          """)
-          PY
+
+          EOF
+          } > out/notes.md
           cat out/notes.md
 
       # Draft on purpose: everything above is verified, so this is a one-click confirmation that the
