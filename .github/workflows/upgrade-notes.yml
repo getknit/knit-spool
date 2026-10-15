@@ -1,0 +1,25 @@
+name: Upgrade notes
+
+# Comments on each Dependabot pull request with the vendor's own release notes for the versions it
+# skips: breaking changes, migrations, deprecations and CVE fixes, from What's New (whatsnew.fyi).
+# Advisory only; nothing here gates a merge.
+#
+# `pull_request`, not `pull_request_target`: the action needs no secret and no checkout. It holds
+# `pull-requests: write` to post its comment, which is why it is pinned by SHA as in triage.yml.
+#
+# A comment that says "not compared" is expected for a bump that jumps several majors (checkout
+# v4 -> v6, say): What's New holds only each Action's newest releases so far, so the old major is
+# not in its history yet. That is a gap in the index, not a reason to change a pin.
+
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  notes:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: whatsnew-fyi/upgrade-notes-action@f22082e7de21e45fdb9fdeb113ee91c16cfc31ce # v1.0.1
