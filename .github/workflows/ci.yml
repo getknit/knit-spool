@@ -34,6 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # CHANGELOG.md must stay a Level 2 Declarative Changelog: release.yml extracts each release's
+      # notes with the same tool, and What's New reads the file as-is. Warnings are annotated but
+      # do not fail the job. GitHub-only: the internal pipeline has no counterpart yet.
+      - uses: whatsnew-fyi/declarative-changelog@v0
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
