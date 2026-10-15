@@ -5,7 +5,9 @@ name: Upgrade notes
 # Advisory only; nothing here gates a merge.
 #
 # `pull_request`, not `pull_request_target`: the action needs no secret and no checkout. It holds
-# `pull-requests: write` to post its comment, which is why it is pinned by SHA as in triage.yml.
+# `pull-requests: write` to post its comment. Unlike triage.yml's actions it rides the `v1` tag
+# rather than a SHA: it is What's New's own action, and this repo is where its fixes get tried
+# first (1.0.2's Gradle plugins came from this repo's first Gradle group).
 #
 # A comment that says "not compared" is expected for a bump that jumps several majors (checkout
 # v4 -> v6, say): What's New holds only each Action's newest releases so far, so the old major is
@@ -22,4 +24,4 @@ jobs:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: whatsnew-fyi/upgrade-notes-action@f22082e7de21e45fdb9fdeb113ee91c16cfc31ce # v1.0.1
+      - uses: whatsnew-fyi/upgrade-notes-action@v1
