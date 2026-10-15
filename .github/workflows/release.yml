@@ -220,7 +220,7 @@ jobs:
       # operator can actually verify with `gh attestation verify`.
       - id: push
         name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ctx
           file: ./Dockerfile.dist
