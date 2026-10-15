@@ -9,7 +9,9 @@ topics: [tickets, attachments, auth, abuse]
 # ADR 2026-10.h6pt — tickets gate verbs per connection, and only an uploader's ticket pays for attachments
 
 Status: Accepted (2026-10-14). Proposed 2026-10-10, built on `exp/turn` 2026-10-11. Amends ADR
-2026-10.bxsg's `aput` and scope-creation gates.
+2026-10.bxsg's `aput` and scope-creation gates. On 2026-10-15 ADR 2026-10.x9gq (proposed)
+replaced the scope-creation gate with keeping creation open. Corrected 2026-10-15: the commit hashes after `exp/turn`'s rebase,
+and the retention multiplier at the spool's `SPOOL_MAX_TTL_MS` ceiling.
 
 **Context:** an operator should be able to run one kind of spool, with each ticketed
 capability switched on per ticket holder, so there is no separate spool, configured
@@ -136,13 +138,13 @@ Sending an attachment needs the sender's own ticket. Receiving one needs nothing
 
 ## What shipped
 
-Commits `17a6b84` through `319f0ce` on `exp/turn`, with the spec rows in knit-next `0874ea3b`
+Commits `dc26071` through `6cdcda0` on `exp/turn` (`17a6b84` through `319f0ce` before its rebase), with the spec rows in knit-next `0874ea3b`
 (`docs/VOICE_CALLS.md` §2.6, S-7.6-22/23, C-7.6-24):
 
 - `FL_FILES`, the `ab` claim, `Reason.BUDGET` and `hello.entGates`, with vectors from the spec.
 - `SPOOL_TICKET_GATES` (`turn`, `files`, `cast`) and `SPOOL_TICKET_ATTACH_BYTES`. The `create`
   word is refused at boot until bxsg's creation budget is built, so no operator believes scope
-  creation is gated when it is not.
+  creation is gated when it is not. (Since 2026-10-15, ADR 2026-10.x9gq proposes never building it.)
 - The `aput` gate in `SpoolServer.filesAdmitted`, the per-pseudonym ledger in `UploadBudgets`, and
   `ticket-mint --files --ab`.
 - The guards listed below, all present. The conformance checks run in process three ways: every
@@ -164,7 +166,8 @@ without a ticket is refused.
   conversations".
 - **The cap is per upload day, not a storage cap.** As in bxsg, held bytes per customer
   stay at or below `ab × (⌈attachment retention / 1 day⌉ + 1)`, which is 3 × `ab` at the
-  48 h default. Product copy must not call `ab` a storage cap.
+  clients' 48 h default and 8 × `ab` at the spool's 7-day `SPOOL_MAX_TTL_MS` default.
+  Product copy must not call `ab` a storage cap.
 - **A restart resets every budget.** Budgets are memory only, as in bxsg. The watermark
   still bounds the disk.
 - **Older clients retry every heal round.** A client that does not read `entGates` sees

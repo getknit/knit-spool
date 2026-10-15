@@ -297,14 +297,16 @@ With `files` in `SPOOL_TICKET_GATES` (experimental, ADR 2026-10.h6pt), sending a
 the sender's own ticket, and each stored chunk counts against that holder's daily budget,
 `SPOOL_TICKET_ATTACH_BYTES` (32 MiB by default) or less if the ticket says so. **It is an upload
 budget, not a storage cap.** Attachments live as long as their scope's TTL, so one holder keeps at
-most the budget times the number of days that fit in that window plus one: **3 × 32 MiB = 96 MiB**
-at the 48 h default. Budgets are memory only, so a restart refills every one.
+most the budget times the number of days that fit in that window plus one. The scope's creator
+picks the TTL, up to `SPOOL_MAX_TTL_MS`: that is **3 × 32 MiB = 96 MiB** at the clients' 48 h
+default, but **8 × 32 MiB = 256 MiB** at the 7-day default ceiling. To hold the lower figure, set
+`SPOOL_MAX_TTL_MS=172800000`. Budgets are memory only, so a restart refills every one.
 
 The disk stays bounded by `SPOOL_MAX_BYTES`, ticketed or not: past it the least-active scope is
 shed whatever paid for it. What the budget buys is fairness. One customer's uploads can push out
 only as much as their own budget, rather than everything other customers hold. Size the watermark
 for the number of holders you expect to be active at once times what each may keep: 1,000 holders
-at the default budget is up to ~94 GiB. Attachments are also capped at `SPOOL_MAX_SCOPES` ×
+at the default budget is up to ~94 GiB with a 48 h ceiling, or 250 GiB at 7 days. Attachments are also capped at `SPOOL_MAX_SCOPES` ×
 `SPOOL_MAX_ATTACH_BYTES` (64 GiB at 4,096 scopes), and the lower of the two is what the disk must
 hold. Receiving is never gated, so download egress is what holders stored times the members who
 fetch it.

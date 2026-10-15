@@ -104,8 +104,8 @@ object Tickets {
 
     /**
      * [Ticket.fl] bit 3: the holder may cast, and unlocks casts for every other subscriber of each scope
-     * its connection holds (VOICE_CALLS.md §2.7). Bit 2 stays reserved for ADR 2026-10.bxsg's proposed
-     * scope-creation claim.
+     * its connection holds (VOICE_CALLS.md §2.7). Bit 2 stays reserved: it was drafted as a
+     * scope-creation claim, and ADR 2026-10.x9gq proposes keeping creation open instead.
      */
     const val FL_CAST = 8L
 

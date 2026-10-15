@@ -480,7 +480,7 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
 /**
  * `SPOOL_TICKET_GATES` as [Tickets] flag bits (ADR 2026-10.h6pt): unset is `turn,cast`, what a key
  * gated before the list existed. `create` is refused by name, so no operator believes scope creation
- * is gated before ADR 2026-10.bxsg's creation budget is built.
+ * is gated: ADR 2026-10.x9gq proposes keeping it open.
  */
 private fun ticketGates(raw: String?): Long {
     if (raw == null) return Tickets.LEGACY_GATES
