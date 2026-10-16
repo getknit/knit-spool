@@ -497,9 +497,10 @@ under you, and a restart on a moved tag brings back a daemon you never tested.
 
 Every push to `main` publishes a development image too, once `check` and the conformance suite
 have passed on it: `edge` follows the branch, and `sha-<short commit>` (`sha-e4159fd`) is that
-commit's for good. Neither touches `latest`. An `edge` daemon reports its `-SNAPSHOT` version and
-the commit at `GET /source`, and it has cleared the same gates a release does — but nobody has run
-it in production yet. Pull it to try a fix before it ships; pin a version to run a Spool on.
+commit's for good. Neither touches `latest`. An `edge` daemon reports its `-dev.<n>` development
+version and the commit at `GET /source`, and it has cleared the same gates a release does — but
+nobody has run it in production yet. Pull it to try a fix before it ships; pin a version to run a
+Spool on.
 
 The GHCR copy — release or `edge` — traces back to the workflow run and the commit that built it:
 

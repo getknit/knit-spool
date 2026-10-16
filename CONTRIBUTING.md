@@ -153,11 +153,17 @@ and opens a **draft** GitHub Release with the distribution archives.
   from the tag, so nothing needs bumping to cut one. `-PspoolCommit=<sha>` rides alongside it; both
   land in a generated resource the daemon reports at `GET /source` and in `knit_spool_build_info`.
   A build told neither says `unknown`, which is the honest answer for a local one.
-- The *snapshot* version is, and it moves in the release commit. `build.gradle.kts` carries the one
-  literal every non-release build reports, and a release cut from a tag never touches it — left
-  alone it goes on naming a version older than the release it supersedes. `BuildInfoTest` fails
-  the build while that literal trails the newest `## <version>` in `CHANGELOG.md`, so renaming
-  `## Unreleased` and bumping the literal to the next release's `-SNAPSHOT` are one commit.
+- The *development* version is, and it moves in the release commit. `build.gradle.kts` carries the
+  one literal every non-release build reports, `<next minor>-dev.<n>`, and a release cut from a tag
+  never touches it — left alone it goes on naming a version older than the release it supersedes.
+  `BuildInfoTest` fails the build while that literal trails the newest `## <version>` in
+  `CHANGELOG.md`, so renaming `## Unreleased` and resetting the literal to the next minor's
+  `-dev.1` are one commit.
+- `n` moves on `main` whenever the environment contract does: a `KNOWN_VARS` entry, a field moving
+  between `bootOnly()` and `reloadable()`, or a changed default. Whatever renders a spool's
+  environment reads the image's version label to know which variables the daemon accepts, so
+  `EnvContractTest` pins a fingerprint of the contract beside the version and fails until both
+  move together. Its failure prints the new fingerprint (ADR 2026-10.8ymn).
 - `CHANGELOG.md` carries the released ones. The workflow refuses a tag with no `## <version>`
   section — cutting a release means renaming `## Unreleased` to the version being released. That
   refusal is the whole reason a release cannot ship without notes.

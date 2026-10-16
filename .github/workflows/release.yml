@@ -67,6 +67,11 @@ jobs:
           # line (-PspoolVersion), so this only catches a tag that spells it out.
           if "SNAPSHOT" in version:
               errs.append(f"{version} is a SNAPSHOT; tag a real version")
+          # `-dev.<n>` names main's development builds, and `n` marks where the environment
+          # contract moved (ADR 2026-10.8ymn). A release spelled that way would claim a contract it
+          # was never checked against; use `-rc.<n>` for a release candidate.
+          if re.search(r"-dev\.", version):
+              errs.append(f"{version} is a development version; tag a release or an -rc.<n>")
 
           if errs:
               for e in errs:

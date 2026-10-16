@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool
 
-import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
@@ -12,7 +11,7 @@ import kotlin.test.fail
 /** The build stamp the daemon reports at runtime. */
 class BuildInfoTest {
     /**
-     * Deliberately not an equality check against the snapshot literal: the release workflow runs
+     * Deliberately not an equality check against the development literal: the release workflow runs
      * `check` with `-PspoolVersion="$VERSION"`, so pinning the string here would fail on release day.
      */
     @Test
@@ -32,8 +31,8 @@ class BuildInfoTest {
     }
 
     /**
-     * The snapshot label has to lead the newest released version, and nothing about it moving on
-     * its own is possible: the version is not stored in the tree beyond this one literal, so a
+     * The development version has to lead the newest released version, and nothing about it moving
+     * on its own is possible: the version is not stored in the tree beyond one literal, so a
      * release cut from a tag never touches it and it simply stays where it was.
      *
      * That is how every main build between 0.2.0 and this check reported `0.1.0-SNAPSHOT` — a
@@ -44,36 +43,31 @@ class BuildInfoTest {
      * So the literal is pinned against `CHANGELOG.md`, the file that does carry the version — the
      * release workflow already refuses a tag with no section here. Cutting a release renames
      * `## Unreleased` to `## <version>`, which trips this check until the literal moves to the
-     * next release's SNAPSHOT, making the bump part of the release commit rather than a thing to
-     * remember afterwards.
+     * next minor's `-dev.1`, making the bump part of the release commit rather than a thing to
+     * remember afterwards. The literal is read from `build.gradle.kts` rather than from the stamp,
+     * so a release build, stamped with its tag, still checks it.
      */
     @Test
-    fun theSnapshotVersionLeadsTheNewestReleasedVersion() {
-        val version = BuildInfo.version
-        // A release build carries the tag's version instead, and the workflow checks that against
-        // CHANGELOG.md itself. Nothing here should fail on release day.
-        if (!version.endsWith(SNAPSHOT)) return
+    fun theDevelopmentVersionLeadsTheNewestReleasedVersion() {
+        val literal = TreeVersion.literal
+        assertTrue(
+            TreeVersion.devForm.matches(literal),
+            "build.gradle.kts builds as $literal, not <major>.<minor>.<patch>-dev.<n> (ADR 2026-10.8ymn)",
+        )
 
         if (!changelog.exists()) fail("$changelog is missing")
         val newest = released().maxOrNull() ?: fail("$changelog names no released version")
-        val snapshot =
-            parse(version.removeSuffix(SNAPSHOT))
-                ?: fail("the tree's version $version is not <major>.<minor>.<patch>-SNAPSHOT")
+        val dev = parse(literal) ?: fail("unreachable: $literal matched the dev form")
 
         assertTrue(
-            snapshot > newest,
-            "the tree builds as $version but CHANGELOG.md's newest released version is ${newest.text}. " +
-                "A snapshot that trails a release reports as older than the release it supersedes at " +
-                "GET /source — bump `version` in build.gradle.kts to the next release's -SNAPSHOT.",
+            dev > newest,
+            "the tree builds as $literal but CHANGELOG.md's newest released version is ${newest.text}. " +
+                "A development version that trails a release reports as older than the release it " +
+                "supersedes at GET /source — bump `version` in build.gradle.kts to the next minor's -dev.1.",
         )
     }
 
-    private val repoRoot: Path =
-        generateSequence(Path.of("").toAbsolutePath()) { it.parent }
-            .firstOrNull { it.resolve("settings.gradle.kts").exists() }
-            ?: fail("no settings.gradle.kts at or above ${Path.of("").toAbsolutePath()}")
-
-    private val changelog = repoRoot.resolve("CHANGELOG.md")
+    private val changelog = TreeVersion.repoRoot.resolve("CHANGELOG.md")
 
     /** Every released section, in either the linked `## [0.2.0](…) — <date>` or a bare `## 0.2.0`. */
     private fun released(): List<Version> = heading.findAll(changelog.readText()).mapNotNull { parse(it.groupValues[1]) }.toList()
@@ -107,7 +101,6 @@ class BuildInfoTest {
     }
 
     private companion object {
-        const val SNAPSHOT = "-SNAPSHOT"
         val heading = Regex("""^## \[?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)]?""", RegexOption.MULTILINE)
         val semver = Regex("""(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?""")
     }

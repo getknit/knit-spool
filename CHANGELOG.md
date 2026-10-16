@@ -74,6 +74,13 @@ document:
 
 ### Changed
 
+- **Development builds report a numbered version, `0.4.0-dev.1`, in place of `0.4.0-SNAPSHOT`.**
+  It is what `GET /source`, `knit_spool_build_info` and an `edge` image's
+  `org.opencontainers.image.version` label carry. `n` moves on `main` whenever the environment
+  contract does — a variable added or removed, a setting moving between reloadable and
+  restart-only, a changed default — so a tool that renders a spool's environment can tell from the
+  label alone which variables the daemon inside reads. `EnvContractTest` fails a change that moves
+  the contract without the number. Releases are unchanged: a tag still stamps its own version.
 - **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
   now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
   `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25). The plain
@@ -150,7 +157,7 @@ document:
   and as `sha-<short commit>`, multi-arch, with the same signed provenance attestation on the GHCR
   copy. `latest` and the version tags stay the release workflow's alone, so an unpinned
   `SPOOL_IMAGE` is never handed a development build. The daemon in an `edge` image reports its
-  `-SNAPSHOT` version and the commit at `GET /source`, and the publish job refuses a tree whose
+  development version and the commit at `GET /source`, and the publish job refuses a tree whose
   stamp names any other commit. Main runs no longer cancel each other, either: a push that
   superseded an in-flight run used to cancel it, which would now leave the older commit with no
   image. A pull request is unaffected — it uploads nothing and pushes nothing.

@@ -17,15 +17,19 @@ allprojects {
     group = "app.getknit.spool"
     // Overridable from the command line so a tagged release stamps the tag into the distribution
     // archive names and the image labels: `./gradlew -PspoolVersion=1.2.3 :daemon:distTar`.
-    // Everything else — local builds, CI on a branch — stays a SNAPSHOT, which is the honest label
-    // for a build that is not a release.
+    // Everything else — local builds, CI on a branch, every `edge` image — reports the development
+    // version below, `<next minor>-dev.<n>`, which sorts below the release it leads up to.
     //
-    // The number itself still has to move by hand after each release, and it is the one part of
-    // this that can rot: a SNAPSHOT trailing the newest release is worse than no version at all.
-    // `0.1.0-SNAPSHOT` on a main build cut after 0.2.0 reads as *older* than the release it
-    // supersedes — backwards for the one question `GET /source` exists to answer. BuildInfoTest
-    // pins it against CHANGELOG.md so the bump fails the build instead of being forgotten.
-    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-SNAPSHOT"
+    // The number itself moves by hand, and it is the one part of this that can rot: a development
+    // version trailing the newest release is worse than no version at all. `0.1.0-SNAPSHOT` on a
+    // main build cut after 0.2.0 read as *older* than the release it superseded — backwards for the
+    // one question `GET /source` exists to answer. BuildInfoTest pins it against CHANGELOG.md.
+    //
+    // `n` is not decoration (ADR 2026-10.8ymn): it moves whenever the environment contract does —
+    // a KNOWN_VARS entry, a field crossing between the reload halves, a default — because whatever
+    // renders a spool's environment reads it off the image label to know what the daemon accepts.
+    // EnvContractTest fails until it does. After a release it resets to the next minor's `-dev.1`.
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-dev.1"
 }
 
 // ---- coverage ----
