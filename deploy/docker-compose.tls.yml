@@ -105,10 +105,15 @@ services:
       # must name; with them, turnreq needs a ticket. Both or neither.
       SPOOL_TICKET_KEY:
       SPOOL_TICKET_AUDIENCE:
+      # A second public key during a rotation; a ticket's kid picks which one checks it. Needs the key.
+      SPOOL_TICKET_KEY_NEXT:
       # Which capabilities need a ticket (turn, files, cast; default turn,cast), and the most one
       # ticket holder may upload a day when files is gated (default 32 MiB). Both need the key.
       SPOOL_TICKET_GATES:
       SPOOL_TICKET_ATTACH_BYTES:
+      # TURN credentials per ticket holder per ten minutes, wherever its connections come from
+      # (default 16; 0 = off). Needs the key and SPOOL_TURN_SECRET.
+      SPOOL_TICKET_TURN_RATE:
       # Casts (experimental): a walkie's chunks fanned out to a scope's other subscribers and never
       # stored. SPOOL_RATE_CASTS unset or 0 = off. With a ticket key, a cast needs a cast ticket.
       SPOOL_RATE_CASTS:

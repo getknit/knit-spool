@@ -69,9 +69,11 @@ internal val KNOWN_VARS =
         "SPOOL_TURN_RATE",
         "SPOOL_STUN_URLS",
         "SPOOL_TICKET_KEY",
+        "SPOOL_TICKET_KEY_NEXT",
         "SPOOL_TICKET_AUDIENCE",
         "SPOOL_TICKET_GATES",
         "SPOOL_TICKET_ATTACH_BYTES",
+        "SPOOL_TICKET_TURN_RATE",
         "SPOOL_RATE_CASTS",
         "SPOOL_MAX_CAST",
         "SPOOL_RATE_CASTS_TOTAL",
@@ -102,6 +104,9 @@ private const val MIN_TURN_SECRET = 32
 private const val MIN_TURN_TTL_S = 60L
 private const val MAX_TURN_TTL_S = 3_600L
 private const val MAX_TURN_RATE = 60
+
+/** Four times [MAX_TURN_RATE]: one holder's budget may be a whole address's at the highest per-connection rate. */
+private const val MAX_TICKET_TURN_RATE = 4 * MAX_TURN_RATE
 
 /** One `turn:`/`turns:` URI (RFC 7065): no whitespace, and no comma, which separates the list. */
 private val TURN_URL = Regex("^turns?:[^\\s,]+$")
@@ -401,6 +406,12 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     require(maxCast + RECORD_ENVELOPE <= maxRecord) {
         "SPOOL_MAX_CAST ($maxCast) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
     }
+    val turn = turnFromEnv(env)
+    val ticket = ticketFromEnv(env)
+    // A holder's TURN budget on a spool that issues no TURN would be a limit on nothing.
+    require(turn != null || env("SPOOL_TICKET_TURN_RATE") == null) {
+        "SPOOL_TICKET_TURN_RATE needs SPOOL_TURN_SECRET; set it, or unset the rate"
+    }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
         token = token,
@@ -425,9 +436,9 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         requireModeration = boolVar(env, "SPOOL_REQUIRE_MODERATION", default = false),
         sourceUrl = sourceUrlFromEnv(env),
         commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
-        turn = turnFromEnv(env),
+        turn = turn,
         stunUrls = stunFromEnv(env),
-        ticket = ticketFromEnv(env),
+        ticket = ticket,
         rateCasts = intVar(env, "SPOOL_RATE_CASTS", default = 0, min = 0, max = MAX_CAST_RATE),
         maxCast = maxCast,
         rateCastsTotal = intVar(env, "SPOOL_RATE_CASTS_TOTAL", default = 200, min = 1),
@@ -450,37 +461,65 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
     // Read before the early return, so a gate list with no key is refused rather than never looked at.
     val rawGates = env("SPOOL_TICKET_GATES")?.takeIf { it.isNotEmpty() }
     val rawAttach = env("SPOOL_TICKET_ATTACH_BYTES")
+    val rawNext = env("SPOOL_TICKET_KEY_NEXT")?.takeIf { it.isNotEmpty() }
+    val rawTurnRate = env("SPOOL_TICKET_TURN_RATE")
     if (rawKey == null) {
         require(audience == null) { "SPOOL_TICKET_AUDIENCE needs SPOOL_TICKET_KEY; set it, or unset the audience" }
         require(rawGates == null) { "SPOOL_TICKET_GATES needs SPOOL_TICKET_KEY; set it, or unset the gates" }
         require(rawAttach == null) { "SPOOL_TICKET_ATTACH_BYTES needs SPOOL_TICKET_KEY; set it, or unset the budget" }
+        require(rawNext == null) {
+            "SPOOL_TICKET_KEY_NEXT is set but SPOOL_TICKET_KEY is not: set both during a rotation, then promote NEXT into KEY"
+        }
+        require(rawTurnRate == null) { "SPOOL_TICKET_TURN_RATE needs SPOOL_TICKET_KEY; set it, or unset the rate" }
         return null
     }
     requireNotNull(audience) { "SPOOL_TICKET_KEY is set but SPOOL_TICKET_AUDIENCE is not: tickets must name the spool they are for" }
     require(TICKET_AUDIENCE.matches(audience)) { "SPOOL_TICKET_AUDIENCE must be a lowercase host name, got \"$audience\"" }
-    val raw =
-        requireNotNull(runCatching { Base64.getUrlDecoder().decode(rawKey) }.getOrNull()) {
-            "SPOOL_TICKET_KEY must be unpadded base64url (${rawKey.length} characters given)"
-        }
-    val key =
-        try {
-            Tickets.publicKey(raw)
-        } catch (e: GeneralSecurityException) {
-            throw IllegalArgumentException("SPOOL_TICKET_KEY is not a usable Ed25519 public key (${raw.size} bytes decoded)", e)
-        }
+    val raw = ticketKeyBytes("SPOOL_TICKET_KEY", rawKey)
+    val next = rawNext?.let { ticketKeyBytes("SPOOL_TICKET_KEY_NEXT", it) }
+    require(next == null || !next.contentEquals(raw)) { "SPOOL_TICKET_KEY_NEXT must differ from SPOOL_TICKET_KEY" }
     return SpoolServer.TicketConfig(
-        key = key,
+        key = Tickets.publicKey(raw),
         kid = Tickets.kid(raw),
         audience = audience,
         gates = ticketGates(rawGates),
         attachBytes = longVar(env, "SPOOL_TICKET_ATTACH_BYTES", default = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES, min = 0),
+        next = next?.let { SpoolServer.TicketKey(Tickets.publicKey(it), Tickets.kid(it)) },
+        turnRatePer10Min =
+            intVar(
+                env,
+                "SPOOL_TICKET_TURN_RATE",
+                default = SpoolServer.TicketConfig.DEFAULT_TURN_RATE,
+                min = 0,
+                max = MAX_TICKET_TURN_RATE,
+            ),
     )
+}
+
+/**
+ * [raw] decoded and tried as an Ed25519 verifier, so a key the JDK cannot use stops the spool at boot
+ * rather than refusing the first paying caller. The refusal names [name] and never echoes the value.
+ */
+private fun ticketKeyBytes(
+    name: String,
+    raw: String,
+): ByteArray {
+    val bytes =
+        requireNotNull(runCatching { Base64.getUrlDecoder().decode(raw) }.getOrNull()) {
+            "$name must be unpadded base64url (${raw.length} characters given)"
+        }
+    try {
+        Tickets.publicKey(bytes)
+    } catch (e: GeneralSecurityException) {
+        throw IllegalArgumentException("$name is not a usable Ed25519 public key (${bytes.size} bytes decoded)", e)
+    }
+    return bytes
 }
 
 /**
  * `SPOOL_TICKET_GATES` as [Tickets] flag bits (ADR 2026-10.h6pt): unset is `turn,cast`, what a key
  * gated before the list existed. `create` is refused by name, so no operator believes scope creation
- * is gated: ADR 2026-10.x9gq proposes keeping it open.
+ * is gated: ADR 2026-10.x9gq keeps it open.
  */
 private fun ticketGates(raw: String?): Long {
     if (raw == null) return Tickets.LEGACY_GATES

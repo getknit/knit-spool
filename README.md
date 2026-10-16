@@ -227,9 +227,11 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
 | `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
 | `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
+| `SPOOL_TICKET_KEY_NEXT` | unset | *experimental:* a second issuer public key, accepted beside the key during a rotation; a ticket's `kid` picks which one checks it. Must differ from the key, and needs it. Reloadable |
 | `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
 | `SPOOL_TICKET_GATES` | `turn,cast` | *experimental:* which capabilities need a ticket, from `turn`, `files` and `cast`; `hello` says so in `entGates`. `files` gates **sending** attachments only. Needs the key. Reloadable |
 | `SPOOL_TICKET_ATTACH_BYTES` | `33554432` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (32 MiB). Needs the key. Reloadable |
+| `SPOOL_TICKET_TURN_RATE` | `16` | *experimental:* TURN credentials per ticket holder per 10 minutes (burst half that, at least 2), across all its connections and addresses, on top of `SPOOL_TURN_RATE`. **0 = off.** 0–240. Needs the key and `SPOOL_TURN_SECRET`. Reloadable |
 | `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
 | `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
 | `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
@@ -376,6 +378,17 @@ Two further switches, for an operator who sells TURN to some callers and not oth
   with `--files`: each stored chunk is charged to that holder's daily budget,
   `min(ab, SPOOL_TICKET_ATTACH_BYTES)`, and a spent budget is refused `err ticket` with `msg`
   `budget`. Another member's ticket never pays for an upload, and **receiving** never needs one.
+- **`SPOOL_TICKET_TURN_RATE`** limits each holder's TURN credentials by its daily pseudonym, so
+  one ticket copied to many addresses shares one budget. The per-connection and per-address
+  limits still apply first, and a refusal is `err rate` with `retryMs`, never a strike.
+- **`SPOOL_TICKET_KEY_NEXT`** rotates the issuer key without refusing anyone's ticket:
+  1. set the new public key as `SPOOL_TICKET_KEY_NEXT` and `SIGHUP`, so both keys are accepted;
+  2. once every Spool that takes these tickets has it, start signing with the new key;
+  3. wait until the longest ticket signed by the old key has expired;
+  4. move the new key into `SPOOL_TICKET_KEY`, unset `SPOOL_TICKET_KEY_NEXT`, and `SIGHUP`.
+
+  No step touches a ticket a live connection already holds. Each step only changes which keys
+  judge the next `ent`.
 
 The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
 
@@ -536,7 +549,9 @@ Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying ve
 `count by (version) (knit_spool_build_info)` is what a fleet dashboard joins against), connections
 (current + total) and the `SPOOL_MAX_CONNS` cap they are measured against, records, pushes, events,
 PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
-sheds, bare scopes reclaimed, attachment chunks stored, egress bytes, scopes held, live bytes, the
+sheds, bare scopes reclaimed, new scopes refused `quota` at `SPOOL_MAX_SCOPES`
+(`knit_spool_new_scopes_quota_refused_total`: a conversation that could not start here, so size
+the Spool up when it rises), attachment chunks stored, egress bytes, scopes held, live bytes, the
 store file's size on disk (`knit_spool_store_file_bytes`, SQLite only), and `err` counts by code.
 A Spool running a [commons](#-the-commons) also exports the room's subscriber count, its pushes,
 and how often its Spool-wide push budget throttled.
@@ -608,6 +623,8 @@ this feature exists to avoid.
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE`, `SPOOL_TICKET_GATES` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_TICKET_ATTACH_BYTES` | immediately — read on every gated `aput`; what holders already spent stays spent |
+| `SPOOL_TICKET_KEY_NEXT` | immediately — read by every `ent`; a ticket a connection already holds stays held |
+| `SPOOL_TICKET_TURN_RATE` | immediately — read on every ticketed `turnreq`; a changed rate refills each holder's bucket |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
 | `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |

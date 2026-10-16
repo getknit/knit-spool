@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -302,5 +303,66 @@ class TicketTest {
         assertFalse(logged.contains(Tickets.encodeText(ent.tk, ent.sig)), logged)
         assertFalse(logged.contains(cred.user.substringAfter(':')), logged)
         assertTrue(cred.pass.isNotEmpty())
+    }
+
+    /**
+     * `SPOOL_TICKET_TURN_RATE` keys on the pseudonym, so one ticket carried to two addresses draws
+     * on one bucket (ADR 2026-10.x9gq). Each connection's and each address's own buckets still have
+     * room when the holder's runs out; another holder on the same address is untouched, and the
+     * refusal is `rate`, not a strike.
+     */
+    @Test
+    fun oneTicketOnTwoAddressesSharesOneTurnBucket() {
+        val clock = FakeClock(now)
+        val alice = ByteArray(Tickets.PS_BYTES) { 0x0a }
+        val bob = ByteArray(Tickets.PS_BYTES) { 0x0b }
+        // Two issues per holder per ten minutes, burst two; each connection may take two and each address eight.
+        val config = testConfig(turn = testTurn(), ticket = testTicketConfig(turnRatePer10Min = 2), trustProxy = true)
+        withServer(config, clock = clock) {
+            connect(forwardedFor = "203.0.113.1") {
+                helloHandshake()
+                present(testEnt(clock.now, ps = alice))
+                credential(q = 1L)
+                connect(forwardedFor = "203.0.113.2") {
+                    helloHandshake()
+                    present(testEnt(clock.now, ps = alice))
+                    credential(q = 2L)
+                    sendRecord(TurnReq(t = RecordType.TURNREQ, q = 3L))
+                    val err = expectRecord<Err>(RecordType.ERR)
+                    assertEquals(ErrCode.RATE, err.code)
+                    assertEquals(3L, err.q)
+                    assertTrue(assertNotNull(err.retryMs) > 0L)
+                    connect(forwardedFor = "203.0.113.2") {
+                        helloHandshake()
+                        present(testEnt(clock.now, ps = bob))
+                        credential(q = 4L)
+                    }
+                }
+                // Still the same holder, on the first address: its bucket is the one that is empty.
+                sendRecord(TurnReq(t = RecordType.TURNREQ, q = 5L))
+                assertEquals(ErrCode.RATE, expectRecord<Err>(RecordType.ERR).code)
+            }
+            assertEquals(2, spool.turnBudgetCount())
+            assertEquals(3L, spool.metrics.turnIssuedTicketedTotal.sum())
+        }
+    }
+
+    /** Ticket windows that closed take their holder's TURN bucket with them at the next sweep. */
+    @Test
+    fun aHoldersTurnBucketIsPrunedOnceItsTicketExpires() {
+        val clock = FakeClock(now)
+        withServer(testConfig(turn = testTurn(), ticket = testTicketConfig(turnRatePer10Min = 2)), clock = clock) {
+            connect {
+                helloHandshake()
+                present(testEnt(clock.now, expS = now / 1_000 + 120))
+                credential(q = 1L)
+            }
+            assertEquals(1, spool.turnBudgetCount())
+            spool.sweepTick()
+            assertEquals(1, spool.turnBudgetCount())
+            clock.advance((120 + Tickets.SKEW_S + 1) * 1_000)
+            spool.sweepTick()
+            assertEquals(0, spool.turnBudgetCount())
+        }
     }
 }

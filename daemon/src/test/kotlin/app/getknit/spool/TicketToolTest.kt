@@ -57,7 +57,7 @@ class TicketToolTest {
         val (code, out) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--account", "alice")
         assertEquals(0, code, out.toString())
         val (tk, sig) = assertNotNull(Tickets.decodeText(out.single()))
-        val accepted = assertIs<Tickets.Outcome.Accepted>(Tickets.check(tk, sig, config.key, config.kid, config.audience, now / 1_000))
+        val accepted = assertIs<Tickets.Outcome.Accepted>(Tickets.check(tk, sig, config.verifiers, config.audience, now / 1_000))
         assertEquals(Tickets.FL_TURN, accepted.ticket.fl)
         assertEquals(now / 1_000 + 25 * 3_600, accepted.ticket.exp)
     }

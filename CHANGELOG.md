@@ -72,9 +72,25 @@ document:
   `ent-gates`, `files-ticket` and `files-receive`. The TURN, cast and attachment checks now follow
   `entGates`.
 
+- **Experimental: a second ticket key, `SPOOL_TICKET_KEY_NEXT`, for rotating the issuer key
+  without refusing anyone's ticket.** A ticket's `kid` picks which key checks it, so both are
+  accepted while new tickets move to the new key. Reloadable, and a reload never touches a ticket a
+  live connection already holds. The README lists the four rotation steps.
+
+- **Experimental: a TURN budget per ticket holder, `SPOOL_TICKET_TURN_RATE`** (16 per ten minutes
+  by default, 0 = off). It is keyed by the ticket's daily pseudonym, so one ticket copied to many
+  addresses shares one budget, on top of the per-connection and per-address limits. Refused with
+  `err rate`, never struck. The table lives in memory, is capped, and drops a holder once its
+  ticket expires.
+
+- **`knit_spool_new_scopes_quota_refused_total`**: new scopes refused `quota` at
+  `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a shed scope. A rising count means
+  the Spool is too small for the conversations reaching it.
+
 ### Changed
 
-- **Development builds report a numbered version, `0.4.0-dev.1`, in place of `0.4.0-SNAPSHOT`.**
+- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.2` now), in place of
+  `0.4.0-SNAPSHOT`.**
   It is what `GET /source`, `knit_spool_build_info` and an `edge` image's
   `org.opencontainers.image.version` label carry. `n` moves on `main` whenever the environment
   contract does — a variable added or removed, a setting moving between reloadable and

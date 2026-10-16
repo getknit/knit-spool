@@ -397,6 +397,62 @@ class ConfigTest {
         }
     }
 
+    /** A second issuer key, as `ticket-keygen` would print it. */
+    private val nextTicketKey =
+        java.util.Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(Tickets.publicHalf(Tickets.generateSigningKey()))
+
+    /**
+     * `SPOOL_TICKET_KEY_NEXT` is half of a rotation (ADR 2026-10.x9gq), refused on its own and when
+     * it repeats the current key, for `SPOOL_TOKEN_NEXT`'s reasons; empty is unset. Its refusals
+     * name it and never echo it.
+     */
+    @Test
+    fun theNextTicketKeyIsHalfOfARotationAndMustDiffer() {
+        assertNull(assertNotNull(withTicket().ticket).next)
+        assertNull(assertNotNull(withTicket("SPOOL_TICKET_KEY_NEXT" to "").ticket).next)
+        val rotating = assertNotNull(withTicket("SPOOL_TICKET_KEY_NEXT" to nextTicketKey).ticket)
+        val next = assertNotNull(rotating.next)
+        assertFalse(next.kid.contentEquals(rotating.kid))
+        assertEquals(2, rotating.verifiers.size)
+        assertEquals("set", withTicket("SPOOL_TICKET_KEY_NEXT" to nextTicketKey).reloadable()["ticketKeyNext"])
+
+        val orphan = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_KEY_NEXT" to nextTicketKey)) }
+        assertTrue(orphan.message!!.contains("SPOOL_TICKET_KEY"), orphan.message!!)
+        val same = assertFailsWith<IllegalArgumentException> { withTicket("SPOOL_TICKET_KEY_NEXT" to ticketKey) }
+        assertTrue(same.message!!.contains("must differ"), same.message!!)
+        for (bad in listOf("not base64!", nextTicketKey.dropLast(4))) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_KEY_NEXT" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_KEY_NEXT"), e.message!!)
+            assertFalse(e.message!!.contains(bad), e.message!!)
+        }
+    }
+
+    /**
+     * `SPOOL_TICKET_TURN_RATE` defaults to one address's budget at the default per-connection rate,
+     * accepts 0 as off and up to four times `SPOOL_TURN_RATE`'s ceiling, and is refused without a
+     * ticket key or without TURN, where it would limit nothing (ADR 2026-10.x9gq).
+     */
+    @Test
+    fun theHoldersTurnRateIsBoundedAndNeedsTicketsAndTurn() {
+        val turn = arrayOf("SPOOL_TURN_SECRET" to turnSecret, "SPOOL_TURN_URLS" to turnUrls)
+        assertEquals(16, assertNotNull(withTicket(*turn).ticket).turnRatePer10Min)
+        assertEquals(0, assertNotNull(withTicket(*turn, "SPOOL_TICKET_TURN_RATE" to "0").ticket).turnRatePer10Min)
+        assertEquals(240, assertNotNull(withTicket(*turn, "SPOOL_TICKET_TURN_RATE" to "240").ticket).turnRatePer10Min)
+        for (bad in listOf("-1", "241", "", "lots")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket(*turn, "SPOOL_TICKET_TURN_RATE" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_TURN_RATE"), e.message!!)
+        }
+        val noKey = assertFailsWith<IllegalArgumentException> { config(mapOf(*turn, "SPOOL_TICKET_TURN_RATE" to "8")) }
+        assertTrue(noKey.message!!.contains("SPOOL_TICKET_KEY"), noKey.message!!)
+        val noTurn = assertFailsWith<IllegalArgumentException> { withTicket("SPOOL_TICKET_TURN_RATE" to "8") }
+        assertTrue(noTurn.message!!.contains("SPOOL_TURN_SECRET"), noTurn.message!!)
+        // Unset needs neither: a ticketed spool without TURN keeps booting as it did.
+        assertEquals(16, assertNotNull(withTicket().ticket).turnRatePer10Min)
+    }
+
     @Test
     fun theAudienceIsALowercaseHostName() {
         for (bad in listOf("Spool.Example", "spool example", "spool.example:443", "x".repeat(254))) {

@@ -29,7 +29,7 @@ allprojects {
     // a KNOWN_VARS entry, a field crossing between the reload halves, a default — because whatever
     // renders a spool's environment reads it off the image label to know what the daemon accepts.
     // EnvContractTest fails until it does. After a release it resets to the next minor's `-dev.1`.
-    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-dev.1"
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-dev.2"
 }
 
 // ---- coverage ----

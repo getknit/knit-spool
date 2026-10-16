@@ -61,7 +61,7 @@ class EnvContractTest {
 
     private companion object {
         /** The development version that last moved the contract, and the contract's fingerprint. */
-        val PINNED = "0.4.0-dev.1" to "37a320e1d95203dd"
+        val PINNED = "0.4.0-dev.2" to "8e76a44330defb5d"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

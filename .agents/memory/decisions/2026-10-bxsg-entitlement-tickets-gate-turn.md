@@ -12,7 +12,7 @@ Status: Accepted (2026-10-15), for what is built on `exp/turn`. Proposed 2026-10
 covered scope creation. Amended by ADR 2026-10.h6pt (the `files` gate) and ADR 2026-10.3wdy (the
 `cast` gate). The unbuilt parts were moved on 2026-10-15 to ADR 2026-10.x9gq, still proposed:
 `SPOOL_TICKET_KEY_NEXT` and per-pseudonym spool rate limits. The scope-creation gate drafted here
-went with them, and x9gq now proposes keeping creation open instead. See [What shipped](#what-shipped).
+went with them, and x9gq (accepted 2026-10-16) keeps creation open instead. See [What shipped](#what-shipped).
 
 **Context:** an operator may offer TURN and files to some callers and not others, and the
 spool must tell them apart without holding an account. In the shape considered, a storefront
@@ -108,7 +108,7 @@ Ticket {
   subscriber of the cast's scope rather than by the caster, so one payer unlocks a walkie
   both ways. A refusal is a silent drop, since a cast is never answered.
 - **Scope creation** is not gated. This ADR first drafted `fl.create` with an `sc`
-  budget. ADR 2026-10.x9gq proposes keeping creation open on the shared default spool
+  budget. ADR 2026-10.x9gq keeps creation open on the shared default spool
   instead, and `create` in `SPOOL_TICKET_GATES` is refused at boot.
 
 ## Storage cap

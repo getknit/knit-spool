@@ -36,7 +36,7 @@ class TicketCheckTest {
         tamper: (ByteArray, ByteArray) -> Pair<ByteArray, ByteArray> = { tk, sig -> tk to sig },
     ): Outcome {
         val (tk, sig) = Tickets.issue(SIGNING_KEY, ticket).let { (tk, sig) -> tamper(tk, sig) }
-        return Tickets.check(tk, sig, key, kid, aud, nowS)
+        return Tickets.check(tk, sig, listOf(key to kid), aud, nowS)
     }
 
     private fun refusal(outcome: Outcome): Reason = assertIs<Outcome.Refused>(outcome).reason
@@ -82,14 +82,14 @@ class TicketCheckTest {
     fun aTicketFromAnotherKeyIsRefusedByItsKeyIdBeforeAnySignatureWork() {
         val stranger = Tickets.generateSigningKey()
         val (tk, sig) = Tickets.issue(stranger, fixture().let { Ticket.forKey(stranger, it.aud, it.nbf, it.exp, it.ps, it.fl) })
-        assertEquals(Reason.KEY, refusal(Tickets.check(tk, sig, key, kid, "lab.example", nbf)))
+        assertEquals(Reason.KEY, refusal(Tickets.check(tk, sig, listOf(key to kid), "lab.example", nbf)))
     }
 
     @Test
     fun aTicketClaimingOurKeyIdButSignedByAnotherIsASignatureFailure() {
         val stranger = Tickets.generateSigningKey()
         val (tk, sig) = Tickets.issue(stranger, fixture())
-        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(tk, sig, key, kid, "lab.example", nbf)))
+        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(tk, sig, listOf(key to kid), "lab.example", nbf)))
     }
 
     @Test
@@ -169,5 +169,30 @@ class TicketCheckTest {
         val fresh = Tickets.generateSigningKey()
         assertEquals(2 * Tickets.KEY_BYTES, fresh.size)
         assertNotNull(Tickets.decodeSigningKey(Tickets.encodeSigningKey(fresh)), "seed and public half must belong together")
+    }
+
+    /**
+     * Mid-rotation a spool holds two keys (`SPOOL_TICKET_KEY_NEXT`, ADR 2026-10.x9gq): the ticket's
+     * `kid` picks one, a ticket naming neither is still `key`, and a ticket naming one key but
+     * signed by the other is a signature failure, never a second try against the other key.
+     */
+    @Test
+    fun theKidPicksWhichOfTwoKeysVerifies() {
+        val nextSigning = Tickets.generateSigningKey()
+        val nextPublic = Tickets.publicHalf(nextSigning)
+        val keys = listOf(key to kid, Tickets.publicKey(nextPublic) to Tickets.kid(nextPublic))
+        val base = fixture()
+
+        val (oldTk, oldSig) = Tickets.issue(SIGNING_KEY, base)
+        assertIs<Outcome.Accepted>(Tickets.check(oldTk, oldSig, keys, "lab.example", nbf))
+        val (nextTk, nextSig) = Tickets.issue(nextSigning, Ticket.forKey(nextSigning, base.aud, base.nbf, base.exp, base.ps, base.fl))
+        assertIs<Outcome.Accepted>(Tickets.check(nextTk, nextSig, keys, "lab.example", nbf))
+
+        val stranger = Tickets.generateSigningKey()
+        val (strangerTk, strangerSig) = Tickets.issue(stranger, Ticket.forKey(stranger, base.aud, base.nbf, base.exp, base.ps, base.fl))
+        assertEquals(Reason.KEY, refusal(Tickets.check(strangerTk, strangerSig, keys, "lab.example", nbf)))
+
+        val (crossTk, crossSig) = Tickets.issue(SIGNING_KEY, Ticket.forKey(nextSigning, base.aud, base.nbf, base.exp, base.ps, base.fl))
+        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(crossTk, crossSig, keys, "lab.example", nbf)))
     }
 }

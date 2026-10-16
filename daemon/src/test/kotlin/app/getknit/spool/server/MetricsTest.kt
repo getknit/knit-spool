@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool.server
 
+import app.getknit.spool.protocol.Err
+import app.getknit.spool.protocol.ErrCode
+import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.protocol.ScopeSub
+import app.getknit.spool.protocol.Sub
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /** Exposition-format details the server tests read past. */
@@ -46,5 +54,26 @@ class MetricsTest {
         assertTrue(rendered.contains("""version="a\"b\\c""""), rendered)
         assertTrue(rendered.contains("""commit="d\ne""""), rendered)
         assertTrue(rendered.lineSequence().count { it.startsWith("knit_spool_build_info") } == 1, rendered)
+    }
+
+    /**
+     * A new scope refused `quota` at `SPOOL_MAX_SCOPES` is counted on its own (ADR 2026-10.x9gq):
+     * it is the sizing failure a shared spool has to see before its members report it. Always
+     * emitted, from zero, so a dashboard can alert on the first one.
+     */
+    @Test
+    fun aNewScopeRefusedQuotaIsCounted() {
+        withServer {
+            assertTrue(http.get("http://127.0.0.1:$port/metrics").bodyAsText().contains("knit_spool_new_scopes_quota_refused_total 0\n"))
+            connect {
+                helloHandshake()
+                // hardLimits.maxScopes = 4, all held by this connection, so none can be reclaimed.
+                (1..4).forEach { subscribe(testScope(it)) }
+                sendRecord(Sub(t = RecordType.SUB, q = 9L, subs = listOf(ScopeSub(scope = testScope(5), bounds = testBounds()))))
+                assertEquals(ErrCode.QUOTA, expectRecord<Err>(RecordType.ERR).code)
+            }
+            assertEquals(1L, spool.metrics.newScopesQuotaRefusedTotal.sum())
+            assertTrue(http.get("http://127.0.0.1:$port/metrics").bodyAsText().contains("knit_spool_new_scopes_quota_refused_total 1\n"))
+        }
     }
 }

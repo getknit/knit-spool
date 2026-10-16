@@ -144,7 +144,7 @@ Commits `577c35e` through `37412e2` on `exp/turn` (`17a6b84` through `319f0ce` b
 - `FL_FILES`, the `ab` claim, `Reason.BUDGET` and `hello.entGates`, with vectors from the spec.
 - `SPOOL_TICKET_GATES` (`turn`, `files`, `cast`) and `SPOOL_TICKET_ATTACH_BYTES`. The `create`
   word is refused at boot until bxsg's creation budget is built, so no operator believes scope
-  creation is gated when it is not. (Since 2026-10-15, ADR 2026-10.x9gq proposes never building it.)
+  creation is gated when it is not. (ADR 2026-10.x9gq, accepted 2026-10-16, never builds it.)
 - The `aput` gate in `SpoolServer.filesAdmitted`, the per-pseudonym ledger in `UploadBudgets`, and
   `ticket-mint --files --ab`.
 - The guards listed below, all present. The conformance checks run in process three ways: every

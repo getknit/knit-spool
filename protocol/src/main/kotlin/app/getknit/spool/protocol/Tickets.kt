@@ -105,7 +105,7 @@ object Tickets {
     /**
      * [Ticket.fl] bit 3: the holder may cast, and unlocks casts for every other subscriber of each scope
      * its connection holds (SPOOL_PROTOCOL.md §7.7). Bit 2 stays reserved: it was drafted as a
-     * scope-creation claim, and ADR 2026-10.x9gq proposes keeping creation open instead.
+     * scope-creation claim, and ADR 2026-10.x9gq keeps creation open instead.
      */
     const val FL_CAST = 8L
 
@@ -241,19 +241,22 @@ object Tickets {
      * Integers are checked for sign before any arithmetic — a CBOR negative or an unsigned value past
      * `Long.MAX_VALUE` decodes as a negative `Long` — and the window is compared against [nowS] by
      * subtraction, so no claimed value can overflow it.
+     *
+     * [keys] is every key the spool accepts, each with its `kid`: one, or two mid-rotation
+     * (`SPOOL_TICKET_KEY_NEXT`). The ticket's `kid` picks a single key and only that key's signature
+     * is tried, so a ticket naming neither is refused `key` and nothing is ever verified twice.
      */
     fun check(
         tk: ByteArray,
         sig: ByteArray,
-        key: PublicKey,
-        kid: ByteArray,
+        keys: List<Pair<PublicKey, ByteArray>>,
         aud: String,
         nowS: Long,
     ): Outcome {
         if (tk.size > MAX_TK_BYTES || sig.size != SIG_BYTES) return Outcome.Refused(Reason.MALFORMED)
         val ticket = RecordCodec.decode<Ticket>(tk)
         if (ticket == null || !wellFormed(ticket)) return Outcome.Refused(Reason.MALFORMED)
-        if (!ticket.kid.contentEquals(kid)) return Outcome.Refused(Reason.KEY)
+        val key = keys.firstOrNull { (_, kid) -> ticket.kid.contentEquals(kid) }?.first ?: return Outcome.Refused(Reason.KEY)
         if (!verify(key, tk, sig)) return Outcome.Refused(Reason.SIGNATURE)
         if (ticket.aud != aud) return Outcome.Refused(Reason.AUDIENCE)
         if (nowS < ticket.nbf - SKEW_S) return Outcome.Refused(Reason.EARLY)

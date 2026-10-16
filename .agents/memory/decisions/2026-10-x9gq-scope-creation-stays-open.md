@@ -8,8 +8,11 @@ topics: [tickets, auth, abuse]
 
 # ADR 2026-10.x9gq — scope creation stays open, so ticketed and unticketed members share a spool
 
-Status: Proposed (2026-10-15). Unbuilt. Split out of ADR 2026-10.bxsg, which had drafted ticket-gated
-scope creation on 2026-10-08. Keeps creation open instead.
+Status: Accepted (2026-10-16). Proposed 2026-10-15, split out of ADR 2026-10.bxsg, which had
+drafted ticket-gated scope creation on 2026-10-08. Keeps creation open instead. Accepted as
+written: the public spool the apps seed runs with no `SPOOL_TOKEN`, a ticket key and
+`SPOOL_TICKET_GATES=turn,files,cast`, so tickets are its only feature gates. The three pieces
+below are built.
 
 **Context:** an operator may want members without a ticket to create scopes as they do
 today, and only ticket holders to upload attachments, as the lab spool has piloted. Both
@@ -39,7 +42,7 @@ run without `SPOOL_TOKEN`, because strangers' scopes would otherwise fill
 `SPOOL_MAX_SCOPES` and leave a holder's DM scope refused `quota`, with no TURN from that
 spool.
 
-**Decision (proposed):** a ticketed spool can run public, with no `SPOOL_TOKEN`, a ticket
+**Decision:** a ticketed spool can run public, with no `SPOOL_TOKEN`, a ticket
 key and `SPOOL_TICKET_GATES=turn,files,cast`. Scope creation is not ticket-gated, and
 `create` stays refused in `SPOOL_TICKET_GATES`. Bit 2 of `fl` stays reserved and `sc`
 stays undefined.
@@ -72,33 +75,72 @@ The risk left is a brand-new DM scope refused `quota` on a spool already full of
 scopes. That conversation then gets no TURN from that spool. It is a sizing failure, and
 it should be visible before members report it.
 
-## What the shared spool still needs
+## What the shared spool needed, built
 
-These were drafted in bxsg, are unbuilt, and are proposed here:
+These were drafted in bxsg and are built with this decision's acceptance. They move the
+environment contract, so the development version moved to `0.4.0-dev.2` (ADR 2026-10.8ymn).
 
 - **A second ticket key.** `SPOOL_TICKET_KEY_NEXT`, a base64url raw 32-byte public key
-  reloadable by `SIGHUP`, following the `SPOOL_TOKEN_NEXT` pattern. A ticket's `kid`
-  picks which key verifies it. Rotation:
+  reloadable by `SIGHUP`, following the `SPOOL_TOKEN_NEXT` pattern: refused without
+  `SPOOL_TICKET_KEY`, and refused when it equals it. A ticket's `kid` picks which key
+  verifies it (`Tickets.check` over a key list); a ticket naming neither is refused `key`,
+  and only the named key's signature is ever tried. Rotation:
   1. render NEXT;
   2. sign with NEXT once every spool reports it;
   3. wait out the longest ticket;
   4. promote NEXT and unset it.
-- **A per-pseudonym TURN rate.** `SPOOL_TICKET_TURN_RATE`: TURN issues per pseudonym per
-  ten minutes, in addition to the per-connection and per-IP buckets, in a table capped and
-  pruned like h6pt's `UploadBudgets`. Today one ticket shared across many addresses is
-  limited by nothing the spool keys on.
-- **A quota-refusal metric.** A counter of new scopes refused `quota`, so the sizing
-  failure above shows on a dashboard.
 
-## Open questions for review
+  No step touches a ticket a live connection already holds: the keys judge only the next
+  `ent`. The `hello` flag is unchanged by any step, because the primary key is always set.
+- **A per-pseudonym TURN rate.** `SPOOL_TICKET_TURN_RATE`: TURN issues per pseudonym per
+  ten minutes, taken after the per-connection and per-IP buckets so a request they refuse
+  never spends the holder's share. It defaults to 16, one address's budget at the default
+  `SPOOL_TURN_RATE` of 4, with a burst of half the rate and at least 2. 0 turns it off, and
+  240, four times `SPOOL_TURN_RATE`'s ceiling, is the most it takes. It needs the ticket key
+  and `SPOOL_TURN_SECRET`, and is read live, so a reload reaches the next issue; a moved
+  rate rebuilds a holder's bucket full. The table, `TurnBudgets`, is capped and pruned like
+  h6pt's `UploadBudgets`: memory only, never logged, an entry dropped once its ticket's
+  window closes. It applies to every issue made under a ticket, gated or not, because the
+  pseudonym is what the issue is keyed on either way.
+- **A quota-refusal metric.** `knit_spool_new_scopes_quota_refused_total` counts new
+  scopes refused `quota` at `SPOOL_MAX_SCOPES`, on a `sub` and on the push that recreates
+  a shed scope. Attachment `quota` refusals stay in the `err` counts only. It is always
+  emitted, from zero, so the sizing failure above shows on a dashboard.
+
+## Open questions, with a recommendation each
+
+Both stay open for the maintainer. What follows is a recommendation, not a decision.
 
 - **Retention.** bxsg's upload budget holds at most `ab × (⌈retention / 1 day⌉ + 1)` per
   holder, and retention is the scope's `ttlMs`, up to `SPOOL_MAX_TTL_MS` (7 days by
   default, so 8 × `ab`). Should a spool with `files` gated refuse a `ttlMs` above some
   bound, or should the deploy only set `SPOOL_MAX_TTL_MS` to the retention it intends to
-  hold? The first holds whatever an operator sets; the second needs no code.
+  hold?
+  - *Recommended: the deploy setting, and no code.* `SPOOL_MAX_TTL_MS` is already enforced.
+    Both stores clamp a declared `ttlMs` to it (`coerceIn` in `subscribe`), and the
+    `digest` reply tells the client the bounds it got. A second, files-only bound would be
+    a second knob for the same number. Refusing a longer `ttlMs` instead of clamping it
+    would also break every client that declares the 7-day ceiling today and is quietly
+    given less.
+  - The shared spool should set `SPOOL_MAX_TTL_MS=172800000`, the clients' 48-hour
+    default, which holds 3 × `ab` per holder, as `HOSTING.md` ("What ticketed uploads
+    hold") already says. A spool that wants longer retention pays for it in disk, by
+    choice.
 - **PoW cost on phones.** 20 bits prices creation for every member's phone, not just for
   strangers. Is a lower setting enough, given d2zb and the rate bucket?
+  - *Recommended: keep 20 bits, the spec's default, and watch the new metric.* A phone
+    pays only for a scope the spool does not hold (C-8-4): the first member to reach a
+    conversation's scope, or a recreation after a d2zb reclaim or a watermark shed. It pays
+    once per scope per day (S-8-2's cache), not on every `sub`. The spec puts 20 bits at
+    about 10⁶ hashes and sub-second on a phone (§8).
+  - Each bit dropped halves what a squatter pays per scope, while the per-IP bucket
+    bounds only one address. d2zb already keeps squatted bare scopes from displacing live
+    ones, so what squatting costs a member is a `quota` refusal at a full spool. That is
+    now `knit_spool_new_scopes_quota_refused_total`, and it is better answered by sizing
+    `SPOOL_MAX_SCOPES` than by cheapening the stamp.
+  - No phone timing has been measured in this repo. Before the public spool turns PoW on,
+    time a 20-bit stamp on the slowest supported Android device. Step down a bit at a time
+    only if it is not sub-second there.
 
 **Consequences / limits:**
 
@@ -110,6 +152,13 @@ These were drafted in bxsg, are unbuilt, and are proposed here:
 - **Users off the shared spool do not meet there.** A member who removed the default, or
   uses only their own spool, never meets a holder there. A contact card's relay hint
   offers them an Add, which is a tap. This is the fringe, not the default path.
+- **Rotation needs every spool to have NEXT before signing moves.** Step 2 is the one an
+  operator can get wrong: a spool still on the old key alone refuses new tickets `key`
+  until it is reloaded. Nothing in the daemon can see the other spools, so that check
+  belongs to whatever renders their environment.
+- **The per-pseudonym budget resets with the pseudonym,** at each ticket day and on a
+  restart, like the upload budget. A shared ticket is limited to the budget per day per
+  spool, not in total.
 - **The lab pilot does not cover the public side.** The lab spool runs with a token, so
   strangers' scopes, PoW and `quota` at a full spool are untested until a public spool
   runs the gates.
@@ -121,8 +170,12 @@ These were drafted in bxsg, are unbuilt, and are proposed here:
 - **Guards:**
   - present: `ConfigTest` refuses `create` in `SPOOL_TICKET_GATES`, and conformance
     `ent-gates` checks that `entGates` agrees with the refusals;
-  - owed with `SPOOL_TICKET_KEY_NEXT`: a `ReloadTest` case proving the key-pair swap is
-    hitless for live connections, and `ConfigTest` bounds for it;
-  - owed with `SPOOL_TICKET_TURN_RATE`: `ConfigTest` bounds, and a `TicketTest` case
-    where one ticket on two addresses shares one bucket;
-  - owed with the metric: a `MetricsTest` case for a `quota` refusal of a new scope.
+  - `SPOOL_TICKET_KEY_NEXT`: `ReloadTest.rotatingTheTicketKeyIsHitlessForLiveConnections`
+    (all four steps, with one connection live throughout),
+    `ConfigTest.theNextTicketKeyIsHalfOfARotationAndMustDiffer`, and
+    `TicketCheckTest.theKidPicksWhichOfTwoKeysVerifies`;
+  - `SPOOL_TICKET_TURN_RATE`: `ConfigTest.theHoldersTurnRateIsBoundedAndNeedsTicketsAndTurn`,
+    `TicketTest.oneTicketOnTwoAddressesSharesOneTurnBucket` and
+    `TicketTest.aHoldersTurnBucketIsPrunedOnceItsTicketExpires`;
+  - the metric: `MetricsTest.aNewScopeRefusedQuotaIsCounted`;
+  - `EnvContractTest`, pinned at `0.4.0-dev.2` for the two new variables.

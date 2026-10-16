@@ -47,6 +47,14 @@ class Metrics(
      * held frames under byte pressure, a reclaim drops an empty row.
      */
     val reclaimsTotal = LongAdder()
+
+    /**
+     * New scopes refused `quota` at `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a
+     * shed scope (ADR 2026-10.x9gq). Apart from the `quota` errs, which also count attachments over
+     * their caps: this one is a conversation that could not start here, and on a spool that sells
+     * TURN, a call that gets none from it. Rising means the spool is sized too small, not attacked.
+     */
+    val newScopesQuotaRefusedTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
 
     /**
@@ -158,6 +166,7 @@ class Metrics(
             line("knit_spool_drain_refused_total", "counter", drainRefusedTotal.sum())
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
             line("knit_spool_reclaims_total", "counter", reclaimsTotal.sum())
+            line("knit_spool_new_scopes_quota_refused_total", "counter", newScopesQuotaRefusedTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())

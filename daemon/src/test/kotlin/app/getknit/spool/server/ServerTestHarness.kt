@@ -151,18 +151,32 @@ val TEST_TICKET_SIGNING_KEY =
 
 const val TEST_TICKET_AUD = "spool.test"
 
+/**
+ * A ticket config verifying [signingKey]'s tickets, and [nextSigningKey]'s as `SPOOL_TICKET_KEY_NEXT`.
+ * The per-pseudonym TURN rate is off unless a test asks, so the per-connection TURN tests keep
+ * measuring the bucket they are about.
+ */
 fun testTicketConfig(
     audience: String = TEST_TICKET_AUD,
     gates: Long = Tickets.LEGACY_GATES,
     attachBytes: Long = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES,
+    signingKey: ByteArray = TEST_TICKET_SIGNING_KEY,
+    nextSigningKey: ByteArray? = null,
+    turnRatePer10Min: Int = 0,
 ): SpoolServer.TicketConfig {
-    val public = Tickets.publicHalf(TEST_TICKET_SIGNING_KEY)
+    val public = Tickets.publicHalf(signingKey)
     return SpoolServer.TicketConfig(
         key = Tickets.publicKey(public),
         kid = Tickets.kid(public),
         audience = audience,
         gates = gates,
         attachBytes = attachBytes,
+        next =
+            nextSigningKey?.let {
+                val nextPublic = Tickets.publicHalf(it)
+                SpoolServer.TicketKey(Tickets.publicKey(nextPublic), Tickets.kid(nextPublic))
+            },
+        turnRatePer10Min = turnRatePer10Min,
     )
 }
 

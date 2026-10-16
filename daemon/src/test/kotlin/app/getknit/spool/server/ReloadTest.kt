@@ -2,7 +2,16 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.protocol.CloseCode
+import app.getknit.spool.protocol.Ent
+import app.getknit.spool.protocol.Err
+import app.getknit.spool.protocol.ErrCode
+import app.getknit.spool.protocol.Ok
+import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.protocol.TurnCred
+import app.getknit.spool.protocol.TurnReq
 import app.getknit.spool.store.HardLimits
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlin.test.Test
@@ -172,5 +181,71 @@ class ReloadTest {
         // Spot-check the two that matter most for a reload's blast radius.
         assertContains(runtime, "token")
         assertContains(boot, "port")
+    }
+
+    /**
+     * `SPOOL_TICKET_KEY_NEXT` rotation (ADR 2026-10.x9gq) is hitless for live connections: no reload
+     * in it touches a ticket a connection already holds, and each step only changes which keys judge
+     * the next `ent`. Rendering NEXT accepts both; promoting it retires the old key for new `ent`s
+     * while the connection that presented an old-key ticket keeps fetching credentials on it.
+     */
+    @Test
+    fun rotatingTheTicketKeyIsHitlessForLiveConnections() {
+        val clock = FakeClock(1_800_000_000_000L)
+        val old = TEST_TICKET_SIGNING_KEY
+        val new = Tickets.generateSigningKey()
+
+        fun keyed(ticket: SpoolServer.TicketConfig) = testConfig(turn = testTurn(), ticket = ticket)
+        withServer(keyed(testTicketConfig(signingKey = old)), clock = clock) {
+            connect {
+                helloHandshake()
+                present(testEnt(clock.now, signingKey = old))
+                credential(q = 1L)
+
+                // 1. Render NEXT. The live connection's ticket is untouched; a new one may use either key.
+                assertTrue(spool.reload(keyed(testTicketConfig(signingKey = old, nextSigningKey = new))).isEmpty())
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 2L)
+                connect {
+                    helloHandshake()
+                    present(testEnt(clock.now, signingKey = new))
+                    credential(q = 1L)
+                }
+                // A renewal under the old key still lands while it is current.
+                present(testEnt(clock.now, q = 3L, signingKey = old))
+
+                // 4. Promote NEXT and unset it. Old-key `ent`s are refused from here, on new
+                //    connections and this one alike, but what this connection already holds still works.
+                assertTrue(spool.reload(keyed(testTicketConfig(signingKey = new))).isEmpty())
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 4L)
+                connect {
+                    helloHandshake()
+                    sendRecord(testEnt(clock.now, q = 5L, signingKey = old))
+                    val err = expectRecord<Err>(RecordType.ERR)
+                    assertEquals(ErrCode.TICKET, err.code)
+                    assertEquals(Tickets.Reason.KEY.word, err.msg)
+                    present(testEnt(clock.now, q = 6L, signingKey = new))
+                }
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 7L)
+            }
+            assertEquals(0L, spool.metrics.errCount(ErrCode.RATE))
+        }
+    }
+
+    private companion object {
+        /** One per-connection TURN token at [testTurn]'s 60 per ten minutes, so the bucket never runs dry here. */
+        const val TURN_TOKEN_MS = 10_000L
+    }
+
+    private suspend fun DefaultClientWebSocketSession.present(ent: Ent) {
+        sendRecord(ent)
+        assertEquals(ent.q, expectRecord<Ok>(RecordType.OK).q)
+    }
+
+    private suspend fun DefaultClientWebSocketSession.credential(q: Long) {
+        sendRecord(TurnReq(t = RecordType.TURNREQ, q = q))
+        assertEquals(q, expectRecord<TurnCred>(RecordType.TURNCRED).q)
     }
 }

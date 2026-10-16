@@ -337,11 +337,14 @@ class SpoolServer(
                 // checks, and a 43-character value would drown the line. Read live by every `ent`;
                 // whether a connection may present one at all is fixed by the hello it was sent.
                 "ticketKey" to if (ticket == null) "unset" else "set",
+                "ticketKeyNext" to if (ticket?.next == null) "unset" else "set",
                 "ticketAud" to (ticket?.audience ?: "unset"),
                 // Snapshotted per connection, like the key's presence: a reload reaches new ones only.
                 "ticketGates" to (ticket?.gateWords() ?: "unset"),
                 // Read live by every gated `aput`, so a lower cap bites on a pseudonym's next chunk.
                 "ticketAttachBytes" to (ticket?.attachBytes ?: "unset"),
+                // Read live by every ticketed `turnreq`; a holder's bucket is rebuilt when it moves.
+                "ticketTurnRate" to (ticket?.turnRatePer10Min ?: "unset"),
                 "rateCasts" to rateCasts,
                 "maxCast" to maxCast,
                 "rateCastsTotal" to rateCastsTotal,
@@ -405,6 +408,12 @@ class SpoolServer(
         val ratePer10Min: Int,
     )
 
+    /** One ticket-verifying public key and its [Tickets.kid], computed once rather than on every `ent`. */
+    class TicketKey(
+        val key: PublicKey,
+        val kid: ByteArray,
+    )
+
     /**
      * What entitlement tickets ([Tickets]) are checked against (experimental, SPOOL_PROTOCOL.md
      * §7.6): the issuer's public key and the audience a ticket must name to be good here. Only the
@@ -422,7 +431,20 @@ class SpoolServer(
         val gates: Long = Tickets.LEGACY_GATES,
         /** `SPOOL_TICKET_ATTACH_BYTES`: the most a pseudonym may upload in a day, whatever its `ab` claims. */
         val attachBytes: Long = DEFAULT_ATTACH_BYTES,
+        /**
+         * `SPOOL_TICKET_KEY_NEXT`: the key being rotated in, accepted beside [key] (ADR 2026-10.x9gq).
+         * A ticket's `kid` picks which one verifies it.
+         */
+        val next: TicketKey? = null,
+        /**
+         * `SPOOL_TICKET_TURN_RATE`: TURN issues per pseudonym per ten minutes, on top of the
+         * per-connection and per-address buckets; 0 leaves only those (ADR 2026-10.x9gq).
+         */
+        val turnRatePer10Min: Int = DEFAULT_TURN_RATE,
     ) {
+        /** Every key a ticket may be signed by, with its `kid`: [key] first, then [next]. */
+        val verifiers: List<Pair<PublicKey, ByteArray>> = listOfNotNull(key to kid, next?.let { it.key to it.kid })
+
         /** [gates] as the words `SPOOL_TICKET_GATES` takes, comma-joined so describe() keeps one field. */
         fun gateWords(): String =
             GATE_WORDS
@@ -434,6 +456,12 @@ class SpoolServer(
         companion object {
             /** Two full scopes a day at the default `SPOOL_MAX_ATTACH_BYTES`, sized against the disk (ADR 2026-10.h6pt). */
             const val DEFAULT_ATTACH_BYTES = 33_554_432L
+
+            /**
+             * One address's TURN budget at the default `SPOOL_TURN_RATE` of 4: a holder's phones,
+             * wherever they are, get what one household gets.
+             */
+            const val DEFAULT_TURN_RATE = 16
 
             /** What `SPOOL_TICKET_GATES` accepts. `create` is refused: creation stays open (ADR 2026-10.x9gq). */
             val GATE_WORDS = linkedMapOf("turn" to Tickets.FL_TURN, "files" to Tickets.FL_FILES, "cast" to Tickets.FL_CAST)
@@ -521,6 +549,9 @@ class SpoolServer(
 
     /** Each ticket holder's uploads today where `files` is gated; pruned by the sweeper (ADR 2026-10.h6pt). */
     private val uploadBudgets = UploadBudgets(uploadBudgetsCap)
+
+    /** Each ticket holder's TURN issues, `SPOOL_TICKET_TURN_RATE`; pruned by the sweeper (ADR 2026-10.x9gq). */
+    private val turnBudgets = TurnBudgets(clock)
 
     /**
      * The commons is a shared write surface, which the per-connection push bucket does not bound:
@@ -1195,6 +1226,7 @@ class SpoolServer(
                     }
 
                     SubscribeResult.QuotaExceeded -> {
+                        metrics.newScopesQuotaRefusedTotal.increment()
                         sendErr(conn, ErrCode.QUOTA, q = sub.q, scope = scopeSub.scope)
                     }
                 }
@@ -1315,6 +1347,16 @@ class SpoolServer(
                 return
             }
         }
+        // Last, so a request the connection's own buckets refuse never spends the holder's share.
+        // Read live, like the attach budget: a reload that moves the rate reaches the next issue.
+        val holderRate = config.ticket?.turnRatePer10Min ?: 0
+        if (ticket != null && holderRate > 0) {
+            val retryMs = turnBudgets.take(ticket, holderRate, clock() / MS_PER_S)
+            if (retryMs > 0) {
+                rateLimited(conn, q = req.q, scope = null, retryMs = retryMs, strike = false)
+                return
+            }
+        }
         val expS = clock() / MS_PER_S + turn.ttlS
         val suffix =
             ticket?.let { TurnCredentials.pseudonymSuffix(it.ps) } ?: ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes)
@@ -1358,7 +1400,7 @@ class SpoolServer(
                 // Advertised at hello, then the key was reloaded away: nothing left to check against.
                 Tickets.Outcome.Refused(Tickets.Reason.KEY)
             } else {
-                Tickets.check(ent.tk, ent.sig, tickets.key, tickets.kid, tickets.audience, clock() / MS_PER_S)
+                Tickets.check(ent.tk, ent.sig, tickets.verifiers, tickets.audience, clock() / MS_PER_S)
             }
         when (outcome) {
             is Tickets.Outcome.Accepted -> {
@@ -1594,6 +1636,7 @@ class SpoolServer(
                 }
 
                 SubscribeResult.QuotaExceeded -> {
+                    metrics.newScopesQuotaRefusedTotal.increment()
                     sendErr(conn, ErrCode.QUOTA, q = push.q, scope = push.scope)
                     return
                 }
@@ -1885,6 +1928,7 @@ class SpoolServer(
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
         uploadBudgets.prune(now / MS_PER_S)
+        turnBudgets.prune(now / MS_PER_S)
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
         reclaimSpace()
@@ -1921,6 +1965,9 @@ class SpoolServer(
 
     /** How many pseudonyms hold an upload budget entry. Exposed for tests. */
     internal fun uploadBudgetCount(): Int = uploadBudgets.size
+
+    /** How many pseudonyms hold a TURN budget entry. Exposed for tests. */
+    internal fun turnBudgetCount(): Int = turnBudgets.size
 
     /** Live subscribers of [scope]: what a test waits on to know a closed connection has left the fan-out table. */
     internal fun subscriberCount(scope: ByteArray): Int = subscribers[hex(scope)]?.size ?: 0
