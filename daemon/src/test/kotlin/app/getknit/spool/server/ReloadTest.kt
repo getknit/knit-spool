@@ -95,6 +95,53 @@ class ReloadTest {
         }
     }
 
+    /**
+     * TURN is boot-only: its secret has to change in lockstep with the TURN server's, and the
+     * per-connection and per-address budgets are built when a client arrives.
+     */
+    @Test
+    fun turnIsBootOnly() {
+        withServer(testConfig()) {
+            val ignored = spool.reload(testConfig(turn = testTurn()))
+            assertTrue(ignored.any { it.startsWith("turn=") }, ignored.toString())
+            connect { assertNull(helloHandshake().turn) }
+        }
+    }
+
+    /**
+     * The STUN list is read when `hello` is built, so a reload reaches every client that connects
+     * after it — and only those: an open connection keeps the hello it was given.
+     */
+    @Test
+    fun stunUrlsReloadForNewConnections() {
+        withServer(testConfig()) {
+            connect {
+                assertNull(helloHandshake().stun)
+                assertTrue(spool.reload(testConfig(stunUrls = listOf("stun:spool.example:3478"))).isEmpty())
+            }
+            connect { assertEquals(listOf("stun:spool.example:3478"), helloHandshake().stun) }
+        }
+    }
+
+    /**
+     * Casts switch on for connections opened after the reload, like STUN, and every cast setting is
+     * runtime: a reload names none of them as ignored.
+     */
+    @Test
+    fun castsSwitchOnForNewConnections() {
+        withServer(testConfig()) {
+            connect {
+                assertNull(helloHandshake().cast)
+                assertTrue(spool.reload(testConfig(rateCasts = 4, maxCast = 1_024, rateCastsTotal = 20)).isEmpty())
+            }
+            connect {
+                val cast = helloHandshake().cast
+                assertEquals(4, cast?.rate)
+                assertEquals(1_024, cast?.maxBytes)
+            }
+        }
+    }
+
     /** A reload that changes nothing reports nothing. */
     @Test
     fun anIdenticalReloadIsSilent() {

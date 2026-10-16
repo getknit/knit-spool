@@ -67,6 +67,8 @@ one conversation member.
 - [Configuration](#-configuration)
 - [The commons](#-the-commons)
 - [Send-side moderation](#-send-side-moderation)
+- [TURN (experimental)](#-turn-experimental)
+- [Casts (experimental)](#-casts-experimental)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -219,6 +221,18 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_COMMONS_MAX_BLOB` | `SPOOL_MAX_BLOB` | commons per-blob cap |
 | `SPOOL_COMMONS_ATTACH` | `false` | allow attachments in the commons |
 | `SPOOL_COMMONS_RATE_PUSHES` | `20` | **Spool-wide** pushes/s into the commons (burst 4×) |
+| `SPOOL_TURN_SECRET` | unset | *experimental:* the TURN shared secret, ≥ 32 characters; **unset = no TURN**, and the three below must stay unset |
+| `SPOOL_TURN_URLS` | — | comma-separated `turn:`/`turns:` URIs clients are told to dial; required with the secret |
+| `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it |
+| `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
+| `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
+| `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
+| `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
+| `SPOOL_TICKET_GATES` | `turn,cast` | *experimental:* which capabilities need a ticket, from `turn`, `files` and `cast`; `hello` says so in `entGates`. `files` gates **sending** attachments only. Needs the key. Reloadable |
+| `SPOOL_TICKET_ATTACH_BYTES` | `33554432` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (32 MiB). Needs the key. Reloadable |
+| `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
+| `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
+| `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
 
 The commons bounds must fit the Spool-wide caps, leave a `list` reply that fits `SPOOL_MAX_RECORD`,
 and fit under `SPOOL_MAX_BYTES` — the commons is pinned against the watermark, so a room that cannot
@@ -292,6 +306,128 @@ behind tap-to-reveal, as their own setting says.
 | **Strictest wins** | A sender seals a frame once and pushes identical bytes to every Spool it knows. If *any* Spool of a conversation asks for moderation, a conforming client withholds flagged content from all of them rather than fork the conversation by operator. |
 | **Nothing on the data path** | No record, error code, close code or bound is added. An off Spool's `hello` is byte-identical to before this existed. |
 | **Reloadable** | Announced in `hello`, so like `SPOOL_POW_BITS` a `SIGHUP` moves it for the next connection; a live client keeps the hello it negotiated. |
+
+## 📞 TURN (experimental)
+
+> [!WARNING]
+> Experimental, on the `exp/turn` branch only. The records below are a draft (knit-next
+> `docs/VOICE_CALLS.md` §2, proposed spec §7.6), not yet in the spec, and may change without notice.
+
+Knit voice calls run peer to peer over WebRTC, and the 10–20% that cannot connect directly need a
+relay. Set `SPOOL_TURN_SECRET` and the Spool hands short-lived relay credentials to clients that ask;
+`docker-compose.turn.yml` runs [coturn](https://github.com/coturn/coturn) beside it, checking them
+with the same secret. **The Spool never carries media**, and call setup is ordinary sealed traffic
+in the conversation's own scope, so nothing else on the data path changes.
+
+```
+{ t: "hello", …, turn: true }
+{ t: "turnreq", q: 7 }                                                         // client → Spool
+{ t: "turncred", q: 7, urls: [...], user: "<exp>:<random>", pass: "…", exp: … } // Spool → client
+```
+
+| | |
+|---|---|
+| **Names no conversation** | `turnreq` carries no scope, and the Spool does not ask. Holding *some* subscription is the whole gate, so the Spool never learns which conversation is calling. |
+| **coturn's own scheme** | `pass = base64(HMAC-SHA1(secret, user))` — coturn's `use-auth-secret`. The suffix after `<exp>:` is random per issue, so a credential links to nothing. |
+| **Budgeted, never struck** | `SPOOL_TURN_RATE` per connection, four times that per address; past it, `err rate` with `retryMs`. A refusal never counts toward the 4003 abuse close: redialling a dropped call is not abuse. |
+| **Boot-only** | The secret has to change in lockstep with coturn's, so a `SIGHUP` reports it as needing a restart. |
+| **Never logged** | Neither half of a credential, nor the secret, reaches this daemon's log. |
+
+Run it as the last overlay:
+
+```sh
+docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-compose.turn.yml up -d
+```
+
+It needs **3478/udp, 5349/tcp** and the relay range **49160–49999/udp** open on the host; 443 stays
+Caddy's. By default the Spool hands out one TURN URL per transport, `turn:…:3478?transport=udp` then
+`turns:…:5349?transport=tcp` (knit-next `docs/VOICE_CALLS.md` S-7.6-25), because a phone opens an
+allocation per network for every URL it tries; open 3478/tcp too only if you add a
+`turn:…?transport=tcp` URL to `SPOOL_TURN_URLS`, which replaces the default as given. `turns:` on 5349 uses the certificate Caddy already holds for `SPOOL_DOMAIN`, and
+a renewal is picked up in place (coturn's `SIGUSR2` reload) without dropping a call. coturn refuses to
+relay to loopback, private, link-local and CGNAT addresses — without that list a credential holder
+could reach the box's own network through it.
+
+**On a public Spool, anyone can get a credential** — a subscription costs one proof-of-work stamp.
+So the bound on what strangers can push through the box is coturn's quotas, not the credential:
+`TURN_USER_QUOTA` (3 allocations per credential, or per ticket holder on a ticketed Spool — see
+below), `TURN_TOTAL_QUOTA` (100), `TURN_MAX_BPS` (16000
+bytes/s per session) and `TURN_BPS_CAPACITY` (1600000 bytes/s, 12.8 Mbps, for the whole relay). A
+refreshed allocation lives on after its credential expires, so these caps are the real limit.
+Prefer TURN on a tokened Spool.
+
+### Tickets and STUN
+
+Two further switches, for an operator who sells TURN to some callers and not others (knit-next
+`docs/VOICE_CALLS.md` §2.6; ADR 2026-10.bxsg), plus the choice of what else a ticket unlocks (ADR
+2026-10.h6pt):
+
+- **`SPOOL_STUN_URLS`** puts a credential-free `stun` list in every `hello`. A phone with no TURN of
+  its own needs one: without it, it offers only private addresses, and a paying peer's relay —
+  which admits peers by IP — cannot permit it. The TURN overlay points it at its own coturn.
+- **`SPOOL_TICKET_KEY`** and **`SPOOL_TICKET_AUDIENCE`** make `hello` carry `ent`, and `turnreq` then
+  needs an Ed25519 ticket presented once per connection with `{ t: "ent", q, tk, sig }`. With one,
+  no subscription is needed, and the TURN username's suffix is derived from the ticket's daily
+  pseudonym, so every credential one holder fetches shares it and `TURN_USER_QUOTA` counts the
+  holder. A refusal is `err ticket` with a `msg` (`expired`, `audience`, …), never a strike.
+- **`SPOOL_TICKET_GATES`** picks what a ticket unlocks on this one Spool, so paid and free callers
+  share it instead of needing a Spool each. It defaults to `turn,cast`, what a key gated before the
+  list existed. Adding `files` makes **sending** an attachment need the sender's own ticket minted
+  with `--files`: each stored chunk is charged to that holder's daily budget,
+  `min(ab, SPOOL_TICKET_ATTACH_BYTES)`, and a spent budget is refused `err ticket` with `msg`
+  `budget`. Another member's ticket never pays for an upload, and **receiving** never needs one.
+
+The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
+
+```sh
+knit-spool ticket-keygen                    # prints the signing key and SPOOL_TICKET_KEY=…
+knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account alice
+```
+
+`ticket-mint` prints a `knit-ticket:v1:…` line for a test client; `--cast` adds the cast flag
+([casts](#-casts-experimental)), `--files` the upload flag, `--ab BYTES` a smaller upload budget,
+and `--no-turn` drops TURN. Conformance takes the same key:
+`--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
+`knit_spool_ticket_refused_total{reason}`, `knit_spool_turn_issued_ticketed_total` and
+`knit_spool_ticket_attach_bytes_charged_total` count what happened. The Spool learns each holder's
+pseudonym and can link their connections within a day; it never logs a ticket or a pseudonym, and
+the upload budgets live in memory only, so a restart resets them.
+
+What a relay sees that a Spool does not: **both callers' IP addresses, and how long they talked**.
+Never what was said — media is DTLS-SRTP end to end, keyed by fingerprints that ride in the sealed
+call setup. Run by the same operator as the Spool, the two logs can be joined. See
+[`HOSTING.md`](HOSTING.md#what-turn-costs) for the bandwidth.
+
+## 📻 Casts (experimental)
+
+> [!WARNING]
+> Experimental, on the `exp/turn` branch only. The record is a draft (knit-next
+> `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7), not yet in the spec, and may change without notice.
+
+When two phones in a call have no radio path and no live one, the call becomes a walkie-talkie:
+push to talk, a sealed chunk about every half second. Set `SPOOL_RATE_CASTS` and the Spool carries
+those chunks. **A cast is fanned out to the scope's other live subscribers and never stored**. It
+has no blob id, no digest entry, no tombstone, no listing and no row on disk. A phone that was not
+connected when it went out never gets it, which is what a walkie means.
+
+```
+{ t: "hello", …, cast: { maxBytes: 2048, rate: 4 } }
+{ t: "cast", scope, data }   // client → Spool: no q, never answered
+{ t: "cast", scope, data }   // Spool → every other subscriber of the scope
+```
+
+| | |
+|---|---|
+| **Never answered** | A cast carries no `q` and draws no `ok` or `err`. A refused one is dropped and counted: not subscribed, over `maxBytes`, over budget, the commons, or casts off. `hello` states the bounds up front, so a client can keep to them unprompted. |
+| **Never struck** | Past its budget a cast is just dropped. A flood still costs the record bucket every record does, and that bucket strikes. |
+| **Never a slow consumer** | A subscriber whose outbound channel is full loses that cast and nothing else. It is not counted toward the 4003 slow-consumer close. |
+| **Sold with tickets** | With `cast` in `SPOOL_TICKET_GATES` (the default once `SPOOL_TICKET_KEY` is set), a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One payer unlocks the scope both ways, so a free friend can talk back. Without a ticket key, any subscriber may cast. |
+| **Never logged** | No line names a cast or its scope. `knit_spool_casts_total`, `knit_spool_casts_fanned_total` and `knit_spool_casts_dropped_total{reason}` count them, and the status line shows `casts=+N`. |
+
+What a Spool sees of a cast: that a conversation is in a walkie session, who talks when and for how
+long, and both phones' addresses. It never sees what was said: each cast is sealed under the
+conversation's key, and the chunk inside it is sealed again under the pair's ratchet. Client-side
+padding hides chunk sizes. See [`HOSTING.md`](HOSTING.md#what-casts-cost) for the bandwidth.
 
 ## 🌐 Deploy
 
@@ -469,8 +605,11 @@ this feature exists to avoid.
 | | Takes effect |
 |---|---|
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
-| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE`, `SPOOL_TICKET_GATES` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
+| `SPOOL_TICKET_ATTACH_BYTES` | immediately — read on every gated `aput`; what holders already spent stays spent |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
+| `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
+| `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope

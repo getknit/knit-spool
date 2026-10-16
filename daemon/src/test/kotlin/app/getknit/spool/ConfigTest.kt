@@ -2,6 +2,7 @@
 package app.getknit.spool
 
 import app.getknit.spool.protocol.Commons
+import app.getknit.spool.protocol.Tickets
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -221,5 +222,211 @@ class ConfigTest {
     fun requireModerationRefusesAnythingButTrueOrFalse() {
         val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_REQUIRE_MODERATION" to "yes")) }
         assertTrue(e.message!!.contains("SPOOL_REQUIRE_MODERATION"), e.message!!)
+    }
+
+    private val turnSecret = "0123456789abcdef0123456789abcdef"
+    private val turnUrls = "turn:spool.example:3478?transport=udp,turns:spool.example:5349?transport=tcp"
+
+    private fun withTurn(vararg extra: Pair<String, String>) =
+        config(mapOf("SPOOL_TURN_SECRET" to turnSecret, "SPOOL_TURN_URLS" to turnUrls) + extra.toMap())
+
+    /** Experimental TURN issuing is off unless a secret is set, exactly as before it existed. */
+    @Test
+    fun turnIsOffByDefault() {
+        assertNull(config(emptyMap()).turn)
+        assertNull(config(mapOf("SPOOL_TURN_SECRET" to "")).turn)
+    }
+
+    @Test
+    fun turnParsesWithItsDefaults() {
+        val turn = assertNotNull(withTurn().turn)
+        assertEquals(listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"), turn.urls)
+        assertEquals(300L, turn.ttlS)
+        assertEquals(4, turn.ratePer10Min)
+        val tuned = assertNotNull(withTurn("SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "10").turn)
+        assertEquals(3_600L, tuned.ttlS)
+        assertEquals(10, tuned.ratePer10Min)
+    }
+
+    /** URLs or tuning with no secret means an operator who believes credentials are being issued. */
+    @Test
+    fun turnSettingsWithoutASecretRefuseToStart() {
+        for (orphan in listOf("SPOOL_TURN_URLS" to turnUrls, "SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "4")) {
+            val e = assertFailsWith<IllegalArgumentException> { config(mapOf(orphan)) }
+            assertTrue(e.message!!.contains("SPOOL_TURN_SECRET"), e.message!!)
+        }
+    }
+
+    @Test
+    fun aTurnSecretNeedsUrls() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TURN_SECRET" to turnSecret)) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_URLS"), e.message!!)
+    }
+
+    /** The refusal names the variable and the floor, and never echoes the value it refused. */
+    @Test
+    fun aShortTurnSecretIsRefusedWithoutBeingEchoed() {
+        val short = "tooshort-secret"
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TURN_SECRET" to short, "SPOOL_TURN_URLS" to turnUrls)) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_SECRET"), e.message!!)
+        assertFalse(e.message!!.contains(short), e.message!!)
+    }
+
+    @Test
+    fun turnUrlsMustBeTurnUris() {
+        for (bad in listOf("stun:spool.example:3478", "https://spool.example", "turn:", "turn:a b")) {
+            assertFailsWith<IllegalArgumentException>(bad) { withTurn("SPOOL_TURN_URLS" to bad) }
+        }
+    }
+
+    /** STUN needs no secret, so it is off by default and otherwise stands on its own. */
+    @Test
+    fun stunUrlsParseAloneAndDefaultToNone() {
+        assertTrue(config(emptyMap()).stunUrls.isEmpty())
+        assertTrue(config(mapOf("SPOOL_STUN_URLS" to "")).stunUrls.isEmpty())
+        val stun = config(mapOf("SPOOL_STUN_URLS" to "stun:spool.example:3478, stuns:spool.example:5349")).stunUrls
+        assertEquals(listOf("stun:spool.example:3478", "stuns:spool.example:5349"), stun)
+    }
+
+    @Test
+    fun stunUrlsMustBeAFewStunUris() {
+        for (bad in listOf("turn:spool.example:3478", "https://spool.example", "stun:", "stun:a b")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { config(mapOf("SPOOL_STUN_URLS" to bad)) }
+            assertTrue(e.message!!.contains("SPOOL_STUN_URLS"), e.message!!)
+        }
+        val five = List(5) { "stun:s$it.example:3478" }.joinToString(",")
+        assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_STUN_URLS" to five)) }
+    }
+
+    /** Casts are off unless a rate is set, and need no secret, so they stand on their own like STUN. */
+    @Test
+    fun castsAreOffByDefaultAndParseAlone() {
+        val off = config(emptyMap())
+        assertEquals(0, off.rateCasts)
+        assertEquals(2_048, off.maxCast)
+        assertEquals(200, off.rateCastsTotal)
+        val on = config(mapOf("SPOOL_RATE_CASTS" to "4", "SPOOL_MAX_CAST" to "1500", "SPOOL_RATE_CASTS_TOTAL" to "50"))
+        assertEquals(4, on.rateCasts)
+        assertEquals(1_500, on.maxCast)
+        assertEquals(50, on.rateCastsTotal)
+    }
+
+    @Test
+    fun castBoundsAreRefusedOutsideTheirRange() {
+        for ((name, bad) in listOf(
+            "SPOOL_RATE_CASTS" to "-1",
+            "SPOOL_RATE_CASTS" to "101",
+            "SPOOL_MAX_CAST" to "0",
+            "SPOOL_RATE_CASTS_TOTAL" to "0",
+        )) {
+            val e = assertFailsWith<IllegalArgumentException>("$name=$bad") { config(mapOf(name to bad)) }
+            assertTrue(e.message!!.contains(name), e.message!!)
+        }
+    }
+
+    /** A cast is one record, so the largest one has to fit `SPOOL_MAX_RECORD` with its envelope. */
+    @Test
+    fun maxCastMustFitInARecord() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_MAX_CAST" to "131072")) }
+        assertTrue(e.message!!.contains("SPOOL_MAX_RECORD"), e.message!!)
+    }
+
+    /** RFC 8032 §7.1 TEST 1's public key, as `ticket-keygen` prints one: unpadded base64url. */
+    private val ticketKey =
+        java.util.Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a".hexToByteArray())
+
+    private fun withTicket(vararg extra: Pair<String, String>) =
+        config(mapOf("SPOOL_TICKET_KEY" to ticketKey, "SPOOL_TICKET_AUDIENCE" to "spool.example") + extra.toMap())
+
+    @Test
+    fun ticketsAreOffByDefaultAndParseWithAKeyAndAudience() {
+        assertNull(config(emptyMap()).ticket)
+        assertNull(config(mapOf("SPOOL_TICKET_KEY" to "")).ticket)
+        val ticket = assertNotNull(withTicket().ticket)
+        assertEquals("spool.example", ticket.audience)
+        assertEquals("21fe31dfa154a261", ticket.kid.toHexString())
+    }
+
+    /** An audience with no key means an operator who believes tickets are being checked. */
+    @Test
+    fun anAudienceWithoutAKeyAndAKeyWithoutAnAudienceRefuseToStart() {
+        val orphan = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_AUDIENCE" to "spool.example")) }
+        assertTrue(orphan.message!!.contains("SPOOL_TICKET_KEY"), orphan.message!!)
+        val bare = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_KEY" to ticketKey)) }
+        assertTrue(bare.message!!.contains("SPOOL_TICKET_AUDIENCE"), bare.message!!)
+    }
+
+    /** Unset gates keep what a key gated before the list existed, so a keyed spool's upgrade changes nothing. */
+    @Test
+    fun ticketGatesDefaultToTurnAndCastAndParseAsAList() {
+        val default = assertNotNull(withTicket().ticket)
+        assertEquals(Tickets.LEGACY_GATES, default.gates)
+        assertEquals(33_554_432L, default.attachBytes)
+        assertEquals(Tickets.LEGACY_GATES, assertNotNull(withTicket("SPOOL_TICKET_GATES" to "").ticket).gates)
+        val files = assertNotNull(withTicket("SPOOL_TICKET_GATES" to " files , turn,cast", "SPOOL_TICKET_ATTACH_BYTES" to "0").ticket)
+        assertEquals(Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST, files.gates)
+        assertEquals("turn,files,cast", files.gateWords())
+        assertEquals(0L, files.attachBytes)
+        assertEquals(Tickets.FL_FILES, assertNotNull(withTicket("SPOOL_TICKET_GATES" to "files").ticket).gates)
+    }
+
+    /** `create` is named so its refusal says why, rather than reading like a typo. */
+    @Test
+    fun anUnknownGateAndTheUnbuiltCreateGateRefuseToStart() {
+        val create = assertFailsWith<IllegalArgumentException> { withTicket("SPOOL_TICKET_GATES" to "turn,create") }
+        assertTrue(create.message!!.contains("not supported yet"), create.message!!)
+        for (bad in listOf("tun", "turn,", "files;cast")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_GATES" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_GATES"), e.message!!)
+        }
+        for (bad in listOf("-1", "", "lots")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_ATTACH_BYTES" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_ATTACH_BYTES"), e.message!!)
+        }
+    }
+
+    /** Gates or a budget with no key means an operator who believes uploads are being metered. */
+    @Test
+    fun gatesOrAnAttachBudgetWithoutAKeyRefuseToStart() {
+        for (name in listOf("SPOOL_TICKET_GATES", "SPOOL_TICKET_ATTACH_BYTES")) {
+            val e = assertFailsWith<IllegalArgumentException>(name) { config(mapOf(name to "files")) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_KEY"), e.message!!)
+        }
+    }
+
+    @Test
+    fun theAudienceIsALowercaseHostName() {
+        for (bad in listOf("Spool.Example", "spool example", "spool.example:443", "x".repeat(254))) {
+            assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_AUDIENCE" to bad) }
+        }
+    }
+
+    /**
+     * Not base64url, the wrong length, and a well-formed 32 bytes that is not a point on the curve
+     * all stop the spool at boot — and the refusal never echoes what it was given.
+     */
+    @Test
+    fun anUnusableTicketKeyRefusesToStartWithoutBeingEchoed() {
+        val offCurve =
+            java.util.Base64
+                .getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(ByteArray(32).also { it[0] = 2 })
+        for (bad in listOf("not base64!", ticketKey.dropLast(4), offCurve)) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_KEY" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_KEY"), e.message!!)
+            assertFalse(e.message!!.contains(bad), e.message!!)
+        }
+    }
+
+    @Test
+    fun turnTtlAndRateAreBounded() {
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "59") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_TTL_S" to "3601") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "0") }
+        assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_RATE" to "61") }
     }
 }

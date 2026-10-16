@@ -28,6 +28,9 @@ the [README](README.md#-deploy) has the rest.
 - [Home and self-hosted](#home-and-self-hosted)
 - [Architecture](#architecture)
 - [What a commons costs](#what-a-commons-costs)
+- [What TURN costs](#what-turn-costs)
+- [What casts cost](#what-casts-cost)
+- [What ticketed uploads hold](#what-ticketed-uploads-hold)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
 - [If you modify it](#if-you-modify-it)
@@ -40,7 +43,7 @@ the [README](README.md#-deploy) has the rest.
 | CPU | 1 shared vCPU | The store runs on one thread and sustains order-1000 pushes/s on a $5 tier. TLS and PoW verification are the only other work. CPU won't be your constraint. |
 | Disk | 10–25 GB | Payload is bounded by `SPOOL_MAX_BYTES` (256 MB default) and the image is ~150 MB. The rest is logs, so cap them. |
 | Transfer | 1 TB/month, minimum | The one to shop on. See below. |
-| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. |
+| Network | Public IPv4, a DNS name, inbound :80 and :443 | ACME needs :80 to issue, clients need :443. IPv6 is good to have but not enough on its own; plenty of mobile networks still want the A record. With the experimental TURN overlay, also 3478/udp, 5349/tcp and the relay range (49160–49999/udp); 3478/tcp only if you add a `turn:…?transport=tcp` URL to `SPOOL_TURN_URLS` (S-7.6-25). |
 | Uptime | Whatever the tier gives you | Clients treat a missing Spool as a missing Spool. Don't buy an SLA for this. |
 
 Anything sold as a 1 GB VPS for $4–6/month clears that. So does a spare machine at home, with the
@@ -233,6 +236,81 @@ and the fan-out itself is non-blocking sends on the pushing connection's corouti
 not a stall. A member who never drains is disconnected as a slow consumer rather than being allowed
 to back everyone else up.
 
+## What TURN costs
+
+The experimental TURN overlay (`docker-compose.turn.yml`, see the README) relays the voice calls
+that cannot connect peer to peer, which is the minority but not a rare one: carrier-grade NAT on
+mobile networks pushes it to somewhere around 10–20%.
+
+Bandwidth is the cost. A relayed call is Opus at roughly 32 kbps each way, about 56 kbps once packet
+headers are counted. Each direction comes in from one caller and goes out to the other, so a call
+sends about 112 kbps out of the box, **~50 MB per call-hour**, and takes as much in. Transfer
+allowances meter the outbound half, so 1 TB a month covers about 20,000 relayed call-hours.
+
+On a public Spool anyone can get a credential, so size the caps for the worst case, not the honest
+one. `TURN_BPS_CAPACITY` (bytes/s, default 1600000 = 12.8 Mbps for the whole relay) bounds it:
+saturated around the clock that is ~4 TB/month out, four times a 1 TB allowance. On a public Spool
+without tickets, lower it to what you are willing to pay for; 400000 keeps the worst case near 1 TB.
+`TURN_MAX_BPS` (16000 bytes/s per session) and the allocation quotas keep any one credential from
+taking all of it.
+
+The caps count allocations, not calls. coturn reserves `TURN_MAX_BPS` out of `TURN_BPS_CAPACITY` for
+every allocation, used or not, which is why the default pool is exactly `TURN_TOTAL_QUOTA` (100) ×
+16000: the two run out together. A phone can hold several allocations in one call, one per network,
+address family and TURN URL it tries, so 100 allocations is anywhere from 100 concurrent relayed
+calls down to a handful. Raise the quota and the pool together, and keep the pool a figure you can
+pay for at saturation.
+
+Memory is small: coturn idles in tens of megabytes, and the overlay caps it at 96 MB, which still
+fits the 1 GB budget beside the tiny overlay's Spool and Caddy. CPU is per packet: a relayed call is
+about 200 packets a second through coturn, twice that when both callers relay through the same box.
+On a single shared core that competes with the Spool, so a relay meant to carry much more than the
+defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it. Each allocation takes one
+UDP port from the 840-port default range (49160–49999), which leaves room to raise
+`TURN_TOTAL_QUOTA` without reopening the firewall; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the
+firewall rule) if the quota ever passes it.
+
+## What casts cost
+
+Casts (experimental, off by default, see the README) carry a walkie-talkie's chunks when two
+phones have no radio path. Nothing is stored, so the cost is bandwidth alone, and it is small: a
+talking phone sends a sealed chunk of about 800 bytes every 480 ms, about **1.8 KB/s** with the
+record around it. The Spool sends it once to each other subscriber of the conversation, one for a DM,
+so a walkie costs about **6 MB out per hour of talking** and as much in. A walkie is push to talk, one side at a time, so
+an hour on the call screen is usually much less. 1 TB a month covers on the order of 100,000
+talking-hours.
+
+The worst case is set by the Spool-wide budget, not by honest use. `SPOOL_RATE_CASTS_TOTAL` (200
+casts a second, burst 4×) bounds what comes in. What goes out is that times the cast size
+(`SPOOL_MAX_CAST`, 2 KB) times each scope's other subscribers, which is about 400 KB/s per
+listener at saturation. Anyone who learns a scope id can subscribe to it (spec §10.4), so a scope
+can have more listeners than the pair. Size the budget for what you will pay at saturation, as for
+TURN. On a ticketed Spool only a scope a cast ticket has unlocked carries any, which keeps strangers'
+casts off the bill.
+
+CPU and memory are noise beside the store's: a cast is one decode, a few table reads and one
+encode, and the Spool holds none of them.
+
+## What ticketed uploads hold
+
+With `files` in `SPOOL_TICKET_GATES` (experimental, ADR 2026-10.h6pt), sending an attachment needs
+the sender's own ticket, and each stored chunk counts against that holder's daily budget,
+`SPOOL_TICKET_ATTACH_BYTES` (32 MiB by default) or less if the ticket says so. **It is an upload
+budget, not a storage cap.** Attachments live as long as their scope's TTL, so one holder keeps at
+most the budget times the number of days that fit in that window plus one. The scope's creator
+picks the TTL, up to `SPOOL_MAX_TTL_MS`: that is **3 × 32 MiB = 96 MiB** at the clients' 48 h
+default, but **8 × 32 MiB = 256 MiB** at the 7-day default ceiling. To hold the lower figure, set
+`SPOOL_MAX_TTL_MS=172800000`. Budgets are memory only, so a restart refills every one.
+
+The disk stays bounded by `SPOOL_MAX_BYTES`, ticketed or not: past it the least-active scope is
+shed whatever paid for it. What the budget buys is fairness. One customer's uploads can push out
+only as much as their own budget, rather than everything other customers hold. Size the watermark
+for the number of holders you expect to be active at once times what each may keep: 1,000 holders
+at the default budget is up to ~94 GiB with a 48 h ceiling, or 250 GiB at 7 days. Attachments are also capped at `SPOOL_MAX_SCOPES` ×
+`SPOOL_MAX_ATTACH_BYTES` (64 GiB at 4,096 scopes), and the lower of the two is what the disk must
+hold. Receiving is never gated, so download egress is what holders stored times the members who
+fetch it.
+
 ## Upgrading without a reconnect storm
 
 Stopping a Spool closes every session at once, and a few thousand clients then redial together.
@@ -259,6 +337,9 @@ With too little free space it logs a warning, boots unchanged, and tries again o
 - [ ] Included transfer you're comfortable with, and you've read the overage rate.
 - [ ] A public IPv4 with inbound :80 and :443, and a DNS name already pointing at it. ACME issuance
       fails otherwise.
+- [ ] Running TURN: 3478/udp, 5349/tcp and 49160–49999/udp open too — on the host firewall *and*
+      any provider-side one. 3478/tcp only if `SPOOL_TURN_URLS` lists a `turn:…?transport=tcp` URL:
+      the default hands out UDP and `turns:` alone (S-7.6-25), and STUN is UDP.
 - [ ] A persistent volume for `SPOOL_DATA_DIR`, or a deliberate choice to run in memory.
 - [ ] A region with a sane path to the people who'll use it, and ideally not the region their other
       Spool is in.

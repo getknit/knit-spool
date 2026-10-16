@@ -21,7 +21,7 @@ for the module map.
   skill (`/adr`) per `.agents/rules/decisions.md`.
 - **If touching the wire, a record type or a conformance check:** READ `CONTRIBUTING.md`
   ("The spec is the product") first.
-- **If touching deployment or operator docs:** READ `HOSTING.md` and `SECURITY.md`.
+- **If touching deployment, TURN or operator docs:** READ `HOSTING.md` and `SECURITY.md`.
 
 ## Capabilities
 

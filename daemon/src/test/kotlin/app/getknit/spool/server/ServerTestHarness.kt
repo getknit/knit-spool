@@ -5,6 +5,7 @@ import app.getknit.spool.BuildInfo
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Hello
 import app.getknit.spool.protocol.PowStamp
 import app.getknit.spool.protocol.RECORD_VERSION
@@ -13,6 +14,8 @@ import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.ScopeStore
@@ -67,6 +70,12 @@ fun testConfig(
     requireModeration: Boolean = false,
     sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
     commons: SpoolServer.CommonsConfig? = null,
+    turn: SpoolServer.TurnConfig? = null,
+    stunUrls: List<String> = emptyList(),
+    ticket: SpoolServer.TicketConfig? = null,
+    rateCasts: Int = 0,
+    maxCast: Int = 2_048,
+    rateCastsTotal: Int = 200,
 ): SpoolServer.Config =
     SpoolServer.Config(
         port = 0,
@@ -91,6 +100,12 @@ fun testConfig(
         requireModeration = requireModeration,
         sourceUrl = sourceUrl,
         commons = commons,
+        turn = turn,
+        stunUrls = stunUrls,
+        ticket = ticket,
+        rateCasts = rateCasts,
+        maxCast = maxCast,
+        rateCastsTotal = rateCastsTotal,
     )
 
 /** Whether [needle] occurs anywhere in this array — for asserting what an encoded record does *not* carry. */
@@ -117,6 +132,58 @@ fun testCommons(
         attach = attach,
         ratePushes = ratePushes,
     )
+
+/** A TURN secret long enough for the parser, and distinctive enough to grep a log for. */
+const val TEST_TURN_SECRET = "test-turn-secret-0123456789abcdefghij"
+
+fun testTurn(
+    urls: List<String> = listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"),
+    ttlS: Long = 300L,
+    ratePer10Min: Int = 60,
+): SpoolServer.TurnConfig = SpoolServer.TurnConfig(secret = TEST_TURN_SECRET, urls = urls, ttlS = ttlS, ratePer10Min = ratePer10Min)
+
+/** RFC 8032 §7.1 TEST 1 as `seed ‖ public key` — the pair the protocol's ticket vectors use. */
+val TEST_TICKET_SIGNING_KEY =
+    (
+        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60" +
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    ).hexToByteArray()
+
+const val TEST_TICKET_AUD = "spool.test"
+
+fun testTicketConfig(
+    audience: String = TEST_TICKET_AUD,
+    gates: Long = Tickets.LEGACY_GATES,
+    attachBytes: Long = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES,
+): SpoolServer.TicketConfig {
+    val public = Tickets.publicHalf(TEST_TICKET_SIGNING_KEY)
+    return SpoolServer.TicketConfig(
+        key = Tickets.publicKey(public),
+        kid = Tickets.kid(public),
+        audience = audience,
+        gates = gates,
+        attachBytes = attachBytes,
+    )
+}
+
+/**
+ * A signed `ent` good from a minute before [nowMs] for a day, under the test key. Every claim can be
+ * bent, so a test states only the one it is about.
+ */
+fun testEnt(
+    nowMs: Long,
+    q: Long = 9L,
+    ps: ByteArray = ByteArray(Tickets.PS_BYTES) { 0x11 },
+    fl: Long = Tickets.FL_TURN,
+    aud: String = TEST_TICKET_AUD,
+    nbfS: Long = nowMs / 1_000 - 60,
+    expS: Long = nowMs / 1_000 + 86_400,
+    signingKey: ByteArray = TEST_TICKET_SIGNING_KEY,
+    ab: Long? = null,
+): Ent {
+    val (tk, sig) = Tickets.issue(signingKey, Ticket.forKey(signingKey, aud = aud, nbf = nbfS, exp = expS, ps = ps, fl = fl, ab = ab))
+    return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
+}
 
 class TestServer(
     val spool: SpoolServer,

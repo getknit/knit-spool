@@ -6,6 +6,7 @@ import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -97,6 +98,48 @@ class DeployConfigTest {
                 }
             }
         }.isSuccess
+
+    /**
+     * The TURN overlay (experimental) is two halves that must meet: the Spool signs credentials with
+     * `SPOOL_TURN_SECRET` and coturn verifies them with the same value, so the overlay has to hand it
+     * to both services. It also must not reach for 443, which Caddy holds on the same host, and the
+     * entrypoint it mounts has to be the one this repo ships.
+     */
+    @Test
+    fun theTurnOverlayWiresBothHalvesAndLeaves443ToCaddy() {
+        val overlay = repoRoot.resolve("deploy/docker-compose.turn.yml")
+        if (!overlay.exists()) fail("$overlay is missing")
+        val text = overlay.readText()
+        val secretLines = text.lines().count { it.trimStart().startsWith("SPOOL_TURN_SECRET:") }
+        assertTrue(secretLines == 2, "SPOOL_TURN_SECRET must reach both the spool and turn services, found $secretLines")
+        assertTrue(text.lines().any { it.trimStart().startsWith("SPOOL_TURN_URLS:") }, "the overlay never sets SPOOL_TURN_URLS")
+        val serviceLines = text.lines().filterNot { it.trimStart().startsWith("#") }
+        assertTrue(serviceLines.none { "443" in it }, "the turn overlay binds or names 443, which Caddy owns on this host")
+        assertTrue(text.contains("./coturn/entrypoint.sh:/knit/entrypoint.sh:ro"), "the overlay must mount the shipped entrypoint")
+        assertTrue(repoRoot.resolve("deploy/coturn/entrypoint.sh").exists(), "deploy/coturn/entrypoint.sh is missing")
+    }
+
+    /**
+     * A phone opens a TURN allocation per network for every URL it is handed, and coturn's quotas
+     * count allocations (ADR 2026-10.y2ph). So the overlay's default is one URL per transport, UDP
+     * then TLS (knit-next `docs/VOICE_CALLS.md` S-7.6-25): a plain `transport=tcp` URL costs an
+     * allocation per network on every call and seldom reaches a network the other two miss.
+     */
+    @Test
+    fun theTurnOverlayDefaultsToOneUrlPerTransport() {
+        val overlay = repoRoot.resolve("deploy/docker-compose.turn.yml").readText()
+        val line = overlay.lines().single { it.trimStart().startsWith("SPOOL_TURN_URLS:") }
+        val prefix = "\"\${SPOOL_TURN_URLS:-"
+        val value = line.substringAfter("SPOOL_TURN_URLS:").trim()
+        assertTrue(value.startsWith(prefix) && value.endsWith("}\""), "SPOOL_TURN_URLS has no overridable default: $line")
+        val urls = value.removePrefix(prefix).removeSuffix("}\"").split(",")
+        assertEquals(
+            listOf("turn:\${SPOOL_DOMAIN}:3478?transport=udp", "turns:\${SPOOL_DOMAIN}:5349?transport=tcp"),
+            urls,
+            "the overlay's default SPOOL_TURN_URLS must be UDP then turns:, one URL per transport",
+        )
+        assertTrue(urls.none { it.startsWith("turn:") && "transport=tcp" in it }, "a plain turn:…?transport=tcp URL is in the default")
+    }
 
     @Test
     fun everyVariableTheDaemonReadsIsReachableFromEnv() {

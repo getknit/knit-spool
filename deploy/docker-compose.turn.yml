@@ -1,0 +1,95 @@
+# TURN for Knit voice calls (experimental; proposed spec §7.6). An overlay on
+# docker-compose.tls.yml — it borrows Caddy's certificate for turns: — and always the LAST -f:
+#
+#   docker compose -f docker-compose.tls.yml -f docker-compose.turn.yml up -d
+#   docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-compose.turn.yml up -d
+#
+# The Spool hands clients short-lived credentials signed with SPOOL_TURN_SECRET; coturn checks
+# them with the same secret and relays the call. The Spool never carries media.
+#
+# Open on the host firewall: 3478/udp, 5349/tcp, and the relay range TURN_MIN_PORT-TURN_MAX_PORT/udp
+# (default 49160-49999); 3478/tcp only if SPOOL_TURN_URLS adds a turn:...?transport=tcp URL, since
+# no default URL or STUN binding uses it. 443 stays Caddy's.
+#
+# What it costs: a relayed call sends ~50 MB per hour out of this box and takes as much in, and the
+# TURN server sees both callers' addresses and how long they talked — never what was said (media is
+# DTLS-SRTP end to end).
+#
+# On a PUBLIC Spool anyone can get a credential (a subscription costs one PoW stamp), so the
+# TURN_* quotas below are the real bound on what strangers can push through this box. The default
+# 12.8 Mbps whole-box cap is ~4 TB/month out if saturated around the clock, four times a 1 TB
+# allowance; lower it (400000 keeps the worst case near 1 TB), or run TURN only on a tokened or
+# ticketed Spool.
+
+services:
+  spool:
+    environment:
+      SPOOL_TURN_SECRET: "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env (openssl rand -base64 48)}"
+      # One URL per transport (knit-next docs/VOICE_CALLS.md S-7.6-25): UDP first, then TLS on 5349
+      # for networks that pass only TLS. A phone opens an allocation per network for every URL it
+      # tries, and a plain turn:...?transport=tcp seldom reaches a network these two miss, so it is
+      # not a default. Setting SPOOL_TURN_URLS replaces this list as given: add it back there, or
+      # point at a TURN server elsewhere.
+      SPOOL_TURN_URLS: "${SPOOL_TURN_URLS:-turn:${SPOOL_DOMAIN}:3478?transport=udp,turns:${SPOOL_DOMAIN}:5349?transport=tcp}"
+      # coturn answers STUN without a credential, so every client — with a TURN credential or not —
+      # can learn its public address here. That is what lets a free phone reach a paying peer's relay.
+      SPOOL_STUN_URLS: "${SPOOL_STUN_URLS:-stun:${SPOOL_DOMAIN}:3478}"
+
+  turn:
+    # Pinned by digest: the relay is a network-facing C service, and a tag can move under it.
+    image: "${TURN_IMAGE:-coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e}"
+    container_name: knit-turn
+    restart: unless-stopped
+    # The relay allocates a UDP port per call leg from the range; publishing a range through
+    # docker-proxy costs a process per port, and NAT in front of it would hide the client address
+    # the relay must see. Host networking avoids both.
+    network_mode: host
+    depends_on:
+      - caddy
+    # Root only to read Caddy's 0600 certificates; turnserver drops to nobody:nogroup itself. Every
+    # capability is dropped except what chowning, dropping and signalling need — plus
+    # NET_BIND_SERVICE, which nothing here uses but the image sets on /usr/bin/turnserver as a file
+    # capability, and the kernel refuses to exec a binary whose file capabilities the bounding set
+    # lacks ("turnserver: Operation not permitted").
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - KILL
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run/turn:mode=0750,size=1m
+    entrypoint: ["/bin/sh", "/knit/entrypoint.sh"]
+    environment:
+      SPOOL_TURN_SECRET: "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env (openssl rand -base64 48)}"
+      SPOOL_DOMAIN: "${SPOOL_DOMAIN:?set SPOOL_DOMAIN in deploy/.env}"
+      # Only behind NAT (a home box, some clouds): the public address, or public/private.
+      TURN_EXTERNAL_IP:
+      TURN_MIN_PORT:
+      TURN_MAX_PORT:
+      # How often to look for a renewed certificate, in seconds. Default 6 h.
+      TURN_CERT_POLL_S:
+      # The abuse bounds; see entrypoint.sh. Bandwidth is BYTES per second. Defaults: 3
+      # allocations per credential (per ticket holder on a ticketed Spool), 100 in all, 16000 B/s per
+      # session, 1600000 B/s (12.8 Mbps) in all — 100 x 16000, because coturn reserves the per-session
+      # rate for every allocation. One holder on Wi-Fi and cellular with two URLs needs more than 3:
+      # set TURN_USER_QUOTA from a measured call.
+      TURN_USER_QUOTA:
+      TURN_TOTAL_QUOTA:
+      TURN_MAX_BPS:
+      TURN_BPS_CAPACITY:
+    volumes:
+      - ./coturn/entrypoint.sh:/knit/entrypoint.sh:ro
+      - caddy-data:/caddy:ro
+    mem_limit: 96m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

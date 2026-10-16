@@ -85,6 +85,10 @@ default:
 # order is execution order, so bundling it with the reports risks the floors failing the build
 # before the XML that explains the failure is written. Here the reports always exist first, and the
 # second call is near-instant — everything it needs is already up to date.
+#
+# The project's badges (Settings > General > Badges) hang off this job: the coverage badge reads
+# the `coverage:` regex below, and links to the Kover HTML artifact by `?job=test`. Renaming the
+# job or moving the report breaks that link, not the pipeline.
 test:
   extends: .gradle
   stage: test
@@ -183,6 +187,11 @@ conformance-selftest:
 # kaniko drops an ignored path from the filesystem entirely, and Gradle then dies on
 # "java.io.tmpdir is set to a directory that doesn't exist: /tmp".
 #
+# --custom-platform pins the image to linux/amd64. kaniko otherwise builds for whatever the runner
+# is, so a job that landed on the Mac runner pushed an arm64-only image under the same tags. On an
+# arm64 runner the Dockerfile's RUN steps (the Gradle compile included) then execute under the
+# host's amd64 binfmt emulation: slower, but the image is the same one the amd64 runners produce.
+#
 # The image digest is published as a dotenv artifact so the scan job pins the exact image this
 # pipeline produced rather than re-resolving a mutable tag.
 docker:
@@ -206,6 +215,7 @@ docker:
         --build-arg "SPOOL_COMMIT=$CI_COMMIT_SHA" \
         --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
         --digest-file /kaniko/digest \
+        --custom-platform=linux/amd64 \
         --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
         set -- "$@" --build-arg "SPOOL_VERSION=${CI_COMMIT_TAG#v}"
@@ -214,14 +224,18 @@ docker:
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:latest"
       fi
+      # A moving per-branch tag, so a lab box can track a branch without chasing short shas.
+      # $CI_COMMIT_REF_SLUG is the source branch in an MR pipeline too.
+      if [ -z "$CI_COMMIT_TAG" ]; then
+        set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+      fi
       /kaniko/executor "$@"
     - echo "IMAGE_DIGEST=$(cat /kaniko/digest)" > build.env
   artifacts:
     reports:
       dotenv: build.env
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+  # Every pipeline, so any pushed branch gets an image. A branch with an open MR runs only the MR
+  # pipeline (see workflow:), which carries no $CI_COMMIT_BRANCH, so a branch-only rule would skip it.
 
 # Standalone tarballs for operators who run the daemon without Docker, and the artifact the
 # tagged release links to.
@@ -289,9 +303,7 @@ verify:trivy-image:
     when: always
     expire_in: 1 week
     paths: [trivy-image.json]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+  # Same rules as docker: every image this pipeline pushes gets scanned.
 
 # The repo already carries a tuned .mdlrc (relaxed style, three rules disabled with reasons) but
 # nothing ran it — the README is the project's front door and is hand-maintained, so lint it.

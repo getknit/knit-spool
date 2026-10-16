@@ -92,7 +92,7 @@ class Session(
 
     /**
      * Receives until a record whose `t` equals [type] arrives and decodes it as [T]. Server-initiated
-     * `digest`/`event` records are skipped unless that is what is expected; anything else fails the
+     * `digest`/`event`/`cast` records are skipped unless that is what is expected; anything else fails the
      * check with an expected-vs-got message (an unexpected `err` includes its code).
      */
     suspend inline fun <reified T> expect(type: String): T {
@@ -110,7 +110,7 @@ class Session(
                         ?: throw CheckFailure("expected '$type' record, got one that does not decode")
                 }
 
-                t == RecordType.DIGEST || t == RecordType.EVENT -> {
+                t == RecordType.DIGEST || t == RecordType.EVENT || t == RecordType.CAST -> {
                     // Server-initiated records — skip and keep waiting.
                 }
 

@@ -2,6 +2,7 @@
 package app.getknit.spool.conformance
 
 import app.getknit.spool.protocol.Commons
+import app.getknit.spool.protocol.Tickets
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.websocket.WebSockets
@@ -15,7 +16,8 @@ import kotlin.system.exitProcess
 private const val USAGE =
     "usage: knit-spool-conformance <ws(s)://host[:port]/spool/v1> " +
         "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive] " +
-        "[--commons-invite knit-commons:v1:...]"
+        "[--commons-invite knit-commons:v1:...] [--turn-secret-file PATH] " +
+        "[--ticket-key-file PATH --ticket-audience HOST]"
 
 /**
  * The conformance CLI: validates ANY spool implementation over a live WebSocket against
@@ -50,6 +52,9 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
     var powLimit = 24
     var destructive = false
     var commonsInvite: String? = null
+    var turnSecretFile: String? = null
+    var ticketKeyFile: String? = null
+    var ticketAudience: String? = null
     var i = 0
     while (i < args.size) {
         when (val arg = args[i]) {
@@ -75,6 +80,21 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
 
             "--commons-invite" -> {
                 commonsInvite = args.getOrNull(++i) ?: usageExit()
+            }
+
+            // A file only, never a flag value: this is an HMAC key that mints relay credentials,
+            // and argv is readable by every local user for the life of the run (see readTokenFile).
+            "--turn-secret-file" -> {
+                turnSecretFile = args.getOrNull(++i) ?: usageExit()
+            }
+
+            // A file only, for the same reason: this key mints tickets the spool will honour.
+            "--ticket-key-file" -> {
+                ticketKeyFile = args.getOrNull(++i) ?: usageExit()
+            }
+
+            "--ticket-audience" -> {
+                ticketAudience = args.getOrNull(++i) ?: usageExit()
             }
 
             else -> {
@@ -112,7 +132,20 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
                     exitProcess(2)
                 }
             },
-    )
+        turnSecret = turnSecretFile?.let { readSecretFile("--turn-secret-file", it) },
+        // Like a malformed invite, an unreadable key is an argument error: without it the ticket
+        // checks would skip and the run would look clean.
+        ticketSigningKey =
+            ticketKeyFile?.let {
+                Tickets.decodeSigningKey(readSecretFile("--ticket-key-file", it))
+                    ?: argExit("--ticket-key-file $it does not hold a knit-ticket-key:v1: signing key")
+            },
+        ticketAudience = ticketAudience,
+    ).also { options ->
+        if ((options.ticketSigningKey == null) != (options.ticketAudience == null)) {
+            argExit("--ticket-key-file and --ticket-audience go together")
+        }
+    }
 }
 
 /**
@@ -121,7 +154,13 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
  * a file can be mode 0600. Surrounding whitespace is stripped, so a plain `... > token` with its
  * trailing newline works.
  */
-private fun readTokenFile(path: String): String {
+private fun readTokenFile(path: String): String = readSecretFile("--token-file", path)
+
+/** [readTokenFile]'s reading, for any flag that names a file holding a secret. */
+private fun readSecretFile(
+    flag: String,
+    path: String,
+): String {
     val text =
         try {
             Files.readString(Path.of(path))
@@ -134,9 +173,9 @@ private fun readTokenFile(path: String): String {
                     is AccessDeniedException -> "permission denied"
                     else -> e.message ?: e::class.simpleName ?: "unreadable"
                 }
-            argExit("cannot read --token-file $path: $reason")
+            argExit("cannot read $flag $path: $reason")
         }
-    return text.trim().ifEmpty { argExit("--token-file $path is empty") }
+    return text.trim().ifEmpty { argExit("$flag $path is empty") }
 }
 
 private fun usageExit(): Nothing {

@@ -3,6 +3,7 @@ package app.getknit.spool.server
 
 import app.getknit.spool.conformance.SuiteOptions
 import app.getknit.spool.conformance.runSuite
+import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.ScopeStore
@@ -35,22 +36,86 @@ class ConformanceSelfTest {
 
     /** Nothing is skipped: every optional feature is on and every limit is inside the probes' reach. */
     @Test
-    fun everyCheckPassesWithTokenPowCommonsAndModeration() {
+    fun everyCheckPassesWithTokenPowCommonsModerationTurnAndTickets() {
         val run =
             runSuiteAgainst(
-                testConfig(
-                    token = TOKEN,
-                    powBits = POW_BITS,
-                    requireModeration = true,
-                    commons = testCommons(attach = true),
-                    hardLimits = suiteLimits(),
-                    ratePushes = RATE_PUSHES,
-                ),
+                everyFeature(ticket = testTicketConfig(gates = EVERY_GATE), stunUrls = listOf("stun:spool.example:3478")),
                 token = TOKEN,
                 commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+                ticketSigningKey = TEST_TICKET_SIGNING_KEY,
+                ticketAudience = TEST_TICKET_AUD,
             )
         run.assertClean(expectedSkips = emptySet())
     }
+
+    /**
+     * A key with the default gates (ADR 2026-10.h6pt): uploads stay open, so the attachment checks pass
+     * with no files ticket and only the two files checks skip. What every keyed spool does on upgrade.
+     */
+    @Test
+    fun aKeyWithTheDefaultGatesLeavesUploadsOpen() {
+        val run =
+            runSuiteAgainst(
+                everyFeature(ticket = testTicketConfig(), stunUrls = listOf("stun:spool.example:3478")),
+                token = TOKEN,
+                commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+                ticketSigningKey = TEST_TICKET_SIGNING_KEY,
+                ticketAudience = TEST_TICKET_AUD,
+            )
+        run.assertClean(expectedSkips = setOf("files-ticket", "files-receive"))
+    }
+
+    /**
+     * Only `files` gated: TURN takes the subscription path and casts need no ticket, so the checks
+     * that probe those two gates skip and the rest pass under a key.
+     */
+    @Test
+    fun onlyFilesGatedLeavesTurnAndCastsOpen() {
+        val run =
+            runSuiteAgainst(
+                everyFeature(ticket = testTicketConfig(gates = Tickets.FL_FILES), stunUrls = listOf("stun:spool.example:3478")),
+                token = TOKEN,
+                commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+                ticketSigningKey = TEST_TICKET_SIGNING_KEY,
+                ticketAudience = TEST_TICKET_AUD,
+            )
+        run.assertClean(expectedSkips = setOf("ent-required", "cast-ticket"))
+    }
+
+    /**
+     * TURN without tickets: the run above takes the ticket path through every TURN check, so this is
+     * what keeps `not_subscribed` and the fresh random suffix (S-7.6-4, S-7.6-7) under the suite.
+     */
+    @Test
+    fun turnWithoutTicketsKeepsTheSubscriptionGate() {
+        val run =
+            runSuiteAgainst(
+                everyFeature(ticket = null, stunUrls = emptyList()),
+                token = TOKEN,
+                commonsSecret = TEST_COMMONS_SECRET,
+                turnSecret = TEST_TURN_SECRET,
+            )
+        run.assertClean(expectedSkips = TICKET_AND_STUN_CHECKS)
+    }
+
+    private fun everyFeature(
+        ticket: SpoolServer.TicketConfig?,
+        stunUrls: List<String>,
+    ) = testConfig(
+        token = TOKEN,
+        powBits = POW_BITS,
+        requireModeration = true,
+        commons = testCommons(attach = true),
+        hardLimits = suiteLimits(),
+        ratePushes = RATE_PUSHES,
+        turn = testTurn(),
+        stunUrls = stunUrls,
+        ticket = ticket,
+        rateCasts = 4,
+    )
 
     /** The CI job's shape — no token, no commons, no moderation — against the persistent store. */
     @Test
@@ -131,6 +196,9 @@ class ConformanceSelfTest {
         store: ScopeStore = InMemoryScopeStore(config.hardLimits),
         token: String? = null,
         commonsSecret: ByteArray? = null,
+        turnSecret: String? = null,
+        ticketSigningKey: ByteArray? = null,
+        ticketAudience: String? = null,
         destructive: Boolean = true,
     ): Run {
         val tap = ByteArrayOutputStream()
@@ -149,6 +217,9 @@ class ConformanceSelfTest {
                     powLimit = 24,
                     destructive = destructive,
                     commonsSecret = commonsSecret,
+                    turnSecret = turnSecret,
+                    ticketSigningKey = ticketSigningKey,
+                    ticketAudience = ticketAudience,
                 )
             exitCode = runSuite(http, options, out = PrintStream(tap, true), err = PrintStream(summary, true))
         }
@@ -190,7 +261,26 @@ class ConformanceSelfTest {
                 maxAttachBytes = MAX_ATTACH_BYTES,
             )
 
-        /** What skips without a token, a commons or a moderation flag — the CI job's exact SKIP set. */
+        /** What skips on a spool with no ticket key and no STUN list (VOICE_CALLS.md §2.6). */
+        val TICKET_AND_STUN_CHECKS =
+            setOf(
+                "ent-advertised",
+                "ent-foreign-key",
+                "ent-required",
+                "ent-accepts",
+                "ent-expired",
+                "ent-audience",
+                "stun-shape",
+                "ent-gates",
+                "files-ticket",
+                "files-receive",
+                "cast-ticket",
+            )
+
+        /** Every capability `SPOOL_TICKET_GATES` can gate today. */
+        val EVERY_GATE = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST
+
+        /** What skips without a token, a commons, a moderation flag, TURN or casts — the CI job's exact SKIP set. */
         val BARE_SKIPS =
             setOf(
                 "auth-required",
@@ -198,6 +288,14 @@ class ConformanceSelfTest {
                 "commons-bounds-pinned",
                 "commons-fanout",
                 "moderation-advertisement",
-            )
+                "turn-requires-sub",
+                "turn-cred-shape",
+                "turn-hmac",
+                // Casts are off by default.
+                "cast-advertised",
+                "cast-fanout",
+                "cast-silent-refusal",
+                "cast-rate",
+            ) + TICKET_AND_STUN_CHECKS
     }
 }

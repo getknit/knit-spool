@@ -8,10 +8,13 @@ import app.getknit.spool.protocol.Ahas
 import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
+import app.getknit.spool.protocol.Cast
+import app.getknit.spool.protocol.CastInfo
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -30,17 +33,33 @@ import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.protocol.TurnCred
+import app.getknit.spool.protocol.TurnReq
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.TimeoutException
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
 
 /** Grace window in which a record that must NOT arrive is awaited (uploader echo, duplicate event). */
 private const val EVENT_GRACE_MS = 500L
+
+/** A cast's payload in the cast checks: about a sealed walkie chunk. */
+private const val CAST_PROBE_BYTES = 797
+
+/** The burst a cast budget allows, as a multiple of its advertised rate (VOICE_CALLS.md §2.7). */
+private const val CAST_BURST_FACTOR = 4
+
+/** How many casts past the burst `cast-rate` sends. */
+private const val CAST_RATE_EXCESS = 10
 
 /** Generous CBOR envelope allowance for a push record beyond its `data` payload. */
 private const val PUSH_RECORD_OVERHEAD = 128L
@@ -56,6 +75,24 @@ private const val MAX_PULL_PROBE = 65_536
 
 /** A `maxScopes` above this is not probed: the over-cap `sub` would not fit `maxRecord` anyway. */
 private const val MAX_SCOPES_PROBE = 65_536
+
+/** A TURN user: `<exp>:<16 base32 chars>` (proposed §7.6, S-7.6-6). */
+private val TURN_USER = Regex("^\\d+:[a-z2-7]{16}$")
+
+private const val MS_PER_S = 1_000L
+
+/** The longest credential lifetime this suite accepts as sane: a week. */
+private const val MAX_TURN_TTL_S = 604_800L
+
+/** A `stun:`/`stuns:` URI, and no `@`: a STUN list carries no credential (S-7.6-13). */
+private val STUN_URI = Regex("^stuns?:[^\\s,@]+$")
+
+/** Tickets this suite mints start a minute ago and last a day: well inside any honest skew and window. */
+private const val TICKET_BACKDATE_S = 60L
+private const val TICKET_LIFETIME_S = 86_400L
+
+/** An audience no spool is named: `.invalid` is reserved for exactly this (RFC 2606). */
+private const val FOREIGN_AUDIENCE = "conformance.invalid"
 
 /** Upper bound on pushes blasted by the rate-limit probe. */
 private const val RATE_BLAST_MAX = 1_000
@@ -90,6 +127,12 @@ class Ctx(
     val hasToken: Boolean,
     /** The commons invite secret from `--commons-invite`, or null — the commons checks skip then. */
     val commonsSecret: ByteArray? = null,
+    /** The TURN secret from `--turn-secret-file`, or null — `turn-hmac` skips then. */
+    val turnSecret: String? = null,
+    /** The ticket signing key from `--ticket-key-file`, or null — the checks that need an accepted ticket skip. */
+    val ticketSigningKey: ByteArray? = null,
+    /** The audience from `--ticket-audience`; set exactly when [ticketSigningKey] is. */
+    val ticketAudience: String? = null,
 ) {
     /** Mined stamps by scope hex — a stamp is reusable across connections (the spool caches too). */
     private val stamps = HashMap<String, PowStamp>()
@@ -104,6 +147,36 @@ class Ctx(
     fun randomBlob(size: Int = 48): Pair<ByteArray, ByteArray> = blob(Random.nextBytes(size))
 
     fun limits(): Limits = serverHello.limits ?: throw CheckFailure("expected limits in the server hello, got none")
+
+    /**
+     * An `ent` the spool should accept: this run's key and audience, a window around now, a fresh
+     * pseudonym. Each claim can be bent for the checks that want a refusal. [SkipCheck] without a key.
+     */
+    fun ent(
+        q: Long,
+        signingKey: ByteArray = ticketSigningKey ?: throw SkipCheck("no --ticket-key-file; no ticket this spool accepts can be made"),
+        aud: String = ticketAudience ?: FOREIGN_AUDIENCE,
+        nbfS: Long = System.currentTimeMillis() / MS_PER_S - TICKET_BACKDATE_S,
+        expS: Long = nbfS + TICKET_LIFETIME_S,
+        fl: Long = Tickets.FL_TURN,
+        ab: Long? = null,
+    ): Ent {
+        val ticket =
+            Ticket.forKey(
+                signingKey,
+                aud = aud,
+                nbf = nbfS,
+                exp = expS,
+                ps = Random.nextBytes(Tickets.PS_BYTES),
+                fl = fl,
+                ab = ab,
+            )
+        val (tk, sig) = Tickets.issue(signingKey, ticket)
+        return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
+    }
+
+    /** Whether this spool requires a ticket for [flag] (S-7.6-13): `entGates`, or 9 beside a bare `ent`. */
+    fun gated(flag: Long): Boolean = serverHello.ticketGates and flag != 0L
 
     /**
      * A stamp for [scope] at the advertised difficulty: null when PoW is off, [SkipCheck] when the
@@ -179,6 +252,29 @@ fun allChecks(): List<Check> =
         commonsBoundsPinned(),
         commonsFanout(),
         moderationAdvertisement(),
+        // Experimental (proposed §7.6). Before rate-limit, which leaves this address's buckets dry.
+        turnRequiresSub(),
+        turnCredShape(),
+        turnHmac(),
+        // Experimental (VOICE_CALLS.md §2.6): entitlement tickets and the STUN list.
+        entAdvertised(),
+        entForeignKey(),
+        entRequired(),
+        entAccepts(),
+        entExpired(),
+        entAudience(),
+        stunShape(),
+        // Experimental (VOICE_CALLS.md §2.6, S-7.6-22/23): which capabilities a ticket gates, and files.
+        entGates(),
+        filesTicket(),
+        filesReceive(),
+        // Experimental (VOICE_CALLS.md §2.7): casts. cast-rate last of them, since it drains this
+        // address's cast budget.
+        castAdvertised(),
+        castFanout(),
+        castSilentRefusal(),
+        castTicket(),
+        castRate(),
         rateLimit(),
         quotaScopes(),
     )
@@ -218,6 +314,436 @@ private fun moderationAdvertisement(): Check =
     Check(name = "moderation-advertisement", must = false) { ctx ->
         val moderation = ctx.serverHello.moderation ?: throw SkipCheck("spool advertises no moderation requirement (§7.5)")
         ensure(moderation) { "hello carries moderation=false; S-7.5-1 omits the field when the spool does not require it" }
+    }
+
+/** Skips every TURN check on a spool whose `hello` carried no `turn` (C-7.6-3, experimental). */
+private fun Ctx.requireTurn() {
+    if (serverHello.turn == null) throw SkipCheck("spool advertises no turn (proposed §7.6)")
+    ensure(serverHello.turn == true) { "hello carries turn=false; presence is the signal and false is never sent" }
+}
+
+/**
+ * Earns one credential the way this spool asks (a ticket where `hello` gates `turn`, a fresh
+ * subscription otherwise), then asks for it — the shape every TURN check needs. Call once per
+ * connection: a second call presents or subscribes again.
+ */
+private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
+    if (ctx.gated(Tickets.FL_TURN)) {
+        val ent = ctx.ent(nextQ())
+        send(ent)
+        ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for the ticket" }
+    } else {
+        ctx.subscribeFresh(this, ctx.randomScope())
+    }
+    val q = nextQ()
+    send(TurnReq(t = RecordType.TURNREQ, q = q))
+    val cred = expect<TurnCred>(RecordType.TURNCRED)
+    ensure(cred.q == q) { "expected turncred q=$q echoed, got ${cred.q}" }
+    return cred
+}
+
+/**
+ * Proposed §7.6 (S-7.6-4): a connection holding no subscription is refused `not_subscribed`, echoing
+ * `q` and naming no scope — the request has none, and the refusal must not invent one. Where `hello`
+ * gates `turn` (S-7.6-13), the ticket gate replaces this one (S-7.6-16) and the refusal is `ticket`.
+ */
+private fun turnRequiresSub(): Check =
+    Check(name = "turn-requires-sub") { ctx ->
+        ctx.requireTurn()
+        ctx.client.connect {
+            hello()
+            val q = nextQ()
+            send(TurnReq(t = RecordType.TURNREQ, q = q))
+            val err = expectErr(if (ctx.gated(Tickets.FL_TURN)) ErrCode.TICKET else ErrCode.NOT_SUBSCRIBED)
+            ensure(err.q == q) { "expected err q=$q echoed, got ${err.q}" }
+            ensure(err.scope == null) { "a turnreq names no scope, but the refusal carried one" }
+        }
+    }
+
+/**
+ * Proposed §7.6 (S-7.6-6…8): a credential in the coturn REST shape — `turn:`/`turns:` URIs, a user
+ * of `<exp>:<16 base32>`, an expiry in the future and inside a week — and a fresh suffix per issue.
+ */
+private fun turnCredShape(): Check =
+    Check(name = "turn-cred-shape") { ctx ->
+        ctx.requireTurn()
+        ctx.client.connect {
+            hello()
+            val first = fetchTurnCred(ctx)
+            ensure(first.urls.isNotEmpty()) { "turncred carried no urls" }
+            first.urls.forEach { url ->
+                ensure(url.startsWith("turn:") || url.startsWith("turns:")) { "expected a turn:/turns: URI, got \"$url\"" }
+            }
+            ensure(TURN_USER.matches(first.user)) { "expected user <exp>:<16 base32 chars>, got \"${first.user}\"" }
+            ensure(first.user.substringBefore(':') == first.exp.toString()) {
+                "the user's prefix ${first.user.substringBefore(':')} is not exp ${first.exp}"
+            }
+            val nowS = System.currentTimeMillis() / MS_PER_S
+            ensure(first.exp in (nowS + 1)..(nowS + MAX_TURN_TTL_S)) { "exp ${first.exp} is not within a week of now ($nowS)" }
+            val q = nextQ()
+            send(TurnReq(t = RecordType.TURNREQ, q = q))
+            val second = expect<TurnCred>(RecordType.TURNCRED)
+            val suffix = first.user.substringAfter(':')
+            if (ctx.gated(Tickets.FL_TURN)) {
+                // S-7.6-17: one ticket, one pseudonym, one suffix — what lets the TURN server's
+                // per-user quota count the holder rather than the credential.
+                ensure(second.user.substringAfter(':') == suffix) { "two issues under one ticket must share a suffix (S-7.6-17)" }
+            } else {
+                ensure(second.user != first.user) { "two issues shared a user; the suffix must be fresh per issue (S-7.6-7)" }
+            }
+        }
+    }
+
+/** Proposed §7.6 (S-7.6-6): `pass = base64(HMAC-SHA1(secret, user))`, checkable only with the operator's secret. */
+private fun turnHmac(): Check =
+    Check(name = "turn-hmac") { ctx ->
+        ctx.requireTurn()
+        val secret = ctx.turnSecret ?: throw SkipCheck("no --turn-secret-file; the credential cannot be verified")
+        ctx.client.connect {
+            hello()
+            val cred = fetchTurnCred(ctx)
+            val mac = Mac.getInstance("HmacSHA1")
+            mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA1"))
+            val expected = Base64.getEncoder().encodeToString(mac.doFinal(cred.user.toByteArray(Charsets.UTF_8)))
+            ensure(cred.pass == expected) { "pass does not verify as base64(HMAC-SHA1(secret, user)) under the given secret" }
+        }
+    }
+
+/** Skips every ticket check on a spool whose `hello` carried no `ent` (S-7.6-13, experimental). */
+private fun Ctx.requireEnt() {
+    if (serverHello.ent == null) throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+    ensure(serverHello.ent == true) { "hello carries ent=false; presence is the signal and false is never sent" }
+}
+
+/** S-7.6-13: `ent` is present and true, never `false`. */
+private fun entAdvertised(): Check = Check(name = "ent-advertised") { ctx -> ctx.requireEnt() }
+
+/**
+ * S-7.6-14: a ticket signed by a key the spool does not hold is refused `ticket`, echoing `q`. Needs
+ * no secret — any spool that advertises `ent` must refuse a stranger's ticket.
+ */
+private fun entForeignKey(): Check =
+    Check(name = "ent-foreign-key") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val ent = ctx.ent(nextQ(), signingKey = Tickets.generateSigningKey())
+            send(ent)
+            ensure(expectErr(ErrCode.TICKET).q == ent.q) { "expected the ticket refusal to echo q=${ent.q}" }
+        }
+    }
+
+/** S-7.6-16: where `turn` is gated, a subscription does not substitute for a ticket. */
+private fun entRequired(): Check =
+    Check(name = "ent-required") { ctx ->
+        ctx.requireEnt()
+        ctx.requireTurn()
+        if (!ctx.gated(Tickets.FL_TURN)) throw SkipCheck("entGates leaves turn open")
+        ctx.client.connect {
+            hello()
+            ctx.subscribeFresh(this, ctx.randomScope())
+            val q = nextQ()
+            send(TurnReq(t = RecordType.TURNREQ, q = q))
+            ensure(expectErr(ErrCode.TICKET).q == q) { "expected the ticket refusal to echo q=$q" }
+        }
+    }
+
+/** S-7.6-14/15: a ticket under the operator's key, naming this spool, inside its window, is accepted. */
+private fun entAccepts(): Check =
+    Check(name = "ent-accepts") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val ent = ctx.ent(nextQ())
+            send(ent)
+            ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q}" }
+        }
+    }
+
+/** S-7.6-14: a ticket whose window ended well past the skew allowance is refused. */
+private fun entExpired(): Check =
+    Check(name = "ent-expired") { ctx ->
+        ctx.requireEnt()
+        ctx.client.connect {
+            hello()
+            val nbf = System.currentTimeMillis() / MS_PER_S - 2 * TICKET_LIFETIME_S
+            send(ctx.ent(nextQ(), nbfS = nbf, expS = nbf + TICKET_LIFETIME_S))
+            expectErr(ErrCode.TICKET)
+        }
+    }
+
+/** S-7.6-14: a good ticket for some other spool is refused here. */
+private fun entAudience(): Check =
+    Check(name = "ent-audience") { ctx ->
+        ctx.requireEnt()
+        // Without the key there is no valid signature to put on the wrong audience.
+        if (ctx.ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no ticket this spool accepts can be made")
+        ctx.client.connect {
+            hello()
+            send(ctx.ent(nextQ(), aud = FOREIGN_AUDIENCE))
+            expectErr(ErrCode.TICKET)
+        }
+    }
+
+/** S-7.6-13: a `stun` list is non-empty, and every entry a `stun:`/`stuns:` URI with nothing to sign in. */
+private fun stunShape(): Check =
+    Check(name = "stun-shape") { ctx ->
+        val stun = ctx.serverHello.stun ?: throw SkipCheck("spool advertises no stun (VOICE_CALLS.md §2.6)")
+        ensure(stun.isNotEmpty()) { "hello carries an empty stun list; omitted is the off state" }
+        stun.forEach { url ->
+            ensure(STUN_URI.matches(url)) { "expected a stun:/stuns: URI with no credential, got \"$url\"" }
+        }
+    }
+
+/** S-7.6-13: `entGates` rides beside `ent`, always, and never without it. */
+private fun entGates(): Check =
+    Check(name = "ent-gates") { ctx ->
+        val gates = ctx.serverHello.entGates
+        if (ctx.serverHello.ent == null) {
+            ensure(gates == null) { "hello carries entGates=$gates without ent" }
+            throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+        }
+        ctx.requireEnt()
+        val present = gates ?: throw CheckFailure("hello carries ent without entGates; S-7.6-13 sends them together")
+        ensure(present >= 0) { "entGates=$present is negative" }
+    }
+
+/** Skips a files check unless this spool gates uploads and this run can mint a files ticket for it. */
+private fun Ctx.requireFilesGate() {
+    requireAttachments()
+    requireEnt()
+    if (!gated(Tickets.FL_FILES)) throw SkipCheck("entGates leaves files open")
+    if (ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no files ticket can be made")
+}
+
+/**
+ * S-7.6-22: where `files` is gated, an unticketed `aput` is refused `ticket`, echoing its `q` and
+ * scope, even while another subscriber of the scope holds a files ticket; the uploader's own admits it.
+ */
+private fun filesTicket(): Check =
+    Check(name = "files-ticket") { ctx ->
+        ctx.requireFilesGate()
+        val scope = ctx.randomScope()
+        val aid = ctx.randomScope()
+        val (cid, data) = ctx.randomBlob(64)
+        val aput = { q: Long -> Aput(t = RecordType.APUT, q = q, scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data) }
+        ctx.client.connect {
+            val free = this
+            free.hello()
+            ctx.subscribeFresh(free, scope)
+            ctx.client.connect {
+                val paid = this
+                paid.hello()
+                ctx.unlockFiles(paid)
+                ctx.subscribeFresh(paid, scope)
+                val q = free.nextQ()
+                free.send(aput(q))
+                val err = free.expectErr(ErrCode.TICKET)
+                ensure(err.q == q) { "expected the ticket refusal to echo q=$q, got ${err.q}" }
+                ensure(err.scope?.contentEquals(scope) == true) { "expected the ticket refusal to carry the aput's scope" }
+            }
+            ctx.unlockFiles(free)
+            val q = free.nextQ()
+            free.send(aput(q))
+            ensure(free.expect<Ok>(RecordType.OK).q == q) { "expected ok q=$q once the uploader holds a files ticket" }
+        }
+    }
+
+/** S-7.6-23: a connection with no ticket fetches a chunk a files-ticket holder stored. */
+private fun filesReceive(): Check =
+    Check(name = "files-receive") { ctx ->
+        ctx.requireFilesGate()
+        val scope = ctx.randomScope()
+        val aid = ctx.randomScope()
+        val (cid, data) = ctx.randomBlob(64)
+        ctx.client.connect {
+            hello()
+            ctx.unlockFiles(this)
+            ctx.subscribeFresh(this, scope)
+            val putQ = nextQ()
+            send(Aput(t = RecordType.APUT, q = putQ, scope = scope, aid = aid, idx = 0, total = 1, cid = cid, data = data))
+            ensure(expect<Ok>(RecordType.OK).q == putQ) { "expected aput ok q=$putQ" }
+            ctx.client.connect {
+                hello()
+                ctx.subscribeFresh(this, scope)
+                val getQ = nextQ()
+                send(Aget(t = RecordType.AGET, q = getQ, scope = scope, aid = aid, from = 0, n = 1))
+                ensure(expect<Achunk>(RecordType.ACHUNK).data.contentEquals(data)) { "achunk data differs from what was put" }
+                ensure(expect<Ok>(RecordType.OK).q == getQ) { "expected aget ok q=$getQ for a member with no ticket" }
+            }
+        }
+    }
+
+/** Skips every cast check on a spool whose `hello` carried no `cast` (experimental, VOICE_CALLS.md §2.7). */
+private fun Ctx.requireCast(): CastInfo = serverHello.cast ?: throw SkipCheck("spool advertises no cast (VOICE_CALLS.md §2.7)")
+
+/**
+ * Lets [session] cast where the spool sells casts: on a spool whose `hello` gates `cast`, a cast
+ * ticket under this run's key. Without the key no cast is admissible there, so the check skips.
+ */
+private suspend fun Ctx.unlockCasts(session: Session) {
+    if (!gated(Tickets.FL_CAST)) return
+    val ent = ent(session.nextQ(), fl = Tickets.FL_CAST)
+    session.send(ent)
+    ensure(session.expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a cast ticket" }
+}
+
+private fun Ctx.castOf(
+    scope: ByteArray,
+    size: Int = CAST_PROBE_BYTES,
+): Cast = Cast(t = RecordType.CAST, scope = scope, data = Random.nextBytes(size))
+
+/**
+ * Proves nothing was sent to [this] ahead of a `list` for [scope]: the spool handles a connection's
+ * records in order, so anything a cast drew would arrive before the listing. Digests are skipped.
+ */
+private suspend fun Session.nextIsListing(scope: ByteArray): ScopeList {
+    val q = nextQ()
+    send(ScopeList(t = RecordType.LIST, q = q, scope = scope))
+    while (true) {
+        val bytes = receiveBytes()
+        when (val t = RecordCodec.peekType(bytes)) {
+            RecordType.DIGEST -> {
+                Unit
+            }
+
+            RecordType.LIST -> {
+                val list = RecordCodec.decode<ScopeList>(bytes) ?: throw CheckFailure("expected a listing that decodes")
+                ensure(list.q == q) { "expected the listing for q=$q, got q=${list.q}" }
+                return list
+            }
+
+            else -> {
+                throw CheckFailure("expected nothing before the listing, got '$t'")
+            }
+        }
+    }
+}
+
+/** The next cast at [this], skipping digests, with what it should carry. */
+private suspend fun Session.expectCast(sent: Cast) {
+    val got = expect<Cast>(RecordType.CAST)
+    ensure(got.scope.contentEquals(sent.scope)) { "expected the cast for scope ${hex(sent.scope)}, got ${hex(got.scope)}" }
+    ensure(got.data.contentEquals(sent.data)) { "expected the cast's data unchanged" }
+}
+
+/** A `cast` advertisement is a positive size inside a record and a positive rate. */
+private fun castAdvertised(): Check =
+    Check(name = "cast-advertised") { ctx ->
+        val cast = ctx.requireCast()
+        ensure(cast.maxBytes in 1..ctx.limits().maxRecord) { "cast maxBytes ${cast.maxBytes} outside 1..maxRecord" }
+        ensure(cast.rate >= 1) { "cast rate ${cast.rate}; omitted is the off state, never 0" }
+    }
+
+/**
+ * A cast reaches the scope's other subscriber unchanged and never comes back to its caster, not even
+ * as an answer, and leaves nothing behind: the listing stays empty.
+ */
+private fun castFanout(): Check =
+    Check(name = "cast-fanout") { ctx ->
+        ctx.requireCast()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.unlockCasts(a)
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val sent = ctx.castOf(scope)
+                a.send(sent)
+                val listing = a.nextIsListing(scope)
+                b.expectCast(sent)
+                ensure(listing.blobIds.isNullOrEmpty()) { "expected a cast never to be listed, got ${listing.blobIds?.size} ids" }
+                ensure(listing.tombstones.isNullOrEmpty()) { "expected a cast never to leave a tombstone" }
+            }
+        }
+    }
+
+/** Casts the spool will not carry are dropped without a word, and the connection stays usable. */
+private fun castSilentRefusal(): Check =
+    Check(name = "cast-silent-refusal") { ctx ->
+        val cast = ctx.requireCast()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            hello()
+            ctx.unlockCasts(this)
+            ctx.subscribeFresh(this, scope)
+            send(ctx.castOf(ctx.randomScope())) // a scope this connection never subscribed
+            send(ctx.castOf(scope, size = cast.maxBytes + 1))
+            nextIsListing(scope)
+        }
+    }
+
+/**
+ * On a spool that sells casts, a scope nobody holds a cast ticket for carries none; once one
+ * subscriber presents one, an unticketed subscriber's cast is heard.
+ */
+private fun castTicket(): Check =
+    Check(name = "cast-ticket") { ctx ->
+        ctx.requireCast()
+        ctx.requireEnt()
+        if (!ctx.gated(Tickets.FL_CAST)) throw SkipCheck("entGates leaves cast open")
+        if (ctx.ticketSigningKey == null) throw SkipCheck("no --ticket-key-file; no cast ticket can be made")
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                a.send(ctx.castOf(scope))
+                a.nextIsListing(scope)
+                b.nextIsListing(scope)
+                ctx.unlockCasts(b)
+                val heard = ctx.castOf(scope)
+                a.send(heard)
+                b.expectCast(heard)
+            }
+        }
+    }
+
+/**
+ * Advisory: a burst well past `rate × 4` fans out no more than the burst, give or take what refills
+ * while it is sent. A spool may hold casts to a tighter budget than it advertises; never a looser one.
+ */
+private fun castRate(): Check =
+    Check(name = "cast-rate", must = false) { ctx ->
+        val cast = ctx.requireCast()
+        val burst = CAST_BURST_FACTOR * cast.rate
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.unlockCasts(a)
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val started = System.currentTimeMillis()
+                repeat(burst + CAST_RATE_EXCESS) { a.send(ctx.castOf(scope)) }
+                a.nextIsListing(scope)
+                val elapsedS = (System.currentTimeMillis() - started + MS_PER_S - 1) / MS_PER_S
+                val allowed = burst + cast.rate * elapsedS
+                var heard = 0
+                val q = b.nextQ()
+                b.send(ScopeList(t = RecordType.LIST, q = q, scope = scope))
+                while (true) {
+                    val bytes = b.receiveBytes()
+                    when (RecordCodec.peekType(bytes)) {
+                        RecordType.CAST -> heard++
+                        RecordType.LIST -> break
+                        else -> Unit
+                    }
+                }
+                if (heard > allowed) throw Advisory("$heard casts fanned out of a burst the advertised rate allows $allowed of")
+            }
+        }
     }
 
 /**
@@ -319,12 +845,24 @@ private fun Ctx.requireAttachments(): app.getknit.spool.protocol.Limits {
     return limits
 }
 
+/**
+ * Lets [session] upload where the spool gates files (S-7.6-22): a files ticket under this run's key.
+ * Without the key no upload is admissible there, so the check skips rather than fails.
+ */
+private suspend fun Ctx.unlockFiles(session: Session) {
+    if (!gated(Tickets.FL_FILES)) return
+    val ent = ent(session.nextQ(), fl = Tickets.FL_FILES)
+    session.send(ent)
+    ensure(session.expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a files ticket" }
+}
+
 /** §4.5/§7.3: an attachment chunk stores, shows up in the presence bitmap, and reads back byte-exact. */
 private fun attachmentRoundTrip(): Check =
     Check(name = "attachment-round-trip") { ctx ->
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -363,6 +901,7 @@ private fun attachmentBadId(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val (_, data) = ctx.randomBlob(32)
@@ -388,6 +927,7 @@ private fun attachmentFirstWriteWins(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -431,6 +971,7 @@ private fun attachmentGetTruncated(): Check =
         }
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()
@@ -463,6 +1004,7 @@ private fun aputTotalOverQuota(): Check =
         ctx.requireAttachments()
         ctx.client.connect {
             hello()
+            ctx.unlockFiles(this)
             val scope = ctx.randomScope()
             ctx.subscribeFresh(this, scope)
             val aid = ctx.randomScope()

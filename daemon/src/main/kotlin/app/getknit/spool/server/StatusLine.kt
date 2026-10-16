@@ -30,6 +30,8 @@ class StatusLine(
     // saw would be a quietly wrong number in the one place an operator looks for the right one.
     private val maxBytes: () -> Long,
     private val maxConns: () -> Int = { 0 },
+    // A supplier for the same reason: SIGHUP can switch casts on or off.
+    private val castsOn: () -> Boolean = { false },
     private val startedAtMs: Long,
     private val heap: () -> HeapUse = ::runtimeHeap,
 ) {
@@ -75,6 +77,8 @@ class StatusLine(
             append(" records=+").append(delta.records)
             append(" pushes=+").append(delta.pushes)
             append(" events=+").append(delta.events)
+            // Casts received, shown while casts are on, or while a switch-off is still draining in.
+            if (castsOn() || delta.casts > 0) append(" casts=+").append(delta.casts)
             append(" egress=+").append(bytes(delta.egressBytes))
             append(" limited=+").append(delta.rateLimited)
             append(" refused=+").append(delta.connsRefused)
@@ -105,6 +109,7 @@ class StatusLine(
             records = metrics.recordsTotal.sum(),
             pushes = metrics.pushesTotal.sum(),
             events = metrics.eventsTotal.sum(),
+            casts = metrics.castsTotal.sum(),
             egressBytes = metrics.egressBytesTotal.sum(),
             rateLimited = metrics.rateLimitedTotal.sum(),
             connsRefused = metrics.connsRefusedTotal.sum(),
@@ -117,6 +122,7 @@ class StatusLine(
         val records: Long,
         val pushes: Long,
         val events: Long,
+        val casts: Long,
         val egressBytes: Long,
         val rateLimited: Long,
         val connsRefused: Long,
@@ -129,6 +135,7 @@ class StatusLine(
                 records = records - older.records,
                 pushes = pushes - older.pushes,
                 events = events - older.events,
+                casts = casts - older.casts,
                 egressBytes = egressBytes - older.egressBytes,
                 rateLimited = rateLimited - older.rateLimited,
                 connsRefused = connsRefused - older.connsRefused,

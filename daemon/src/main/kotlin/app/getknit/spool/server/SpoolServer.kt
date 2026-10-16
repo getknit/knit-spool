@@ -8,9 +8,12 @@ import app.getknit.spool.protocol.Ahas
 import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
+import app.getknit.spool.protocol.Cast
+import app.getknit.spool.protocol.CastInfo
 import app.getknit.spool.protocol.CloseCode
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -28,6 +31,10 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.protocol.TurnCred
+import app.getknit.spool.protocol.TurnReq
 import app.getknit.spool.shortHex
 import app.getknit.spool.store.AputResult
 import app.getknit.spool.store.DigestInfo
@@ -71,9 +78,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.security.PublicKey
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+
+/** `SPOOL_TURN_RATE` counts issues per ten minutes; a [TokenBucket] wants them per second. */
+private const val TURN_RATE_WINDOW_S = 600.0
+
+/** A client may fetch a credential for a call and one more for an immediate redial. */
+private const val TURN_CONN_BURST = 2.0
+
+private const val MS_PER_S = 1000L
 
 /** Headroom over `maxRecord` for the WebSocket frame envelope before the transport kills it (1009). */
 private const val FRAME_SLACK = 1024L
@@ -89,6 +106,9 @@ private const val PING_TIMEOUT_MESSAGE = "Ping timeout"
 private const val SLOW_CONSUMER_LIMIT = 8
 
 private const val RATE_STRIKE_LIMIT = 8
+
+/** A cast bucket's burst as a multiple of its rate: the four used everywhere, and what `hello`'s `rate` implies. */
+private const val CAST_BURST_FACTOR = 4.0
 private const val RATE_STRIKE_WINDOW_MS = 10_000L
 
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
@@ -152,6 +172,8 @@ class SpoolServer(
     /** Test seams for the two client-keyed tables' bounds; see [CLIENT_TABLE_CAP] and [POW_CACHE_CAP]. */
     private val clientTableCap: Int = CLIENT_TABLE_CAP,
     private val powCacheCap: Int = POW_CACHE_CAP,
+    /** Test seam for [uploadBudgets]' bound; see [UPLOAD_BUDGETS_CAP]. */
+    uploadBudgetsCap: Int = UPLOAD_BUDGETS_CAP,
 ) {
     /**
      * The live configuration, swapped as a whole object by [reload].
@@ -223,6 +245,31 @@ class SpoolServer(
         val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
         val commons: CommonsConfig? = null,
+        /** TURN credential issuing (experimental, proposed spec §7.6), or null when off. */
+        val turn: TurnConfig? = null,
+        /**
+         * `stun:`/`stuns:` URIs advertised in `hello` to every client, with no credential
+         * (experimental, VOICE_CALLS.md §2.6). Independent of [turn]: a spool that issues nothing
+         * can still tell a free phone where to learn its own public address.
+         */
+        val stunUrls: List<String> = emptyList(),
+        /** Entitlement-ticket checking (experimental, VOICE_CALLS.md §2.6), or null when off. */
+        val ticket: TicketConfig? = null,
+        /**
+         * Casts each connection may send per second, with a burst of four times that (experimental,
+         * VOICE_CALLS.md §2.7). 0, the default, turns casts off: `hello` omits `cast` and every
+         * cast is dropped. Beside a ticket key, a cast needs a scope a cast ticket has unlocked.
+         */
+        val rateCasts: Int = 0,
+        /** The largest cast `data` this spool fans out, in bytes. At most [maxRecord]. */
+        val maxCast: Int = 2_048,
+        /**
+         * Casts per second the whole spool accepts, with a burst of four times that. The
+         * per-connection bucket bounds one client; this bounds all of them together, the way the
+         * commons budget bounds one room. Each accepted cast leaves once per other subscriber of
+         * its scope, so egress is this times the cast size times that fan-out.
+         */
+        val rateCastsTotal: Int = 200,
     ) {
         /**
          * Every resolved value on one line, `k=v`, for the boot log.
@@ -259,6 +306,10 @@ class SpoolServer(
                 "statusMs" to statusMs,
                 "trustProxy" to trustProxy,
                 "commons" to (commons?.let { shortHex(it.scopeId) } ?: "off"),
+                // Boot-only: the secret changes in lockstep with coturn's, and the per-connection
+                // and per-IP buckets are built from the rate when a client arrives.
+                "turn" to (turn?.let { "${it.urls.size}urls/${it.ttlS}s/${it.ratePer10Min}per10min" } ?: "off"),
+                "turnSecret" to secret(turn?.secret),
                 "source" to sourceUrl,
             )
 
@@ -279,6 +330,21 @@ class SpoolServer(
                 "ratePushes" to ratePushes,
                 "rateNewScopes" to rateNewScopesPerMin,
                 "moderation" to requireModeration,
+                // A count: describe() splits on spaces and URIs are not secrets, but a list in one
+                // k=v field is noise. The values are in the env, and in every client's hello.
+                "stun" to stunUrls.size,
+                // The key is public, but reported like a secret: presence is what an operator
+                // checks, and a 43-character value would drown the line. Read live by every `ent`;
+                // whether a connection may present one at all is fixed by the hello it was sent.
+                "ticketKey" to if (ticket == null) "unset" else "set",
+                "ticketAud" to (ticket?.audience ?: "unset"),
+                // Snapshotted per connection, like the key's presence: a reload reaches new ones only.
+                "ticketGates" to (ticket?.gateWords() ?: "unset"),
+                // Read live by every gated `aput`, so a lower cap bites on a pseudonym's next chunk.
+                "ticketAttachBytes" to (ticket?.attachBytes ?: "unset"),
+                "rateCasts" to rateCasts,
+                "maxCast" to maxCast,
+                "rateCastsTotal" to rateCastsTotal,
             )
 
         /**
@@ -295,6 +361,7 @@ class SpoolServer(
                 trustProxy = trustProxy,
                 sourceUrl = sourceUrl,
                 commons = commons,
+                turn = turn,
                 token = candidate.token,
                 tokenNext = candidate.tokenNext,
                 metricsToken = candidate.metricsToken,
@@ -309,9 +376,68 @@ class SpoolServer(
                 ratePushes = candidate.ratePushes,
                 rateNewScopesPerMin = candidate.rateNewScopesPerMin,
                 requireModeration = candidate.requireModeration,
+                stunUrls = candidate.stunUrls,
+                ticket = candidate.ticket,
+                rateCasts = candidate.rateCasts,
+                maxCast = candidate.maxCast,
+                rateCastsTotal = candidate.rateCastsTotal,
             )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
+    }
+
+    /**
+     * Where and how this spool issues TURN credentials ([TurnCredentials]). The spool never relays
+     * media: [secret] is shared with a separate TURN server, which verifies what this hands out.
+     *
+     * A plain class rather than a data class, so no `toString` can put [secret] in a log line.
+     */
+    class TurnConfig(
+        val secret: String,
+        /** RFC 7065 `turn:`/`turns:` URIs, sent to clients verbatim. */
+        val urls: List<String>,
+        /**
+         * How long a credential can start a relay. coturn checks expiry only at a session's first
+         * authentication, so a call outlives it; a short window is what keeps a leaked one cheap.
+         */
+        val ttlS: Long,
+        /** Issues per connection per ten minutes; the per-IP budget is four times this. */
+        val ratePer10Min: Int,
+    )
+
+    /**
+     * What entitlement tickets ([Tickets]) are checked against (experimental, VOICE_CALLS.md
+     * §2.6): the issuer's public key and the audience a ticket must name to be good here. Only the
+     * public half — whoever issues tickets holds the signing key, and nothing in the daemon can mint.
+     */
+    class TicketConfig(
+        val key: PublicKey,
+        /** [Tickets.kid] of [key], computed once rather than on every `ent`. */
+        val kid: ByteArray,
+        val audience: String,
+        /**
+         * The [Ticket.fl] bits a connection needs a ticket for, `SPOOL_TICKET_GATES` (ADR 2026-10.h6pt).
+         * Advertised as `entGates` and snapshotted per connection from the hello it was sent.
+         */
+        val gates: Long = Tickets.LEGACY_GATES,
+        /** `SPOOL_TICKET_ATTACH_BYTES`: the most a pseudonym may upload in a day, whatever its `ab` claims. */
+        val attachBytes: Long = DEFAULT_ATTACH_BYTES,
+    ) {
+        /** [gates] as the words `SPOOL_TICKET_GATES` takes, comma-joined so describe() keeps one field. */
+        fun gateWords(): String =
+            GATE_WORDS
+                .filterValues { gates and it != 0L }
+                .keys
+                .joinToString(",")
+                .ifEmpty { "none" }
+
+        companion object {
+            /** Two full scopes a day at the default `SPOOL_MAX_ATTACH_BYTES`, sized against the disk (ADR 2026-10.h6pt). */
+            const val DEFAULT_ATTACH_BYTES = 33_554_432L
+
+            /** What `SPOOL_TICKET_GATES` accepts. `create` is refused: creation stays open (ADR 2026-10.x9gq). */
+            val GATE_WORDS = linkedMapOf("turn" to Tickets.FL_TURN, "files" to Tickets.FL_FILES, "cast" to Tickets.FL_CAST)
+        }
     }
 
     /**
@@ -360,6 +486,7 @@ class SpoolServer(
             maxScopes = config.hardLimits.maxScopes,
             maxBytes = { config.maxBytes },
             maxConns = { config.maxConns },
+            castsOn = { config.rateCasts > 0 },
             startedAtMs = clock(),
         )
 
@@ -392,6 +519,9 @@ class SpoolServer(
      */
     private val ips = ConcurrentHashMap<String, IpState>()
 
+    /** Each ticket holder's uploads today where `files` is gated; pruned by the sweeper (ADR 2026-10.h6pt). */
+    private val uploadBudgets = UploadBudgets(uploadBudgetsCap)
+
     /**
      * The commons is a shared write surface, which the per-connection push bucket does not bound:
      * 200 members at 10/s each is 2,000 pushes/s into one scope, churning a 500-frame room four
@@ -400,6 +530,16 @@ class SpoolServer(
      */
     private val commonsPushBucket =
         config.commons?.let { TokenBucket(it.ratePushes.toDouble(), 4.0 * it.ratePushes, clock) }
+
+    /**
+     * The spool-wide cast budget ([Config.rateCastsTotal]). Rebuilt by [reload] when the rate moves,
+     * since unlike a connection's bucket it outlives every client that could pick up a new one.
+     */
+    @Volatile
+    private var castTotalBucket = castBucketFor(config.rateCastsTotal)
+
+    /** The source of TURN username suffixes; see [TurnCredentials] for why they are random. */
+    private val turnRandom = SecureRandom()
 
     /** Latches the "over watermark, nothing left to shed" warning so it logs on entry, not per sweep. */
     private var watermarkStuck = false
@@ -453,6 +593,24 @@ class SpoolServer(
     private inner class Conn(
         val session: DefaultWebSocketServerSession,
         val ipState: IpState,
+        /**
+         * Whether the hello this connection was sent carried `ent`. Fixed for its life: a SIGHUP
+         * that adds or removes the ticket key must not start refusing `turnreq` on a connection
+         * that was never told a ticket exists, nor waive the subscription gate on one that was.
+         */
+        val entAdvertised: Boolean,
+        /**
+         * The `cast` bounds this connection was told, or null when its hello carried none. Fixed for
+         * its life, like [entAdvertised]: a cast is never answered, so a client can only keep to the
+         * bounds it was given, and a reload that tightened them under it would drop it silently.
+         */
+        val castInfo: CastInfo?,
+        /**
+         * The [Ticket.fl] bits this connection needs a ticket for: the `entGates` its hello carried,
+         * fixed for its life like [entAdvertised], so a reload that gates `files` never starts refusing
+         * uploads on a connection that was told they were open.
+         */
+        val gates: Long,
     ) {
         val out: SendChannel<Frame> get() = session.outgoing
 
@@ -460,8 +618,17 @@ class SpoolServer(
         val subscriptions = HashMap<String, ScopeBounds>()
         val recordBucket = TokenBucket(config.rateRecords.toDouble(), 4.0 * config.rateRecords, clock)
         val pushBucket = TokenBucket(config.ratePushes.toDouble(), 4.0 * config.ratePushes, clock)
+        val turnBucket = config.turn?.let { TokenBucket(it.ratePer10Min / TURN_RATE_WINDOW_S, TURN_CONN_BURST, clock) }
+        val castBucket = castInfo?.let { castBucketFor(it.rate) }
         val strikes = StrikeWindow(RATE_STRIKE_LIMIT, RATE_STRIKE_WINDOW_MS)
         val eventMisses = AtomicInteger(0)
+
+        /**
+         * The last ticket this connection presented that was accepted; replaced by the next one.
+         * Volatile because other connections read it: a cast ticket here unlocks their casts too.
+         */
+        @Volatile
+        var ticket: Ticket? = null
     }
 
     fun start(wait: Boolean = true): EmbeddedServer<*, *> {
@@ -549,7 +716,16 @@ class SpoolServer(
                         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
                         val fileBytes = withStore { store.storeFileBytes() }
                         call.respondText(
-                            metrics.render(scopeCount, liveBytes, config.maxConns, commonsSubscribers(), fileBytes),
+                            metrics.render(
+                                scopeCount,
+                                liveBytes,
+                                config.maxConns,
+                                commonsSubscribers(),
+                                fileBytes,
+                                turn = config.turn != null,
+                                tickets = config.ticket != null,
+                                casts = config.rateCasts > 0,
+                            ),
                             ContentType.Text.Plain,
                         )
                     }
@@ -576,6 +752,12 @@ class SpoolServer(
      *  - `rateRecords` and `ratePushes` size a bucket built per connection, and
      *    `rateNewScopesPerMin` one built per client address, so both apply to *new* connections and
      *    addresses. An established client keeps the budget it was admitted with until it reconnects.
+     *  - `rateCasts` and `maxCast` are announced in `hello` and snapshotted per connection, except
+     *    that a rate of 0 stops every cast at once: it is the operator's kill switch.
+     *    `rateCastsTotal` rebuilds the spool-wide bucket here, so it bites immediately.
+     *  - The ticket gates are announced in `hello` as `entGates` and snapshotted per connection, so
+     *    a reload that gates `files` leaves connections opened before it uploading freely. The
+     *    attach budget is read on every gated `aput`, and the budgets already spent survive.
      *
      * Returns the boot-only fields [candidate] tried to change, which the caller logs. They are
      * ignored rather than fatal: refusing the whole reload over one would mean a stale `SPOOL_PORT`
@@ -589,6 +771,7 @@ class SpoolServer(
                 if (proposed != value) "$key=$proposed (still $value)" else null
             }
         config = current.withRuntimeOf(candidate)
+        if (candidate.rateCastsTotal != current.rateCastsTotal) castTotalBucket = castBucketFor(candidate.rateCastsTotal)
         return ignored
     }
 
@@ -713,7 +896,7 @@ class SpoolServer(
         val ipState =
             checkNotNull(
                 ips.compute(ip) { _, existing ->
-                    (existing ?: IpState(config.rateNewScopesPerMin, clock)).also {
+                    (existing ?: IpState(config.rateNewScopesPerMin, clock, config.turn?.ratePer10Min)).also {
                         connections = it.connections.incrementAndGet()
                         it.lastSeen = now
                     }
@@ -748,10 +931,11 @@ class SpoolServer(
         session: DefaultWebSocketServerSession,
         ipState: IpState,
     ) {
-        val conn = Conn(session, ipState)
+        val hello = serverHello()
+        val conn = Conn(session, ipState, entAdvertised = hello.ent == true, castInfo = hello.cast, gates = hello.ticketGates)
         activeSessions.add(session)
         try {
-            conn.out.send(binary(RecordCodec.encode(serverHello())))
+            conn.out.send(binary(RecordCodec.encode(hello)))
             var helloed = false
             for (frame in session.incoming) {
                 // Only data frames reach `incoming` — Ktor answers pings and consumes pongs and the
@@ -764,15 +948,7 @@ class SpoolServer(
                 val binary = frame is Frame.Binary
                 metrics.recordsTotal.increment()
                 if (!helloed) {
-                    val hello = if (binary) RecordCodec.decode<Hello>(bytes) else null
-                    if (hello == null || RecordCodec.peekType(bytes) != RecordType.HELLO) {
-                        session.close(CloseReason(CloseCode.MALFORMED.toShort(), "hello first"))
-                        return
-                    }
-                    if (hello.v !in 1..RECORD_VERSION) {
-                        session.close(CloseReason(CloseCode.VERSION.toShort(), "no version overlap"))
-                        return
-                    }
+                    if (!acceptClientHello(session, bytes, binary)) return
                     helloed = true
                     continue
                 }
@@ -831,6 +1007,21 @@ class SpoolServer(
                         if (aput == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, aput.q) { handleAput(conn, aput) }
                     }
 
+                    RecordType.TURNREQ -> {
+                        val req = RecordCodec.decode<TurnReq>(bytes)
+                        if (req == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, req.q) { handleTurnReq(conn, req) }
+                    }
+
+                    RecordType.ENT -> {
+                        val ent = RecordCodec.decode<Ent>(bytes)
+                        if (ent == null) sendErr(conn, ErrCode.MALFORMED) else guarded(conn, ent.q) { handleEnt(conn, ent) }
+                    }
+
+                    // Never answered, not even malformed: see handleCast.
+                    RecordType.CAST -> {
+                        handleCast(conn, bytes)
+                    }
+
                     null -> {
                         sendErr(conn, ErrCode.MALFORMED)
                     }
@@ -857,6 +1048,28 @@ class SpoolServer(
                 }
             }
         }
+    }
+
+    /**
+     * The client's half of the hello exchange (spec §7.1): its first record must be a binary
+     * `hello` with a version this spool speaks, or the connection is closed — 4000 or 4002 — and
+     * false says so. Out of [serveConnection]'s loop only to keep that dispatch table one screen.
+     */
+    private suspend fun acceptClientHello(
+        session: DefaultWebSocketServerSession,
+        bytes: ByteArray,
+        binary: Boolean,
+    ): Boolean {
+        val hello = if (binary) RecordCodec.decode<Hello>(bytes) else null
+        if (hello == null || RecordCodec.peekType(bytes) != RecordType.HELLO) {
+            session.close(CloseReason(CloseCode.MALFORMED.toShort(), "hello first"))
+            return false
+        }
+        if (hello.v !in 1..RECORD_VERSION) {
+            session.close(CloseReason(CloseCode.VERSION.toShort(), "no version overlap"))
+            return false
+        }
+        return true
     }
 
     /** Wraps a record handler so an unexpected failure surfaces as `err internal`, not a dead task. */
@@ -1058,6 +1271,180 @@ class SpoolServer(
         )
     }
 
+    /**
+     * Issues one TURN credential (experimental, proposed spec §7.6).
+     *
+     * The request names no scope, and nothing here asks which: holding *some* subscription is the
+     * whole gate, so the spool never learns which conversation is about to call. A refusal for rate
+     * is not a strike — asking for a credential is not abuse of the scope plane, and a client that
+     * redials a dropped call should not be closed 4003 for it. Neither half of the credential is
+     * ever logged.
+     *
+     * On a connection that was told about tickets (S-7.6-16), a live ticket granting TURN replaces
+     * the subscription gate, and the username's suffix comes from its pseudonym rather than from
+     * fresh randomness (S-7.6-17): every credential one holder fetches then shares a suffix, which
+     * is what makes coturn's `user-quota` count the holder instead of the credential.
+     */
+    private suspend fun handleTurnReq(
+        conn: Conn,
+        req: TurnReq,
+    ) {
+        val turn = config.turn
+        // A spool without turn omits it from hello and a conforming client never asks (C-7.6-3),
+        // but the request's `q` should still get an answer rather than hang until timeout.
+        if (turn == null) {
+            sendErr(conn, ErrCode.MALFORMED, q = req.q)
+            return
+        }
+        // Ungated, a live TURN ticket still earns the pseudonym suffix and waives the subscription gate,
+        // as it does gated: the gate decides only whether a connection without one is refused.
+        val ticket =
+            if (conn.gates and Tickets.FL_TURN != 0L) {
+                liveTurnTicket(conn, req.q) ?: return
+            } else {
+                conn.ticket?.takeIf { ticketShortfall(it, Tickets.FL_TURN) == null }
+            }
+        if (ticket == null && conn.subscriptions.isEmpty()) {
+            sendErr(conn, ErrCode.NOT_SUBSCRIBED, q = req.q)
+            return
+        }
+        for (bucket in listOfNotNull(conn.turnBucket, conn.ipState.turnBucket)) {
+            val retryMs = bucket.take()
+            if (retryMs > 0) {
+                rateLimited(conn, q = req.q, scope = null, retryMs = retryMs, strike = false)
+                return
+            }
+        }
+        val expS = clock() / MS_PER_S + turn.ttlS
+        val suffix =
+            ticket?.let { TurnCredentials.pseudonymSuffix(it.ps) } ?: ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes)
+        val user = TurnCredentials.user(expS, suffix)
+        metrics.turnIssuedTotal.increment()
+        if (ticket != null) metrics.turnIssuedTicketedTotal.increment()
+        out(
+            conn,
+            TurnCred(
+                t = RecordType.TURNCRED,
+                q = req.q,
+                urls = turn.urls,
+                user = user,
+                pass = TurnCredentials.pass(turn.secret, user),
+                exp = expS,
+            ),
+        )
+    }
+
+    /**
+     * Checks an entitlement ticket and binds it to the connection (experimental, VOICE_CALLS.md
+     * §2.6, S-7.6-14/15). The verifying key is read live, so a reload that rotates it judges the
+     * next `ent`. A refusal is never a strike — an expired ticket is ordinary life for a phone that
+     * slept through its refresh — and leaves any earlier accepted ticket in place, so a failed
+     * renewal cannot take away what the connection already holds. Neither the ticket nor its
+     * pseudonym is ever logged (S-7.6-18).
+     */
+    private suspend fun handleEnt(
+        conn: Conn,
+        ent: Ent,
+    ) {
+        // A connection that was never told about tickets has no business sending one: the same
+        // in-band `malformed` an unconfigured spool gives `turnreq`.
+        if (!conn.entAdvertised) {
+            sendErr(conn, ErrCode.MALFORMED, q = ent.q)
+            return
+        }
+        val tickets = config.ticket
+        val outcome =
+            if (tickets == null) {
+                // Advertised at hello, then the key was reloaded away: nothing left to check against.
+                Tickets.Outcome.Refused(Tickets.Reason.KEY)
+            } else {
+                Tickets.check(ent.tk, ent.sig, tickets.key, tickets.kid, tickets.audience, clock() / MS_PER_S)
+            }
+        when (outcome) {
+            is Tickets.Outcome.Accepted -> {
+                conn.ticket = outcome.ticket
+                metrics.ticketAcceptedTotal.increment()
+                out(conn, Ok(t = RecordType.OK, q = ent.q))
+            }
+
+            is Tickets.Outcome.Refused -> {
+                refuseTicket(conn, ent.q, outcome.reason)
+            }
+        }
+    }
+
+    /** The connection's ticket if it is live and grants TURN; otherwise refuses [q] and returns null. */
+    private suspend fun liveTurnTicket(
+        conn: Conn,
+        q: Long,
+    ): Ticket? {
+        val ticket = conn.ticket
+        val reason = ticketShortfall(ticket, Tickets.FL_TURN) ?: return ticket
+        refuseTicket(conn, q, reason)
+        return null
+    }
+
+    /**
+     * Why [ticket] does not grant [flag] now, or null when it does: held, inside its window plus
+     * [Tickets.SKEW_S], and carrying the bit.
+     */
+    private fun ticketShortfall(
+        ticket: Ticket?,
+        flag: Long,
+    ): Tickets.Reason? =
+        when {
+            ticket == null -> Tickets.Reason.MISSING
+            clock() / MS_PER_S - Tickets.SKEW_S > ticket.exp -> Tickets.Reason.EXPIRED
+            ticket.fl and flag == 0L -> Tickets.Reason.FLAGS
+            else -> null
+        }
+
+    private suspend fun refuseTicket(
+        conn: Conn,
+        q: Long,
+        reason: Tickets.Reason,
+        scope: ByteArray? = null,
+    ) {
+        metrics.ticketRefused(reason)
+        sendErr(conn, ErrCode.TICKET, q = q, scope = scope, msg = reason.word)
+    }
+
+    /**
+     * Whether this `aput` may proceed where `files` is gated, and whose budget pays (S-7.6-22, ADR
+     * 2026-10.h6pt): the uploading connection's own live files ticket, with room left for this chunk
+     * under `min(ab, SPOOL_TICKET_ATTACH_BYTES)`. Another subscriber's ticket never admits an upload,
+     * unlike casts' `castUnlocked`: that is the sponsorship the ADR rejected. Refuses with a scoped
+     * `err ticket`, never a strike, and returns false; on true, [payer] is what [handleAput] charges.
+     */
+    private suspend fun filesAdmitted(
+        conn: Conn,
+        aput: Aput,
+        payer: Ticket?,
+    ): Boolean {
+        if (conn.gates and Tickets.FL_FILES == 0L) return true
+        // Read live, so a lowered cap bites on the next chunk. A key reloaded away leaves the gate on
+        // for connections told about it (their snapshot), metered at the default.
+        val cap = config.ticket?.attachBytes ?: TicketConfig.DEFAULT_ATTACH_BYTES
+        val shortfall = ticketShortfall(payer, Tickets.FL_FILES)
+        val reason =
+            when {
+                shortfall != null -> shortfall
+                payer != null && uploadBudgets.admits(payer, ScopeStore.chunkCharge(aput.data.size), cap) -> return true
+                else -> Tickets.Reason.BUDGET
+            }
+        refuseTicket(conn, aput.q, reason, scope = aput.scope)
+        return false
+    }
+
+    private fun chargeUpload(
+        payer: Ticket,
+        bytes: Long,
+        nowMs: Long,
+    ) {
+        uploadBudgets.charge(payer, bytes, nowMs / MS_PER_S)
+        metrics.ticketAttachBytesChargedTotal.add(bytes)
+    }
+
     private suspend fun handleAget(
         conn: Conn,
         aget: Aget,
@@ -1098,6 +1485,10 @@ class SpoolServer(
         if (!requireIds(conn, aput.q, aput.scope, listOf(aput.aid, aput.cid))) return
         if (!requireAttachments(conn, aput.q, aput.scope)) return
         if (!requireSub(conn, aput.scope, aput.q)) return
+        // Read once: the chunk is charged to the ticket that admitted it, even if a newer `ent` lands.
+        val payer = conn.ticket.takeIf { conn.gates and Tickets.FL_FILES != 0L }
+        // Before every bucket, so a refused upload spends no push token, no new-scope token and no PoW.
+        if (!filesAdmitted(conn, aput, payer)) return
         val retryMs = conn.pushBucket.take()
         if (retryMs > 0) {
             rateLimited(conn, q = aput.q, scope = aput.scope, retryMs = retryMs)
@@ -1125,6 +1516,8 @@ class SpoolServer(
         when (withStore { store.attachmentPut(aput.scope, aput.aid, aput.idx, aput.total, aput.cid, aput.data, now) }) {
             is AputResult.Stored -> {
                 metrics.attachChunksStoredTotal.increment()
+                // Charged only once held: a duplicate or refused chunk costs its uploader nothing.
+                if (payer != null) chargeUpload(payer, ScopeStore.chunkCharge(aput.data.size), now)
                 out(conn, Ok(t = RecordType.OK, q = aput.q))
                 maybeShed()
             }
@@ -1343,6 +1736,106 @@ class SpoolServer(
         }
     }
 
+    /**
+     * Fans one cast out to its scope's other live subscribers and keeps nothing (experimental,
+     * VOICE_CALLS.md §2.7, proposed spec §7.7; ADR 2026-10.3wdy).
+     *
+     * It reads only the connection's subscriptions and [subscribers], never the store. So a cast
+     * cannot create or recreate a scope, hold one against `maxScopes`, fold a digest, leave a
+     * tombstone or reach the disk, and a scope the store has shed still carries casts while its
+     * subscribers hold it.
+     *
+     * Every refusal is a silent drop, counted by reason and never answered. A shipped client reads
+     * a scoped `err` with no `q` as a refused `sub` and would drop the conversation, and the
+     * client was told the bounds in `hello`, so an answer would tell it nothing it could act on.
+     * No refusal strikes: the record bucket already strikes a flood, record by record. Nothing
+     * about a cast is logged.
+     */
+    private fun handleCast(
+        conn: Conn,
+        bytes: ByteArray,
+    ) {
+        metrics.castsTotal.increment()
+        val cast = RecordCodec.decode<Cast>(bytes)?.takeIf { it.scope.size == ID_BYTES }
+        val refusal = if (cast == null) CastDrop.MALFORMED else castRefusal(conn, cast)
+        if (refusal != null) {
+            metrics.castDropped(refusal)
+            return
+        }
+        fanOutCast(conn, checkNotNull(cast))
+    }
+
+    /** Why [cast] is dropped, or null when it fans out. Cheap checks first; the buckets last, so a refusal spends no token. */
+    private fun castRefusal(
+        conn: Conn,
+        cast: Cast,
+    ): CastDrop? {
+        val info = conn.castInfo
+        val scopeHex = hex(cast.scope)
+        return when {
+            // Off now, or never advertised to this connection: the live check is the operator's
+            // kill switch, which reaches connections a reload cannot re-hello.
+            info == null || config.rateCasts <= 0 -> CastDrop.OFF
+
+            scopeHex !in conn.subscriptions -> CastDrop.NOT_SUBSCRIBED
+
+            // A shared room is the one place one cast reaches everyone; casts are for a pair.
+            isCommons(cast.scope) -> CastDrop.COMMONS
+
+            cast.data.size > info.maxBytes -> CastDrop.TOO_LARGE
+
+            conn.gates and Tickets.FL_CAST != 0L && !castUnlocked(conn, scopeHex) -> CastDrop.TICKET
+
+            !castBudget(conn) -> CastDrop.RATE
+
+            else -> null
+        }
+    }
+
+    /**
+     * Whether some live subscriber of the scope holds a cast ticket: the caster itself, checked
+     * first, or anyone else subscribed to it here. One payer unlocks the scope both ways, as one
+     * payer is enough for TURN, so a free friend can talk back. It ties the payer's pseudonym to
+     * nothing the spool did not already tie it to: a ticketed connection's subscriptions.
+     */
+    private fun castUnlocked(
+        conn: Conn,
+        scopeHex: String,
+    ): Boolean {
+        if (ticketShortfall(conn.ticket, Tickets.FL_CAST) == null) return true
+        return subscribers[scopeHex]?.any { ticketShortfall(it.ticket, Tickets.FL_CAST) == null } == true
+    }
+
+    /** A bucket of [rate] casts a second, with the burst of four times the rate used everywhere. */
+    private fun castBucketFor(rate: Int): TokenBucket = TokenBucket(rate.toDouble(), CAST_BURST_FACTOR * rate, clock)
+
+    /** One token from the connection's, the address's and the spool's cast buckets, in that order. */
+    private fun castBudget(conn: Conn): Boolean {
+        val ipBucket = conn.ipState.castBucket(config.rateCasts)
+        return listOfNotNull(conn.castBucket, ipBucket, castTotalBucket).all { it.take() == 0L }
+    }
+
+    /**
+     * Best-effort, like [fanOut], with one difference: a subscriber whose channel is full loses the
+     * cast and nothing else. It is not counted toward the slow-consumer close, because a cast is
+     * live or lost by design, and a phone in the middle of a pull must not be closed 4003 for the
+     * crime of being talked to.
+     */
+    private fun fanOutCast(
+        caster: Conn,
+        cast: Cast,
+    ) {
+        val record = RecordCodec.encode(Cast(t = RecordType.CAST, scope = cast.scope, data = cast.data))
+        subscribers[hex(cast.scope)]?.forEach { subscriber ->
+            if (subscriber === caster) return@forEach
+            if (subscriber.out.trySend(binary(record)).isSuccess) {
+                metrics.castsFannedTotal.increment()
+            } else {
+                metrics.castDropped(CastDrop.FULL)
+            }
+        }
+    }
+
     /** Server-initiated digest re-anchor to every subscriber of [scope] (no `q`, best-effort). */
     private fun broadcastDigest(
         scope: ByteArray,
@@ -1391,6 +1884,7 @@ class SpoolServer(
         }
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
+        uploadBudgets.prune(now / MS_PER_S)
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
         reclaimSpace()
@@ -1424,6 +1918,12 @@ class SpoolServer(
 
     /** How many client entries the table holds. Exposed for tests. */
     internal fun clientTableSize(): Int = ips.size
+
+    /** How many pseudonyms hold an upload budget entry. Exposed for tests. */
+    internal fun uploadBudgetCount(): Int = uploadBudgets.size
+
+    /** Live subscribers of [scope]: what a test waits on to know a closed connection has left the fan-out table. */
+    internal fun subscriberCount(scope: ByteArray): Int = subscribers[hex(scope)]?.size ?: 0
 
     /** One status line: gauges read from the store, counters diffed since the last line. */
     internal suspend fun statusTick() {
@@ -1523,6 +2023,20 @@ class SpoolServer(
             // Present only when on (§7.5, S-7.5-1): omitted is the off state, and `false` is never
             // sent. A request to clients, not something this spool can check.
             moderation = true.takeIf { config.requireModeration },
+            // Present only when this spool issues credentials, for moderation's reason: presence is
+            // the signal, and a client that sees it absent never sends `turnreq` (C-7.6-3).
+            turn = true.takeIf { config.turn != null },
+            // Present only with a key (S-7.6-13). The connection snapshots it, so what it was told
+            // here is what its `turnreq` gate follows for its whole life.
+            ent = true.takeIf { config.ticket != null },
+            // Only beside `ent`, and always beside it (S-7.6-13), so a client never guesses the gates.
+            entGates = config.ticket?.gates,
+            // Omitted when empty, never `[]` (S-7.6-13). Read per connection, so a reload reaches
+            // every client that connects after it.
+            stun = config.stunUrls.takeIf { it.isNotEmpty() },
+            // Omitted when off (rate 0). The connection snapshots it: a cast is never answered, so
+            // the bounds it was told are the only ones it can keep to.
+            cast = CastInfo(maxBytes = config.maxCast, rate = config.rateCasts).takeIf { config.rateCasts > 0 },
             // Bounds and a label — never `scopeId`. The id comes from the invite, and a spool that
             // published it would turn a room only invite holders can find into one that anybody
             // who connects can subscribe to and flood.
@@ -1564,9 +2078,10 @@ class SpoolServer(
         q: Long? = null,
         scope: ByteArray? = null,
         retryMs: Long? = null,
+        msg: String? = null,
     ) {
         metrics.err(code)
-        out(conn, Err(t = RecordType.ERR, code = code, q = q, scope = scope, retryMs = retryMs))
+        out(conn, Err(t = RecordType.ERR, code = code, q = q, scope = scope, msg = msg, retryMs = retryMs))
     }
 
     /**

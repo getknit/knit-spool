@@ -50,6 +50,19 @@ ciphertext and traffic patterns — never message content. No Spool talks to ano
 multi-home across several and union the results, so a Spool that vanishes, lies by omission, or is
 seized takes nothing with it that another member cannot re-push.
 
+A Spool with the experimental casts switched on (`SPOOL_RATE_CASTS`) also relays a walkie-talkie's
+chunks live and keeps none. That shows the operator a finer pattern than stored frames do: that a
+conversation is in a walkie session, which side talks when and for how long, and both phones'
+addresses. It still shows nothing of what was said, and none of it reaches the disk or the log. A
+cast, or the scope it names, in this daemon's log is a reportable vulnerability.
+
+A Spool with a ticket key (`SPOOL_TICKET_KEY`, experimental) also learns each ticket holder's daily
+pseudonym, and can link that holder's connections, and the scopes they hold, within a day. Where
+`files` is gated it keeps an upload budget per pseudonym: how many attachment bytes that holder
+stored today, in memory only and dropped once the ticket expires. None of it reaches the disk or
+the log, and a restart forgets it. A ticket or a pseudonym in this daemon's log, or on its disk, is
+a reportable vulnerability.
+
 ### The commons
 
 A Spool running a commons (`SPOOL_COMMONS_ID`) holds the same shape of secret it always did. The
@@ -80,8 +93,8 @@ Knit Spool is experimental. Several properties are **intentional design trade-of
 vulnerabilities** — they are documented and out of scope for reports:
 
 - **Traffic metadata is visible to the operator by design.** Scope ids, blob sizes, arrival times,
-  subscriber counts, and client IPs are exactly what a store-and-forward relay must handle to do its
-  job. Correlating them is expected; a report that a Spool operator can see them is not a finding.
+  subscriber counts, client IPs and, with casts on, the live timing of a walkie session are exactly
+  what a relay must handle to do its job. Correlating them is expected; a report that a Spool operator can see them is not a finding.
 - **The listener speaks plain WebSocket. TLS terminates at a reverse proxy** — see
   [`deploy/`](deploy/) for Caddy and nginx configurations. Exposing port 9470 to the internet
   directly is a deployment error, not a daemon vulnerability.
@@ -136,3 +149,11 @@ Not a substitute for the above, but the short list operators ask for: terminate 
 `--token-file` rather than argv, keep `/metrics` off the public internet, leave
 `SPOOL_TRUST_PROXY=false` unless a proxy you control appends `X-Forwarded-For`, and cap the process
 (the shipped compose overlays do). See the README's *Deploy* and *Operating* sections.
+
+Running the experimental TURN overlay adds two: keep `SPOOL_TURN_SECRET` out of anything but
+`deploy/.env` (mode 0600) — anyone holding it can mint relay credentials — and keep the
+`denied-peer-ip` list in `deploy/coturn/entrypoint.sh` intact. Without it a credential holder can
+relay to the host's loopback, its private network or a cloud metadata endpoint. A credential, or
+the secret, in this daemon's log is a reportable vulnerability like a token is. coturn itself logs
+the *username* of a failed authentication, which carries the expiry and a random suffix and links to
+no conversation.

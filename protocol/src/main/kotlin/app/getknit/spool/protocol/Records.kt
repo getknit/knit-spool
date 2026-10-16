@@ -33,6 +33,19 @@ object RecordType {
     const val AGET = "aget"
     const val ACHUNK = "achunk"
     const val APUT = "aput"
+
+    // TURN provisioning (experimental; knit-next docs/VOICE_CALLS.md §2, proposed spec §7.6). Only
+    // ever sent to a spool whose HELLO carried `turn`.
+    const val TURNREQ = "turnreq"
+    const val TURNCRED = "turncred"
+
+    // Entitlement tickets (experimental; knit-next docs/VOICE_CALLS.md §2.6). Only ever sent to a
+    // spool whose HELLO carried `ent`.
+    const val ENT = "ent"
+
+    // Casts (experimental; knit-next docs/VOICE_CALLS.md §2.7, proposed spec §7.7): one name for both
+    // directions, like `hello` and `list`. Only ever sent to a spool whose HELLO carried `cast`.
+    const val CAST = "cast"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -50,6 +63,13 @@ object ErrCode {
 
     /** An `aput` whose `cid` differs from the chunk already stored at that position (§6.5). */
     const val CONFLICT = "conflict"
+
+    /**
+     * An `ent` the spool will not accept, or a gated `turnreq` or `aput` that needs a ticket the
+     * connection does not hold (experimental, VOICE_CALLS.md §2.6). `msg` carries one [Tickets.Reason]
+     * word.
+     */
+    const val TICKET = "ticket"
 }
 
 /** WebSocket close codes for failures before or outside the record layer (spec §7.1). */
@@ -152,6 +172,19 @@ class CommonsInfo(
  * defaulted to `false` so a decoder can tell the field apart from its absence — the spec says a
  * spool that does not require it omits the field, and `false` on the wire is a conformance finding.
  * It is a request, not a check: the spool holds ciphertext and cannot verify compliance.
+ *
+ * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, proposed spec
+ * §7.6). Nullable for [moderation]'s reason: presence is the signal, and `false` is never sent.
+ *
+ * [ent] says the spool accepts entitlement tickets ([Ent]), and [entGates] which [Ticket.fl] bits it
+ * requires one for on this connection; [ticketGates] reads the pair, absent `entGates` included.
+ * [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
+ * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
+ * (VOICE_CALLS.md §2.6), and both omitted when off: `false` and an empty list are never sent.
+ *
+ * [cast] says the spool fans out [Cast]s, and within what (experimental, VOICE_CALLS.md §2.7). Omitted
+ * when casts are off. Where [ticketGates] has [Tickets.FL_CAST], a cast is admitted only on a scope a
+ * cast ticket has unlocked.
  */
 @Serializable
 class Hello(
@@ -162,6 +195,30 @@ class Hello(
     val powBits: Int? = null,
     val commons: CommonsInfo? = null,
     val moderation: Boolean? = null,
+    val turn: Boolean? = null,
+    val ent: Boolean? = null,
+    val stun: List<String>? = null,
+    val cast: CastInfo? = null,
+    val entGates: Long? = null,
+) {
+    /**
+     * The [Ticket.fl] bits this spool requires a ticket for (S-7.6-13): none without [ent], and
+     * [Tickets.LEGACY_GATES] from a spool that sent [ent] but predates [entGates].
+     */
+    val ticketGates: Long
+        get() = if (ent == true) entGates ?: Tickets.LEGACY_GATES else 0L
+}
+
+/**
+ * The cast advertisement (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): this spool fans
+ * casts out. [maxBytes] bounds a cast's `data`, and [rate] is casts per second per connection, with a
+ * burst of four times that. Both are stated up front because a cast is never answered: a client that
+ * overshoots either is dropped without being told, so it has to know the bounds before it sends.
+ */
+@Serializable
+class CastInfo(
+    val maxBytes: Int,
+    val rate: Int,
 )
 
 @Serializable
@@ -253,6 +310,59 @@ class Ahas(
     val total: Int,
     val bits: ByteArray,
     val dead: Boolean = false,
+)
+
+/**
+ * Client→spool: ask for one TURN credential (experimental, proposed spec §7.6). Names no scope on
+ * purpose — the spool must not learn which conversation is calling. Answered by [TurnCred] or `err`.
+ */
+@Serializable
+class TurnReq(
+    val t: String,
+    val q: Long,
+)
+
+/**
+ * Spool→client: a coturn REST credential. [user] is `"<exp>:<random>"`, [pass] is
+ * `base64(HMAC-SHA1(secret, user))`, [exp] is Unix **seconds**, and [urls] are RFC 7065
+ * `turn:`/`turns:` URIs. Terminal, and echoes [q] like [Ahas].
+ */
+@Serializable
+class TurnCred(
+    val t: String,
+    val q: Long,
+    val urls: List<String>,
+    val user: String,
+    val pass: String,
+    val exp: Long,
+)
+
+/**
+ * Client→spool: present an entitlement ticket (experimental, VOICE_CALLS.md §2.6). [tk] is the CBOR
+ * [Ticket] exactly as signed, and [sig] the 64-byte Ed25519 signature over [Tickets.LABEL] ‖ [tk] —
+ * carried as bytes rather than re-encoded, so the spool verifies what the issuer signed. Answered by
+ * `ok` or `err ticket`; a later `ent` on the same connection replaces the claims.
+ */
+@Serializable
+class Ent(
+    val t: String,
+    val q: Long,
+    val tk: ByteArray,
+    val sig: ByteArray,
+)
+
+/**
+ * A cast (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): one sealed frame for a scope's other
+ * live subscribers, never stored. Client→spool, it is the one client record with no `q`, and it is
+ * never answered — a refusal is a silent drop — because a shipped client reads a scoped `err` without
+ * a `q` as a refused `sub`. Spool→client it is relayed unchanged, uploader excluded, like an [Event]
+ * with no blob id: nothing about it is content-addressed, because nothing is kept.
+ */
+@Serializable
+class Cast(
+    val t: String,
+    val scope: ByteArray,
+    val data: ByteArray,
 )
 
 /** Client→spool: fetch up to [n] chunks from [from] (truncated at `maxAget`); [Achunk]s then a bare OK. */

@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-09-16T20:56:18Z
+  updated: 2026-10-14T06:54:51Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -20,8 +20,67 @@ document:
 
 ## Unreleased
 
+### Added
+
+- **Experimental: TURN credentials for Knit voice calls** (the `exp/turn` branch; draft in knit-next
+  `docs/VOICE_CALLS.md` §2, proposed spec §7.6 — **not in the spec yet, and the wire may change**).
+  With `SPOOL_TURN_SECRET` set, `hello` carries `turn: true`, and a connection holding any
+  subscription can send `turnreq` for a `turncred`: coturn REST credentials (`<exp>:<random>`,
+  `HMAC-SHA1`) for the URLs in `SPOOL_TURN_URLS`. The request names no scope. Budgeted per connection
+  and per address by `SPOOL_TURN_RATE`, refused with `err rate` but never struck; off, `turnreq`
+  draws `err malformed` and `hello` is byte-identical to before. Boot-only, never logged, and counted
+  in `knit_spool_turn_issued_total`. New conformance checks `turn-requires-sub`, `turn-cred-shape`
+  and `turn-hmac` (the last with `--turn-secret-file`). `deploy/docker-compose.turn.yml` runs a
+  digest-pinned coturn 4.18.0 beside the Spool on host networking: `turns:` on 5349 from Caddy's
+  certificate with in-place renewal, every capability dropped but five, a read-only root, and a
+  `denied-peer-ip` list covering loopback, private, link-local and CGNAT ranges. Credentials live 5
+  minutes by default (coturn checks expiry only at allocation), and `TURN_*` caps bound the relay:
+  3 allocations per credential, 100 in all, 16000 B/s per session, 12.8 Mbps for the box (the pool
+  is exactly 100 × 16000, since coturn reserves the per-session rate for every allocation), and relay
+  ports 49160–49999.
+- **Experimental: entitlement tickets and a STUN list** (draft in knit-next `docs/VOICE_CALLS.md`
+  §2.6; ADR 2026-10.bxsg). `SPOOL_STUN_URLS` puts credential-free `stun:` URIs in every `hello`, so
+  a phone with no TURN can still be reached through a paying peer's relay. `SPOOL_TICKET_KEY` and
+  `SPOOL_TICKET_AUDIENCE` add `ent: true` to `hello` and a new `ent` record carrying an Ed25519
+  ticket; on such a connection `turnreq` needs a live ticket (else the new `err ticket`, with a
+  reason in `msg`), needs no subscription, and yields a username whose suffix is derived from the
+  ticket's pseudonym, so coturn's `user-quota` counts each holder. All reloadable. `knit-spool
+  ticket-keygen` and `ticket-mint` stand in for an issuer. New conformance checks `ent-advertised`,
+  `ent-foreign-key`, `ent-required`, `ent-accepts`, `ent-expired`, `ent-audience` and `stun-shape`
+  (`--ticket-key-file`, `--ticket-audience`); the TURN checks present a ticket where one is needed.
+- **Experimental: casts, a walkie-talkie's chunks relayed live and never stored** (draft in knit-next
+  `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7). With `SPOOL_RATE_CASTS` above 0, `hello` carries
+  `cast: { maxBytes, rate }` and a new `cast` record goes to every other subscriber of its scope. It
+  never touches the store: no blob, digest, tombstone, listing or disk. A cast has no `q` and is never
+  answered. A refused one is dropped and counted in `knit_spool_casts_dropped_total{reason}`, never
+  struck, and never counted toward the slow-consumer close. With a ticket key, a cast needs some
+  subscriber of its scope to hold a ticket with the new cast flag (bit 3, `ticket-mint --cast`), so
+  one payer unlocks the scope both ways. Budgets are per connection, per address and Spool-wide
+  (`SPOOL_RATE_CASTS_TOTAL`), with `SPOOL_MAX_CAST` bounding the size; all reloadable, and a rate of
+  0 stops casts at once. Off by default. New conformance checks `cast-advertised`, `cast-fanout`,
+  `cast-silent-refusal`, `cast-ticket` and the advisory `cast-rate`.
+- **Experimental: ticket gates and uploader-paid attachments** (draft in knit-next
+  `docs/VOICE_CALLS.md` §2.6, S-7.6-22/23; ADR 2026-10.h6pt). `SPOOL_TICKET_GATES` picks which
+  capabilities a ticket key gates, from `turn`, `files` and `cast`. It defaults to `turn,cast`, so a
+  keyed Spool behaves as before, and `hello` names the choice in a new `entGates` beside `ent`. With
+  `files` gated, an `aput` needs the uploader's own ticket with the new files flag (bit 1,
+  `ticket-mint --files`). Each stored chunk is charged to that holder's daily budget,
+  `min(ab, SPOOL_TICKET_ATTACH_BYTES)` (32 MiB by default; `ticket-mint --ab`), and the refusal is
+  `err ticket` with its `q`, its scope and a `msg`, including the new `budget`. No other member's
+  ticket pays for an upload, and `aget` is never gated. Budgets live in memory and are never logged,
+  and `knit_spool_ticket_attach_bytes_charged_total` counts them. New conformance checks
+  `ent-gates`, `files-ticket` and `files-receive`. The TURN, cast and attachment checks now follow
+  `entGates`.
+
 ### Changed
 
+- **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
+  now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
+  `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/VOICE_CALLS.md` S-7.6-25). The plain
+  `turn:…:3478?transport=tcp` URL is gone from it: a phone opened an allocation for it on every
+  network on every call, and it seldom reached a network the other two missed. A deployment that
+  sets `SPOOL_TURN_URLS` itself keeps exactly what it set. 3478/tcp no longer needs to be open on
+  the firewall unless such a URL is added back; the daemon and the wire are unchanged.
 - **The conformance suite runs in-process on every `check`.** `:daemon`'s `ConformanceSelfTest`
   boots the reference daemon on an ephemeral port and runs every check against it three ways: with
   a token, proof-of-work, a commons and moderation all on (nothing skips); the CI job's bare shape

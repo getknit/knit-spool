@@ -2,6 +2,7 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.BuildInfo
+import app.getknit.spool.protocol.Tickets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.LongAdder
@@ -58,6 +59,47 @@ class Metrics(
     val commonsPushesTotal = LongAdder()
     val commonsRateLimitedTotal = LongAdder()
 
+    /** TURN credentials issued (experimental). Refusals land in the `rate`/`not_subscribed` errs. */
+    val turnIssuedTotal = LongAdder()
+
+    /** Of [turnIssuedTotal], those issued under an entitlement ticket: the paying callers. */
+    val turnIssuedTicketedTotal = LongAdder()
+
+    /** `ent` records accepted (experimental). */
+    val ticketAcceptedTotal = LongAdder()
+
+    /** Attachment bytes charged to ticket holders' daily upload budgets, at their charged size (ADR 2026-10.h6pt). */
+    val ticketAttachBytesChargedTotal = LongAdder()
+
+    /**
+     * Ticket refusals by [Tickets.Reason] — on `ent` and on a `turnreq` that needed one. A closed
+     * set, every member rendered from zero, so a field test can tell an expired ticket from a
+     * clock-skewed or mis-addressed one without a series appearing mid-test.
+     */
+    private val ticketRefusedTotal = Tickets.Reason.entries.associateWith { LongAdder() }
+
+    fun ticketRefused(reason: Tickets.Reason) {
+        ticketRefusedTotal.getValue(reason).increment()
+    }
+
+    /** Cast records received (experimental, VOICE_CALLS.md §2.7), fanned out or not. */
+    val castsTotal = LongAdder()
+
+    /** Copies of casts handed to subscribers: one cast in leaves as up to (subscribers - 1) of these. */
+    val castsFannedTotal = LongAdder()
+
+    /**
+     * Casts dropped, by [CastDrop]. A cast is never answered, so this is the only place a refusal
+     * shows. Every reason is per cast except [CastDrop.FULL], which counts one subscriber's lost copy.
+     */
+    private val castDroppedTotal = CastDrop.entries.associateWith { LongAdder() }
+
+    fun castDropped(reason: CastDrop) {
+        castDroppedTotal.getValue(reason).increment()
+    }
+
+    fun castDroppedCount(reason: CastDrop): Long = castDroppedTotal.getValue(reason).sum()
+
     /**
      * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
      * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
@@ -86,6 +128,9 @@ class Metrics(
         maxConns: Int = 0,
         commonsSubscribers: Int? = null,
         storeFileBytes: Long? = null,
+        turn: Boolean = false,
+        tickets: Boolean = false,
+        casts: Boolean = false,
     ): String =
         buildString {
             // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
@@ -126,6 +171,35 @@ class Metrics(
                 line("knit_spool_commons_pushes_total", "counter", commonsPushesTotal.sum())
                 line("knit_spool_commons_rate_limited_total", "counter", commonsRateLimitedTotal.sum())
             }
+            // Absent on a spool that issues no credentials, for the commons' reason.
+            if (turn) line("knit_spool_turn_issued_total", "counter", turnIssuedTotal.sum())
+            // Absent on a spool with no ticket key, for the commons' reason.
+            if (tickets) {
+                line("knit_spool_ticket_accepted_total", "counter", ticketAcceptedTotal.sum())
+                line("knit_spool_turn_issued_ticketed_total", "counter", turnIssuedTicketedTotal.sum())
+                line("knit_spool_ticket_attach_bytes_charged_total", "counter", ticketAttachBytesChargedTotal.sum())
+                append("# TYPE knit_spool_ticket_refused_total counter\n")
+                ticketRefusedTotal.forEach { (reason, adder) ->
+                    append("knit_spool_ticket_refused_total{reason=\"")
+                        .append(reason.word)
+                        .append("\"} ")
+                        .append(adder.sum())
+                        .append('\n')
+                }
+            }
+            // Absent while casts are off, for the commons' reason.
+            if (casts) {
+                line("knit_spool_casts_total", "counter", castsTotal.sum())
+                line("knit_spool_casts_fanned_total", "counter", castsFannedTotal.sum())
+                append("# TYPE knit_spool_casts_dropped_total counter\n")
+                castDroppedTotal.forEach { (reason, adder) ->
+                    append("knit_spool_casts_dropped_total{reason=\"")
+                        .append(reason.word)
+                        .append("\"} ")
+                        .append(adder.sum())
+                        .append('\n')
+                }
+            }
             append("# TYPE knit_spool_errs_total counter\n")
             errsTotal.entries.sortedBy { it.key }.forEach { (code, adder) ->
                 append("knit_spool_errs_total{code=\"")
@@ -157,4 +231,28 @@ class Metrics(
             .append('\n')
         append(name).append(' ').append(value).append('\n')
     }
+}
+
+/**
+ * Why a cast was dropped (experimental, VOICE_CALLS.md §2.7). The word is a metrics label and
+ * nothing else: a cast is never answered, so no client ever sees one.
+ */
+enum class CastDrop(
+    val word: String,
+) {
+    /** Undecodable, or a scope id that is not 32 bytes. */
+    MALFORMED("malformed"),
+
+    /** Casts are off, or were off when this connection was sent its hello. */
+    OFF("off"),
+    NOT_SUBSCRIBED("not_subscribed"),
+    COMMONS("commons"),
+    TOO_LARGE("too_large"),
+
+    /** On a ticketed spool, no subscriber of the scope holds a live cast ticket. */
+    TICKET("ticket"),
+    RATE("rate"),
+
+    /** One subscriber's outbound channel was full; that copy was lost. */
+    FULL("full"),
 }

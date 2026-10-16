@@ -18,7 +18,7 @@ cross.
 
 ## Elsewhere in the tree
 
-- `deploy/`: Compose files (tiny and TLS overlays), Caddy and nginx configs.
+- `deploy/`: Compose files (tiny, TLS, TURN overlays), Caddy and nginx configs, coturn.
 - `config/detekt/`: the detekt overlay; every departure from a default carries its reason.
 - `.githooks/`: DCO trailer and ADR router check.
 - `bench/`: local load-test scratch, gitignored.
@@ -27,4 +27,5 @@ cross.
 
 - [`HOSTING.md`](../../HOSTING.md): sizing, providers, upgrade without a reconnect storm.
 - [`SECURITY.md`](../../SECURITY.md): what a Spool is trusted with, known limits, hardening.
-- README sections: configuration table, the commons, send-side moderation, operating.
+- README sections: configuration table, the commons, send-side moderation, TURN, casts,
+  operating.

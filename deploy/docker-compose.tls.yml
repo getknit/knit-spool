@@ -91,6 +91,29 @@ services:
       SPOOL_COMMONS_MAX_BLOB:
       SPOOL_COMMONS_ATTACH:
       SPOOL_COMMONS_RATE_PUSHES:
+      # TURN credentials (experimental; proposed spec §7.6). No SPOOL_TURN_SECRET = no TURN, and
+      # the rest must then be unset too. The Spool only issues credentials; the relay is coturn,
+      # which docker-compose.turn.yml runs and wires these to — add it as the last -f.
+      SPOOL_TURN_SECRET:
+      SPOOL_TURN_URLS:
+      SPOOL_TURN_TTL_S:
+      SPOOL_TURN_RATE:
+      # STUN URIs every client is told in hello, with no credential (experimental). Needs no secret;
+      # the TURN overlay points it at its own coturn.
+      SPOOL_STUN_URLS:
+      # Entitlement tickets (experimental). The issuer's Ed25519 PUBLIC key and the audience tickets
+      # must name; with them, turnreq needs a ticket. Both or neither.
+      SPOOL_TICKET_KEY:
+      SPOOL_TICKET_AUDIENCE:
+      # Which capabilities need a ticket (turn, files, cast; default turn,cast), and the most one
+      # ticket holder may upload a day when files is gated (default 32 MiB). Both need the key.
+      SPOOL_TICKET_GATES:
+      SPOOL_TICKET_ATTACH_BYTES:
+      # Casts (experimental): a walkie's chunks fanned out to a scope's other subscribers and never
+      # stored. SPOOL_RATE_CASTS unset or 0 = off. With a ticket key, a cast needs a cast ticket.
+      SPOOL_RATE_CASTS:
+      SPOOL_MAX_CAST:
+      SPOOL_RATE_CASTS_TOTAL:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:
