@@ -299,8 +299,15 @@ the sender's own ticket, and each stored chunk counts against that holder's dail
 budget, not a storage cap.** Attachments live as long as their scope's TTL, so one holder keeps at
 most the budget times the number of days that fit in that window plus one. The scope's creator
 picks the TTL, up to `SPOOL_MAX_TTL_MS`: that is **3 × 32 MiB = 96 MiB** at the clients' 48 h
-default, but **8 × 32 MiB = 256 MiB** at the 7-day default ceiling. To hold the lower figure, set
-`SPOOL_MAX_TTL_MS=172800000`. Budgets are memory only, so a restart refills every one.
+default, but **8 × 32 MiB = 256 MiB** at the 7-day default ceiling. Budgets are memory only, so a
+restart refills every one.
+
+**If you gate `files`, set `SPOOL_MAX_TTL_MS` to the retention you intend to hold:
+`172800000` (48 h) for the reference client**, which declares 48 h on every ordinary scope and
+so loses nothing to it. The daemon's default stays 7 days, and a longer `ttlMs` is clamped to
+the ceiling rather than refused, so the ceiling is the bound on what a holder keeps, not
+whatever clients declare (ADR 2026-10.x9gq). `SPOOL_MAX_TTL_MS` is boot-only: change it in the
+same restart as `SPOOL_MAX_ATTACH_BYTES`.
 
 The disk stays bounded by `SPOOL_MAX_BYTES`, ticketed or not: past it the least-active scope is
 shed whatever paid for it. What the budget buys is fairness. One customer's uploads can push out

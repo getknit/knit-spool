@@ -107,25 +107,29 @@ environment contract, so the development version moved to `0.4.0-dev.2` (ADR 202
   a shed scope. Attachment `quota` refusals stay in the `err` counts only. It is always
   emitted, from zero, so the sizing failure above shows on a dashboard.
 
-## Open questions, with a recommendation each
+## Retention, decided
 
-Both stay open for the maintainer. What follows is a recommendation, not a decision.
+Decided 2026-10-16 by the maintainer: **the operator sets the ceiling with `SPOOL_MAX_TTL_MS`,
+and the daemon gains no refusal for a long `ttlMs`.** A spool with `files` gated is expected to
+run `SPOOL_MAX_TTL_MS=172800000` (48 hours). The daemon's 7-day default is unchanged.
 
-- **Retention.** bxsg's upload budget holds at most `ab × (⌈retention / 1 day⌉ + 1)` per
-  holder, and retention is the scope's `ttlMs`, up to `SPOOL_MAX_TTL_MS` (7 days by
-  default, so 8 × `ab`). Should a spool with `files` gated refuse a `ttlMs` above some
-  bound, or should the deploy only set `SPOOL_MAX_TTL_MS` to the retention it intends to
-  hold?
-  - *Recommended: the deploy setting, and no code.* `SPOOL_MAX_TTL_MS` is already enforced.
-    Both stores clamp a declared `ttlMs` to it (`coerceIn` in `subscribe`), and the
-    `digest` reply tells the client the bounds it got. A second, files-only bound would be
-    a second knob for the same number. Refusing a longer `ttlMs` instead of clamping it
-    would also break every client that declares the 7-day ceiling today and is quietly
-    given less.
-  - The shared spool should set `SPOOL_MAX_TTL_MS=172800000`, the clients' 48-hour
-    default, which holds 3 × `ab` per holder, as `HOSTING.md` ("What ticketed uploads
-    hold") already says. A spool that wants longer retention pays for it in disk, by
-    choice.
+- bxsg's upload budget holds at most `ab × (⌈retention / 1 day⌉ + 1)` per holder. Attachment
+  chunks live on their scope's `ttlMs`, so the ceiling, not what clients happen to declare,
+  bounds what one holder can keep: 3 × `ab` at 48 hours, against 8 × `ab` at the 7-day
+  default.
+- The reference client declares 48 hours on every ordinary scope (knit-next
+  `ScopeRegistry.DEFAULT_TTL_MS`), so a 48-hour ceiling costs a conforming client nothing.
+- A client that declares more is clamped, not refused: both stores apply `coerceIn` in
+  `subscribe`, and the `digest` reply carries the bounds it got. A refusal would break such a
+  client for no gain, and a files-only bound would be a second knob for the same number.
+- `SPOOL_MAX_TTL_MS` is boot-only, so it moves with a restart, in the same one as
+  `SPOOL_MAX_ATTACH_BYTES`. `HOSTING.md` ("What ticketed uploads hold") tells an operator
+  gating `files` to set it to the retention they intend to hold.
+
+## Open question, with a recommendation
+
+Still open for the maintainer. What follows is a recommendation, not a decision.
+
 - **PoW cost on phones.** 20 bits prices creation for every member's phone, not just for
   strangers. Is a lower setting enough, given d2zb and the rate bucket?
   - *Recommended: keep 20 bits, the spec's default, and watch the new metric.* A phone

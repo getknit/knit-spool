@@ -126,8 +126,8 @@ Ticket {
   deployment wants retention much longer than two days, which is where the multiplier stops
   being tolerable. The spool's default ceiling already allows seven, so a ticketed spool
   should set `SPOOL_MAX_TTL_MS` to the retention it intends to hold (`HOSTING.md`, "What
-  ticketed uploads hold"). Whether the spool should enforce that is ADR 2026-10.x9gq's
-  open question.
+  ticketed uploads hold"). ADR 2026-10.x9gq decided on 2026-10-16 that the spool does
+  not enforce it beyond that ceiling: 48 hours where `files` is gated.
 
 ## Keys
 
