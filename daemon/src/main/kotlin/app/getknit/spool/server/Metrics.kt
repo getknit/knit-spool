@@ -82,7 +82,7 @@ class Metrics(
         ticketRefusedTotal.getValue(reason).increment()
     }
 
-    /** Cast records received (experimental, VOICE_CALLS.md §2.7), fanned out or not. */
+    /** Cast records received (experimental, SPOOL_PROTOCOL.md §7.7), fanned out or not. */
     val castsTotal = LongAdder()
 
     /** Copies of casts handed to subscribers: one cast in leaves as up to (subscribers - 1) of these. */
@@ -234,7 +234,7 @@ class Metrics(
 }
 
 /**
- * Why a cast was dropped (experimental, VOICE_CALLS.md §2.7). The word is a metrics label and
+ * Why a cast was dropped (experimental, SPOOL_PROTOCOL.md §7.7). The word is a metrics label and
  * nothing else: a cast is never answered, so no client ever sees one.
  */
 enum class CastDrop(

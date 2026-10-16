@@ -8,7 +8,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * TURN credentials in the REST shared-secret shape coturn's `use-auth-secret` verifies
- * (experimental; knit-next `docs/VOICE_CALLS.md` §2.2, proposed spec §7.6):
+ * (experimental; knit-next `docs/SPOOL_PROTOCOL.md` §7.6):
  *
  * ```
  * user = decimal(exp) ‖ ":" ‖ base32lower(suffix)      // suffix: SUFFIX_BYTES fresh random bytes
@@ -40,7 +40,7 @@ object TurnCredentials {
     }
 
     /**
-     * The suffix of a ticketed credential (VOICE_CALLS.md §2.6, S-7.6-17):
+     * The suffix of a ticketed credential (SPOOL_PROTOCOL.md §7.6, S-7.6-17):
      * `SHA-256("knit/spool/v1/turn-user" ‖ ps)[0..SUFFIX_BYTES]`. The same for every issue under one
      * pseudonym, so coturn's `user-quota` — which counts the part after the colon — counts the holder.
      * Hashed rather than the pseudonym itself, so the TURN server's logs never carry the spool's id.

@@ -91,7 +91,7 @@ services:
       SPOOL_COMMONS_MAX_BLOB:
       SPOOL_COMMONS_ATTACH:
       SPOOL_COMMONS_RATE_PUSHES:
-      # TURN credentials (experimental; proposed spec §7.6). No SPOOL_TURN_SECRET = no TURN, and
+      # TURN credentials (experimental; SPOOL_PROTOCOL.md §7.6). No SPOOL_TURN_SECRET = no TURN, and
       # the rest must then be unset too. The Spool only issues credentials; the relay is coturn,
       # which docker-compose.turn.yml runs and wires these to — add it as the last -f.
       SPOOL_TURN_SECRET:

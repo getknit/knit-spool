@@ -310,8 +310,8 @@ behind tap-to-reveal, as their own setting says.
 ## 📞 TURN (experimental)
 
 > [!WARNING]
-> Experimental, on the `exp/turn` branch only. The records below are a draft (knit-next
-> `docs/VOICE_CALLS.md` §2, proposed spec §7.6), not yet in the spec, and may change without notice.
+> Experimental and off by default. Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.6; Knit's own
+> client half is not in a shipped build yet.
 
 Knit voice calls run peer to peer over WebRTC, and the 10–20% that cannot connect directly need a
 relay. Set `SPOOL_TURN_SECRET` and the Spool hands short-lived relay credentials to clients that ask;
@@ -341,7 +341,7 @@ docker compose -f docker-compose.tls.yml -f docker-compose.tiny.yml -f docker-co
 
 It needs **3478/udp, 5349/tcp** and the relay range **49160–49999/udp** open on the host; 443 stays
 Caddy's. By default the Spool hands out one TURN URL per transport, `turn:…:3478?transport=udp` then
-`turns:…:5349?transport=tcp` (knit-next `docs/VOICE_CALLS.md` S-7.6-25), because a phone opens an
+`turns:…:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25), because a phone opens an
 allocation per network for every URL it tries; open 3478/tcp too only if you add a
 `turn:…?transport=tcp` URL to `SPOOL_TURN_URLS`, which replaces the default as given. `turns:` on 5349 uses the certificate Caddy already holds for `SPOOL_DOMAIN`, and
 a renewal is picked up in place (coturn's `SIGUSR2` reload) without dropping a call. coturn refuses to
@@ -359,7 +359,7 @@ Prefer TURN on a tokened Spool.
 ### Tickets and STUN
 
 Two further switches, for an operator who sells TURN to some callers and not others (knit-next
-`docs/VOICE_CALLS.md` §2.6; ADR 2026-10.bxsg), plus the choice of what else a ticket unlocks (ADR
+`docs/SPOOL_PROTOCOL.md` §7.6; ADR 2026-10.bxsg), plus the choice of what else a ticket unlocks (ADR
 2026-10.h6pt):
 
 - **`SPOOL_STUN_URLS`** puts a credential-free `stun` list in every `hello`. A phone with no TURN of
@@ -401,8 +401,8 @@ call setup. Run by the same operator as the Spool, the two logs can be joined. S
 ## 📻 Casts (experimental)
 
 > [!WARNING]
-> Experimental, on the `exp/turn` branch only. The record is a draft (knit-next
-> `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7), not yet in the spec, and may change without notice.
+> Experimental and off by default. Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.7; Knit's own
+> client half is not in a shipped build yet.
 
 When two phones in a call have no radio path and no live one, the call becomes a walkie-talkie:
 push to talk, a sealed chunk about every half second. Set `SPOOL_RATE_CASTS` and the Spool carries

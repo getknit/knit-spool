@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Casts (experimental; knit-next `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7): a sealed frame
+ * Casts (experimental; knit-next `docs/SPOOL_PROTOCOL.md` §7.7): a sealed frame
  * fanned out to a scope's other live subscribers and never stored, so a walkie's chunks can cross a
  * spool. What these pin is the shape of a lane that keeps nothing and answers nothing:
  *

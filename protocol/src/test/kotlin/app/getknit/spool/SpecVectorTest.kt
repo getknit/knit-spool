@@ -7,8 +7,11 @@ import app.getknit.spool.protocol.Ahas
 import app.getknit.spool.protocol.Ahave
 import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
+import app.getknit.spool.protocol.Cast
+import app.getknit.spool.protocol.CastInfo
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
+import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Err
 import app.getknit.spool.protocol.ErrCode
 import app.getknit.spool.protocol.Event
@@ -27,6 +30,10 @@ import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
+import app.getknit.spool.protocol.Ticket
+import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.protocol.TurnCred
+import app.getknit.spool.protocol.TurnReq
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -35,7 +42,7 @@ import kotlin.test.assertTrue
 
 /**
  * Conformance against SPOOL_PROTOCOL.md §13 (the Knit repo's spec): every record vector, the
- * digest vectors, and the PoW vector, byte-exact. These constants are the spec's appendix verbatim
+ * digest vectors, the PoW vector and the §7.6 ticket vectors, byte-exact. These constants are the spec's appendix verbatim
  * — if this file and the spec ever disagree, the spec wins and this implementation is wrong.
  */
 class SpecVectorTest {
@@ -264,10 +271,93 @@ class SpecVectorTest {
                             pow = PowStamp(n = 42L, d = 20_680L),
                         ),
                     ),
+                // §7.6: TURN credentials, then a ticket-checking spool's HELLO with its STUN list and gates.
+                "helloSpoolTurn" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                ),
+                            powBits = 20,
+                            turn = true,
+                        ),
+                    ),
+                "turnreq" to RecordCodec.encode(TurnReq(t = RecordType.TURNREQ, q = 7L)),
+                "turncred" to
+                    RecordCodec.encode(
+                        TurnCred(
+                            t = RecordType.TURNCRED,
+                            q = 7L,
+                            urls = listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"),
+                            user = "1800000000:bmjbsibhfy2tyq2k",
+                            pass = "yV18C+LcL6biIfL7ZVOuV9xVuoU=",
+                            exp = 1_800_000_000L,
+                        ),
+                    ),
+                "helloEntStun" to
+                    RecordCodec.encode(Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, stun = listOf("stun:lab.example:3478"))),
+                "helloEntGates" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            ent = true,
+                            entGates = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST,
+                        ),
+                    ),
+                // §7.7: one cast record serves both directions.
+                "helloCast" to
+                    RecordCodec.encode(
+                        Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, cast = CastInfo(maxBytes = 2_048, rate = 4)),
+                    ),
+                "cast" to
+                    RecordCodec.encode(
+                        Cast(t = RecordType.CAST, scope = ByteArray(32) { it.toByte() }, data = ByteArray(16) { (0xa0 + it).toByte() }),
+                    ),
             )
         for ((name, encoded) in vectors) {
             assertEquals(EXPECTED.getValue(name), encoded.toHex(), "record vector '$name' diverges from the spec")
         }
+    }
+
+    /**
+     * §7.6's ticket vectors, signed with the RFC 8032 §7.1 TEST 1 key pair ([TicketVectorTest]
+     * holds it), so the public half comes from the RFC rather than from this code. Ed25519 is
+     * deterministic, so a signature is a vector like any other byte string.
+     */
+    @Test
+    fun ticketVectorsMatchTheSpec() {
+        assertEquals(EXPECTED.getValue("kid"), Tickets.kid(TicketVectorTest.RFC_PUBLIC).toHex())
+        val (tk, sig) = Tickets.issue(TicketVectorTest.SIGNING_KEY, TicketVectorTest.fixture())
+        assertEquals(EXPECTED.getValue("tk"), tk.toHex(), "ticket body diverges from the spec")
+        assertEquals(EXPECTED.getValue("sig"), sig.toHex(), "ticket signature diverges from the spec")
+        assertEquals(EXPECTED.getValue("ent"), RecordCodec.encode(Ent(t = RecordType.ENT, q = 7, tk = tk, sig = sig)).toHex())
+        val (tkFiles, sigFiles) = Tickets.issue(TicketVectorTest.SIGNING_KEY, TicketVectorTest.filesFixture())
+        assertEquals(EXPECTED.getValue("tkFiles"), tkFiles.toHex(), "files ticket body diverges from the spec")
+        assertEquals(EXPECTED.getValue("sigFiles"), sigFiles.toHex(), "files ticket signature diverges from the spec")
+        val cast =
+            TicketVectorTest.fixture().let {
+                Ticket.forKey(
+                    TicketVectorTest.SIGNING_KEY,
+                    it.aud,
+                    it.nbf,
+                    it.exp,
+                    it.ps,
+                    Tickets.FL_TURN or Tickets.FL_CAST,
+                )
+            }
+        val (tkCast, sigCast) = Tickets.issue(TicketVectorTest.SIGNING_KEY, cast)
+        assertEquals(EXPECTED.getValue("tkCast"), tkCast.toHex(), "cast ticket body diverges from the spec")
+        assertEquals(EXPECTED.getValue("sigCast"), sigCast.toHex(), "cast ticket signature diverges from the spec")
     }
 
     @Test
@@ -313,7 +403,7 @@ class SpecVectorTest {
         assertEquals(0L, Pow.stamp(scopeId, day = 20_680L, bits = 0))
     }
 
-    private companion object {
+    internal companion object {
         val EXPECTED =
             mapOf(
                 "helloSpool" to
@@ -425,6 +515,56 @@ class SpecVectorTest {
                     "d3dae164646174615830060d141b222930373e454c535a61686f767d848b9299a0a7" +
                     "aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f63706f77a2616e182a61" +
                     "641950c8",
+                "helloSpoolTurn" to
+                    "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a" +
+                    "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
+                    "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
+                    "0c840067706f774269747314647475726ef5",
+                "turnreq" to "a26174677475726e726571617107",
+                "turncred" to
+                    "a66174687475726e637265646171076475726c738278257475726e3a73706f6f6c2e" +
+                    "6578616d706c653a333437383f7472616e73706f72743d75647078267475726e733a" +
+                    "73706f6f6c2e6578616d706c653a353334393f7472616e73706f72743d7463706475" +
+                    "736572781b313830303030303030303a626d6a6273696268667932747971326b6470" +
+                    "617373781c79563138432b4c634c36626949664c375a564f7556397856756f553d63" +
+                    "6578701a6b49d200",
+                "helloEntStun" to
+                    "a461746568656c6c6f61760163656e74f5647374756e81757374756e3a6c61622e65" +
+                    "78616d706c653a33343738",
+                "helloEntGates" to "a461746568656c6c6f61760163656e74f568656e7447617465730b",
+                "helloCast" to "a461746568656c6c6f61760163656e74f56463617374a2686d61784279746573190800647261746504",
+                "cast" to
+                    "a3617464636173746573636f70655820000102030405060708090a0b0c0d0e0f1011" +
+                    "12131415161718191a1b1c1d1e1f646461746150a0a1a2a3a4a5a6a7a8a9aaabacad" +
+                    "aeaf",
+                "kid" to "21fe31dfa154a261",
+                "tk" to
+                    "a7617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
+                    "6e62661a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c" +
+                    "0d0e0f62666c01",
+                "sig" to
+                    "c0740d14d5f46f2771721c593fa34a6e926b39182955cc6f8fb15365dddcf229" +
+                    "da2cb33bdf6f23881cf4b153eedc4238e143fa53ef1a834961040bb55818b809",
+                "ent" to
+                    "a4617463656e7461710762746b584ba7617601636b69644821fe31dfa154a2616361" +
+                    "75646b6c61622e6578616d706c65636e62661a6b49d200636578701a6b4b23806270" +
+                    "7350000102030405060708090a0b0c0d0e0f62666c01637369675840c0740d14d5f4" +
+                    "6f2771721c593fa34a6e926b39182955cc6f8fb15365dddcf229da2cb33bdf6f2388" +
+                    "1cf4b153eedc4238e143fa53ef1a834961040bb55818b809",
+                "tkFiles" to
+                    "a8617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
+                    "6e62661a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c" +
+                    "0d0e0f62666c036261621a08000000",
+                "sigFiles" to
+                    "1942b4b07f1ef10f7e4061e822d909876b2e5a1597469c5aa70c87c5909dbc9c" +
+                    "c24dc7703dfcb8a33ea190b19e4b9a9f460319f9ec2d11d17e787afe551b5d0a",
+                "tkCast" to
+                    "a7617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
+                    "6e62661a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c" +
+                    "0d0e0f62666c09",
+                "sigCast" to
+                    "9f0d82c5e15ddc486fc693a848dd2e937df32e505f22631dde6a49f82435d147" +
+                    "b64da30b5ac432ef18ee9e2349c4c8915cc8e9d5a3e829f95c2784bc5a5f530f",
             )
     }
 }

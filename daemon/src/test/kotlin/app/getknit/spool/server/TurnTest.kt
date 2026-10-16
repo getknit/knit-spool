@@ -21,7 +21,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * TURN credential issuing (experimental; knit-next `docs/VOICE_CALLS.md` §2, proposed spec §7.6).
+ * TURN credential issuing (experimental; knit-next `docs/SPOOL_PROTOCOL.md` §7.6).
  * The spool hands out coturn REST credentials and never relays media; these pin the gate, the
  * credential's shape and the budget.
  */

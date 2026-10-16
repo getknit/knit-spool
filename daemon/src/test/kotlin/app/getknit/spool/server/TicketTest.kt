@@ -22,7 +22,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Entitlement tickets on `turnreq` (experimental; knit-next `docs/VOICE_CALLS.md` §2.6, ADR
+ * Entitlement tickets on `turnreq` (experimental; knit-next `docs/SPOOL_PROTOCOL.md` §7.6, ADR
  * 2026-10.bxsg) — what tells a paying caller from anyone else on a spool that sells TURN. The ticket
  * check itself is pinned in `:protocol`'s `TicketCheckTest`; these pin what the daemon does with it:
  * the hello flag, binding to a connection, the gate it puts on `turnreq`, and the username it yields.

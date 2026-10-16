@@ -55,7 +55,7 @@ private const val EVENT_GRACE_MS = 500L
 /** A cast's payload in the cast checks: about a sealed walkie chunk. */
 private const val CAST_PROBE_BYTES = 797
 
-/** The burst a cast budget allows, as a multiple of its advertised rate (VOICE_CALLS.md §2.7). */
+/** The burst a cast budget allows, as a multiple of its advertised rate (SPOOL_PROTOCOL.md §7.7). */
 private const val CAST_BURST_FACTOR = 4
 
 /** How many casts past the burst `cast-rate` sends. */
@@ -256,7 +256,7 @@ fun allChecks(): List<Check> =
         turnRequiresSub(),
         turnCredShape(),
         turnHmac(),
-        // Experimental (VOICE_CALLS.md §2.6): entitlement tickets and the STUN list.
+        // Experimental (SPOOL_PROTOCOL.md §7.6): entitlement tickets and the STUN list.
         entAdvertised(),
         entForeignKey(),
         entRequired(),
@@ -264,11 +264,11 @@ fun allChecks(): List<Check> =
         entExpired(),
         entAudience(),
         stunShape(),
-        // Experimental (VOICE_CALLS.md §2.6, S-7.6-22/23): which capabilities a ticket gates, and files.
+        // Experimental (SPOOL_PROTOCOL.md §7.6, S-7.6-22/23): which capabilities a ticket gates, and files.
         entGates(),
         filesTicket(),
         filesReceive(),
-        // Experimental (VOICE_CALLS.md §2.7): casts. cast-rate last of them, since it drains this
+        // Experimental (SPOOL_PROTOCOL.md §7.7): casts. cast-rate last of them, since it drains this
         // address's cast budget.
         castAdvertised(),
         castFanout(),
@@ -411,7 +411,7 @@ private fun turnHmac(): Check =
 
 /** Skips every ticket check on a spool whose `hello` carried no `ent` (S-7.6-13, experimental). */
 private fun Ctx.requireEnt() {
-    if (serverHello.ent == null) throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+    if (serverHello.ent == null) throw SkipCheck("spool advertises no ent (SPOOL_PROTOCOL.md §7.6)")
     ensure(serverHello.ent == true) { "hello carries ent=false; presence is the signal and false is never sent" }
 }
 
@@ -488,7 +488,7 @@ private fun entAudience(): Check =
 /** S-7.6-13: a `stun` list is non-empty, and every entry a `stun:`/`stuns:` URI with nothing to sign in. */
 private fun stunShape(): Check =
     Check(name = "stun-shape") { ctx ->
-        val stun = ctx.serverHello.stun ?: throw SkipCheck("spool advertises no stun (VOICE_CALLS.md §2.6)")
+        val stun = ctx.serverHello.stun ?: throw SkipCheck("spool advertises no stun (SPOOL_PROTOCOL.md §7.6)")
         ensure(stun.isNotEmpty()) { "hello carries an empty stun list; omitted is the off state" }
         stun.forEach { url ->
             ensure(STUN_URI.matches(url)) { "expected a stun:/stuns: URI with no credential, got \"$url\"" }
@@ -501,7 +501,7 @@ private fun entGates(): Check =
         val gates = ctx.serverHello.entGates
         if (ctx.serverHello.ent == null) {
             ensure(gates == null) { "hello carries entGates=$gates without ent" }
-            throw SkipCheck("spool advertises no ent (VOICE_CALLS.md §2.6)")
+            throw SkipCheck("spool advertises no ent (SPOOL_PROTOCOL.md §7.6)")
         }
         ctx.requireEnt()
         val present = gates ?: throw CheckFailure("hello carries ent without entGates; S-7.6-13 sends them together")
@@ -574,8 +574,8 @@ private fun filesReceive(): Check =
         }
     }
 
-/** Skips every cast check on a spool whose `hello` carried no `cast` (experimental, VOICE_CALLS.md §2.7). */
-private fun Ctx.requireCast(): CastInfo = serverHello.cast ?: throw SkipCheck("spool advertises no cast (VOICE_CALLS.md §2.7)")
+/** Skips every cast check on a spool whose `hello` carried no `cast` (experimental, SPOOL_PROTOCOL.md §7.7). */
+private fun Ctx.requireCast(): CastInfo = serverHello.cast ?: throw SkipCheck("spool advertises no cast (SPOOL_PROTOCOL.md §7.7)")
 
 /**
  * Lets [session] cast where the spool sells casts: on a spool whose `hello` gates `cast`, a cast

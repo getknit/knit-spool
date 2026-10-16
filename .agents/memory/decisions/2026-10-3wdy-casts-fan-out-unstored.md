@@ -85,7 +85,8 @@ drafted in knit-next `docs/VOICE_CALLS.md` §2.7 as proposed spec §7.7.
   - `CastTest`: fan-out excludes the caster; nothing stored, listed or tombstoned; every
     refusal silent; no strike; the reload kill switch; the ticket gate, one payer, expiry,
     and the payer leaving; nothing logged.
-  - `CastRecordVectorTest`, whose hex knit-next's client must match.
+  - `CastRecordVectorTest`, whose hex knit-next's client must match (in `SpecVectorTest` since
+    2026-10-15, when the spec took §7.7).
   - The conformance checks `cast-advertised`, `cast-fanout`, `cast-silent-refusal`,
     `cast-ticket` and the advisory `cast-rate`, run in process by `ConformanceSelfTest`.
   - `ConfigTest`, `ReloadTest` and `TicketToolTest`'s cast cases.

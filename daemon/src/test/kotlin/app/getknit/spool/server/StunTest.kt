@@ -8,7 +8,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 /**
- * The STUN list in `hello` (experimental; knit-next `docs/VOICE_CALLS.md` §2.6, S-7.6-13). It is
+ * The STUN list in `hello` (experimental; knit-next `docs/SPOOL_PROTOCOL.md` §7.6, S-7.6-13). It is
  * what lets a phone with no TURN of its own learn its public address, so a paying peer's relay can
  * permit it. It needs no secret and no subscription: every client that connects is told.
  */

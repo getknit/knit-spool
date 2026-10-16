@@ -34,16 +34,16 @@ object RecordType {
     const val ACHUNK = "achunk"
     const val APUT = "aput"
 
-    // TURN provisioning (experimental; knit-next docs/VOICE_CALLS.md §2, proposed spec §7.6). Only
+    // TURN provisioning (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6). Only
     // ever sent to a spool whose HELLO carried `turn`.
     const val TURNREQ = "turnreq"
     const val TURNCRED = "turncred"
 
-    // Entitlement tickets (experimental; knit-next docs/VOICE_CALLS.md §2.6). Only ever sent to a
+    // Entitlement tickets (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6). Only ever sent to a
     // spool whose HELLO carried `ent`.
     const val ENT = "ent"
 
-    // Casts (experimental; knit-next docs/VOICE_CALLS.md §2.7, proposed spec §7.7): one name for both
+    // Casts (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.7): one name for both
     // directions, like `hello` and `list`. Only ever sent to a spool whose HELLO carried `cast`.
     const val CAST = "cast"
 }
@@ -66,7 +66,7 @@ object ErrCode {
 
     /**
      * An `ent` the spool will not accept, or a gated `turnreq` or `aput` that needs a ticket the
-     * connection does not hold (experimental, VOICE_CALLS.md §2.6). `msg` carries one [Tickets.Reason]
+     * connection does not hold (experimental, SPOOL_PROTOCOL.md §7.6). `msg` carries one [Tickets.Reason]
      * word.
      */
     const val TICKET = "ticket"
@@ -173,16 +173,16 @@ class CommonsInfo(
  * spool that does not require it omits the field, and `false` on the wire is a conformance finding.
  * It is a request, not a check: the spool holds ciphertext and cannot verify compliance.
  *
- * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, proposed spec
+ * [turn] says the spool issues TURN credentials ([TurnReq]/[TurnCred]; experimental, SPOOL_PROTOCOL.md
  * §7.6). Nullable for [moderation]'s reason: presence is the signal, and `false` is never sent.
  *
  * [ent] says the spool accepts entitlement tickets ([Ent]), and [entGates] which [Ticket.fl] bits it
  * requires one for on this connection; [ticketGates] reads the pair, absent `entGates` included.
  * [stun] lists `stun:`/`stuns:` URIs any client may gather from, with no credential — what
  * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
- * (VOICE_CALLS.md §2.6), and both omitted when off: `false` and an empty list are never sent.
+ * (SPOOL_PROTOCOL.md §7.6), and both omitted when off: `false` and an empty list are never sent.
  *
- * [cast] says the spool fans out [Cast]s, and within what (experimental, VOICE_CALLS.md §2.7). Omitted
+ * [cast] says the spool fans out [Cast]s, and within what (experimental, SPOOL_PROTOCOL.md §7.7). Omitted
  * when casts are off. Where [ticketGates] has [Tickets.FL_CAST], a cast is admitted only on a scope a
  * cast ticket has unlocked.
  */
@@ -210,7 +210,7 @@ class Hello(
 }
 
 /**
- * The cast advertisement (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): this spool fans
+ * The cast advertisement (experimental, SPOOL_PROTOCOL.md §7.7): this spool fans
  * casts out. [maxBytes] bounds a cast's `data`, and [rate] is casts per second per connection, with a
  * burst of four times that. Both are stated up front because a cast is never answered: a client that
  * overshoots either is dropped without being told, so it has to know the bounds before it sends.
@@ -313,7 +313,7 @@ class Ahas(
 )
 
 /**
- * Client→spool: ask for one TURN credential (experimental, proposed spec §7.6). Names no scope on
+ * Client→spool: ask for one TURN credential (experimental, SPOOL_PROTOCOL.md §7.6). Names no scope on
  * purpose — the spool must not learn which conversation is calling. Answered by [TurnCred] or `err`.
  */
 @Serializable
@@ -338,7 +338,7 @@ class TurnCred(
 )
 
 /**
- * Client→spool: present an entitlement ticket (experimental, VOICE_CALLS.md §2.6). [tk] is the CBOR
+ * Client→spool: present an entitlement ticket (experimental, SPOOL_PROTOCOL.md §7.6). [tk] is the CBOR
  * [Ticket] exactly as signed, and [sig] the 64-byte Ed25519 signature over [Tickets.LABEL] ‖ [tk] —
  * carried as bytes rather than re-encoded, so the spool verifies what the issuer signed. Answered by
  * `ok` or `err ticket`; a later `ent` on the same connection replaces the claims.
@@ -352,7 +352,7 @@ class Ent(
 )
 
 /**
- * A cast (experimental, VOICE_CALLS.md §2.7, proposed spec §7.7): one sealed frame for a scope's other
+ * A cast (experimental, SPOOL_PROTOCOL.md §7.7): one sealed frame for a scope's other
  * live subscribers, never stored. Client→spool, it is the one client record with no `q`, and it is
  * never answered — a refusal is a silent drop — because a shipped client reads a scoped `err` without
  * a `q` as a refused `sub`. Spool→client it is relayed unchanged, uploader excluded, like an [Event]

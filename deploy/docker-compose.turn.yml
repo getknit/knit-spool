@@ -1,4 +1,4 @@
-# TURN for Knit voice calls (experimental; proposed spec §7.6). An overlay on
+# TURN for Knit voice calls (experimental; SPOOL_PROTOCOL.md §7.6). An overlay on
 # docker-compose.tls.yml — it borrows Caddy's certificate for turns: — and always the LAST -f:
 #
 #   docker compose -f docker-compose.tls.yml -f docker-compose.turn.yml up -d
@@ -25,7 +25,7 @@ services:
   spool:
     environment:
       SPOOL_TURN_SECRET: "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env (openssl rand -base64 48)}"
-      # One URL per transport (knit-next docs/VOICE_CALLS.md S-7.6-25): UDP first, then TLS on 5349
+      # One URL per transport (knit-next docs/SPOOL_PROTOCOL.md S-7.6-25): UDP first, then TLS on 5349
       # for networks that pass only TLS. A phone opens an allocation per network for every URL it
       # tries, and a plain turn:...?transport=tcp seldom reaches a network these two miss, so it is
       # not a default. Setting SPOOL_TURN_URLS replaces this list as given: add it back there, or

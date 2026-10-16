@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# coturn beside a Knit Spool (experimental; proposed spec §7.6). The Spool issues credentials under
+# coturn beside a Knit Spool (experimental; SPOOL_PROTOCOL.md §7.6). The Spool issues credentials under
 # SPOOL_TURN_SECRET and this relays the calls they authorise. Run by docker-compose.turn.yml.
 #
 # Starts as root for one reason: Caddy writes its certificates 0600 root, so only root can read

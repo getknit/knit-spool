@@ -13,7 +13,7 @@ import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 
 /**
- * The claims an entitlement ticket carries (experimental; knit-next docs/VOICE_CALLS.md §2.6, ADR
+ * The claims an entitlement ticket carries (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6, ADR
  * 2026-10.bxsg). Encoded with [RecordCodec] and signed as bytes; the spool verifies those bytes, never
  * a re-encoding.
  *
@@ -71,7 +71,7 @@ class Ticket(
 
 /**
  * Entitlement tickets: an Ed25519 grant a storefront signs and a spool checks with only the public
- * half (experimental; knit-next docs/VOICE_CALLS.md §2.6, ADR 2026-10.bxsg).
+ * half (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6, ADR 2026-10.bxsg).
  *
  * ```
  * tk  = CBOR(Ticket)
@@ -104,7 +104,7 @@ object Tickets {
 
     /**
      * [Ticket.fl] bit 3: the holder may cast, and unlocks casts for every other subscriber of each scope
-     * its connection holds (VOICE_CALLS.md §2.7). Bit 2 stays reserved: it was drafted as a
+     * its connection holds (SPOOL_PROTOCOL.md §7.7). Bit 2 stays reserved: it was drafted as a
      * scope-creation claim, and ADR 2026-10.x9gq proposes keeping creation open instead.
      */
     const val FL_CAST = 8L

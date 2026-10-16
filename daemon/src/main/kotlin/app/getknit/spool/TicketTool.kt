@@ -14,7 +14,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * `knit-spool ticket-keygen` and `ticket-mint`: an operator's stand-in for the storefront that will
- * issue entitlement tickets (experimental; knit-next docs/VOICE_CALLS.md §2.6, ADR 2026-10.bxsg), so
+ * issue entitlement tickets (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6, ADR 2026-10.bxsg), so
  * a field test can tell paying callers from free ones before any storefront exists.
  *
  * The daemon itself never reads a signing key: `serve` and `check` take only the public half. These

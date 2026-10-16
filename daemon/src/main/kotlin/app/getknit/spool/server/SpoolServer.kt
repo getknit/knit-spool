@@ -245,19 +245,19 @@ class SpoolServer(
         val sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
         /** The commons (spec §7.4), or null when this spool does not run one. */
         val commons: CommonsConfig? = null,
-        /** TURN credential issuing (experimental, proposed spec §7.6), or null when off. */
+        /** TURN credential issuing (experimental, SPOOL_PROTOCOL.md §7.6), or null when off. */
         val turn: TurnConfig? = null,
         /**
          * `stun:`/`stuns:` URIs advertised in `hello` to every client, with no credential
-         * (experimental, VOICE_CALLS.md §2.6). Independent of [turn]: a spool that issues nothing
+         * (experimental, SPOOL_PROTOCOL.md §7.6). Independent of [turn]: a spool that issues nothing
          * can still tell a free phone where to learn its own public address.
          */
         val stunUrls: List<String> = emptyList(),
-        /** Entitlement-ticket checking (experimental, VOICE_CALLS.md §2.6), or null when off. */
+        /** Entitlement-ticket checking (experimental, SPOOL_PROTOCOL.md §7.6), or null when off. */
         val ticket: TicketConfig? = null,
         /**
          * Casts each connection may send per second, with a burst of four times that (experimental,
-         * VOICE_CALLS.md §2.7). 0, the default, turns casts off: `hello` omits `cast` and every
+         * SPOOL_PROTOCOL.md §7.7). 0, the default, turns casts off: `hello` omits `cast` and every
          * cast is dropped. Beside a ticket key, a cast needs a scope a cast ticket has unlocked.
          */
         val rateCasts: Int = 0,
@@ -406,8 +406,8 @@ class SpoolServer(
     )
 
     /**
-     * What entitlement tickets ([Tickets]) are checked against (experimental, VOICE_CALLS.md
-     * §2.6): the issuer's public key and the audience a ticket must name to be good here. Only the
+     * What entitlement tickets ([Tickets]) are checked against (experimental, SPOOL_PROTOCOL.md
+     * §7.6): the issuer's public key and the audience a ticket must name to be good here. Only the
      * public half — whoever issues tickets holds the signing key, and nothing in the daemon can mint.
      */
     class TicketConfig(
@@ -1272,7 +1272,7 @@ class SpoolServer(
     }
 
     /**
-     * Issues one TURN credential (experimental, proposed spec §7.6).
+     * Issues one TURN credential (experimental, SPOOL_PROTOCOL.md §7.6).
      *
      * The request names no scope, and nothing here asks which: holding *some* subscription is the
      * whole gate, so the spool never learns which conversation is about to call. A refusal for rate
@@ -1335,8 +1335,8 @@ class SpoolServer(
     }
 
     /**
-     * Checks an entitlement ticket and binds it to the connection (experimental, VOICE_CALLS.md
-     * §2.6, S-7.6-14/15). The verifying key is read live, so a reload that rotates it judges the
+     * Checks an entitlement ticket and binds it to the connection (experimental, SPOOL_PROTOCOL.md
+     * §7.6, S-7.6-14/15). The verifying key is read live, so a reload that rotates it judges the
      * next `ent`. A refusal is never a strike — an expired ticket is ordinary life for a phone that
      * slept through its refresh — and leaves any earlier accepted ticket in place, so a failed
      * renewal cannot take away what the connection already holds. Neither the ticket nor its
@@ -1738,7 +1738,7 @@ class SpoolServer(
 
     /**
      * Fans one cast out to its scope's other live subscribers and keeps nothing (experimental,
-     * VOICE_CALLS.md §2.7, proposed spec §7.7; ADR 2026-10.3wdy).
+     * SPOOL_PROTOCOL.md §7.7; ADR 2026-10.3wdy).
      *
      * It reads only the connection's subscriptions and [subscribers], never the store. So a cast
      * cannot create or recreate a scope, hold one against `maxScopes`, fold a digest, leave a

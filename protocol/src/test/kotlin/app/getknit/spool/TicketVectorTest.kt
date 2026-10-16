@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package app.getknit.spool
 
-import app.getknit.spool.protocol.Ent
 import app.getknit.spool.protocol.Hello
 import app.getknit.spool.protocol.RECORD_VERSION
 import app.getknit.spool.protocol.RecordCodec
@@ -16,11 +15,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * **Experimental.** Vectors for entitlement tickets, from the draft in knit-next's
- * `docs/VOICE_CALLS.md` §2.6. The key pair is RFC 8032 §7.1 TEST 1, so the public half comes from
- * the RFC rather than from this code, and every hex string below was produced independently: a
- * hand-rolled CBOR encoder and pyca/cryptography's Ed25519, not kotlinx or the JDK. Ed25519 is
- * deterministic, so the signature is a vector like any other byte string.
+ * The key pair and ticket fixtures behind knit-next `docs/SPOOL_PROTOCOL.md` §13's ticket vectors,
+ * and checks around them. The key pair is RFC 8032 §7.1 TEST 1, so the public half comes from the
+ * RFC rather than from this code. The vectors themselves are pinned by [SpecVectorTest]; they were
+ * produced independently, by a hand-rolled CBOR encoder and pyca/cryptography's Ed25519, not kotlinx
+ * or the JDK.
  */
 class TicketVectorTest {
     @Test
@@ -31,36 +30,16 @@ class TicketVectorTest {
         verifier.initVerify(Tickets.publicKey(RFC_PUBLIC))
         assertTrue(verifier.verify(RFC_EMPTY_SIG), "the RFC 8032 TEST 1 signature must verify")
         // The PKCS#8 prefix: what sign() makes from the seed verifies under that same public key.
-        assertEquals(EXPECTED.getValue("sig"), Tickets.sign(SIGNING_KEY, EXPECTED.getValue("tk").hexToByteArray()).toHexString())
+        assertEquals(SPEC.getValue("sig"), Tickets.sign(SIGNING_KEY, SPEC.getValue("tk").hexToByteArray()).toHexString())
     }
 
     @Test
-    fun ticketVectorsMatchTheDraft() {
-        val (tk, sig) = Tickets.issue(SIGNING_KEY, fixture())
-        assertEquals(EXPECTED.getValue("kid"), Tickets.kid(RFC_PUBLIC).toHexString())
-        assertEquals(EXPECTED.getValue("tk"), tk.toHexString(), "ticket body diverges from the draft")
-        assertEquals(EXPECTED.getValue("sig"), sig.toHexString(), "ticket signature diverges from the draft")
-        assertEquals(
-            EXPECTED.getValue("ent"),
-            RecordCodec.encode(Ent(t = RecordType.ENT, q = 7, tk = tk, sig = sig)).toHexString(),
-            "ent record diverges from the draft",
-        )
-        val hello = Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, stun = listOf("stun:lab.example:3478"))
-        assertEquals(EXPECTED.getValue("helloEntStun"), RecordCodec.encode(hello).toHexString())
-    }
-
-    @Test
-    fun aFilesTicketWithABudgetAndAGatedHelloMatchTheDraft() {
-        val (tk, sig) = Tickets.issue(SIGNING_KEY, filesFixture())
-        assertEquals(EXPECTED.getValue("tkFiles"), tk.toHexString(), "files ticket body diverges from the draft")
-        assertEquals(EXPECTED.getValue("sigFiles"), sig.toHexString(), "files ticket signature diverges from the draft")
-        val decoded = RecordCodec.decode<Ticket>(tk)
+    fun theFilesVectorsDecodeToTheirClaimsAndGates() {
+        val decoded = RecordCodec.decode<Ticket>(SPEC.getValue("tkFiles").hexToByteArray())
         assertEquals(Tickets.FL_TURN or Tickets.FL_FILES, decoded?.fl)
         assertEquals(134_217_728L, decoded?.ab)
         val gates = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST
-        val hello = Hello(t = RecordType.HELLO, v = RECORD_VERSION, ent = true, entGates = gates)
-        assertEquals(EXPECTED.getValue("helloEntGates"), RecordCodec.encode(hello).toHexString())
-        assertEquals(gates, RecordCodec.decode<Hello>(EXPECTED.getValue("helloEntGates").hexToByteArray())?.ticketGates)
+        assertEquals(gates, RecordCodec.decode<Hello>(SPEC.getValue("helloEntGates").hexToByteArray())?.ticketGates)
     }
 
     @Test
@@ -82,7 +61,7 @@ class TicketVectorTest {
 
     @Test
     fun theVectorTicketDecodesToItsClaims() {
-        val ticket = RecordCodec.decode<Ticket>(EXPECTED.getValue("tk").hexToByteArray())
+        val ticket = RecordCodec.decode<Ticket>(SPEC.getValue("tk").hexToByteArray())
         assertEquals(1_800_086_400L, ticket?.exp)
         assertEquals("lab.example", ticket?.aud)
         assertContentEquals(ByteArray(Tickets.PS_BYTES) { it.toByte() }, ticket?.ps)
@@ -120,29 +99,6 @@ class TicketVectorTest {
                 ab = 134_217_728L,
             )
 
-        val EXPECTED =
-            mapOf(
-                "kid" to "21fe31dfa154a261",
-                "tk" to
-                    "a7617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c65636e62661a6b49d200636578701a6b4b2380" +
-                    "62707350000102030405060708090a0b0c0d0e0f62666c01",
-                "sig" to
-                    "c0740d14d5f46f2771721c593fa34a6e926b39182955cc6f8fb15365dddcf229" +
-                    "da2cb33bdf6f23881cf4b153eedc4238e143fa53ef1a834961040bb55818b809",
-                "ent" to
-                    "a4617463656e7461710762746b584ba7617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c65636e6266" +
-                    "1a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c0d0e0f62666c01637369675840c0740d14d5f46f27" +
-                    "71721c593fa34a6e926b39182955cc6f8fb15365dddcf229da2cb33bdf6f23881cf4b153eedc4238e143fa53ef1a834961040bb5" +
-                    "5818b809",
-                "helloEntStun" to
-                    "a461746568656c6c6f61760163656e74f5647374756e81757374756e3a6c61622e6578616d706c653a33343738",
-                "tkFiles" to
-                    "a8617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c65636e62661a6b49d200636578701a6b4b2380" +
-                    "62707350000102030405060708090a0b0c0d0e0f62666c036261621a08000000",
-                "sigFiles" to
-                    "1942b4b07f1ef10f7e4061e822d909876b2e5a1597469c5aa70c87c5909dbc9c" +
-                    "c24dc7703dfcb8a33ea190b19e4b9a9f460319f9ec2d11d17e787afe551b5d0a",
-                "helloEntGates" to "a461746568656c6c6f61760163656e74f568656e7447617465730b",
-            )
+        private val SPEC = SpecVectorTest.EXPECTED
     }
 }

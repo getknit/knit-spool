@@ -122,7 +122,7 @@ class DeployConfigTest {
     /**
      * A phone opens a TURN allocation per network for every URL it is handed, and coturn's quotas
      * count allocations (ADR 2026-10.y2ph). So the overlay's default is one URL per transport, UDP
-     * then TLS (knit-next `docs/VOICE_CALLS.md` S-7.6-25): a plain `transport=tcp` URL costs an
+     * then TLS (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25): a plain `transport=tcp` URL costs an
      * allocation per network on every call and seldom reaches a network the other two miss.
      */
     @Test

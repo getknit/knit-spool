@@ -396,7 +396,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         "SPOOL_TOKEN_NEXT is set but SPOOL_TOKEN is not: set both during a rotation, then promote NEXT into TOKEN"
     }
     require(tokenNext == null || tokenNext != token) { "SPOOL_TOKEN_NEXT must differ from SPOOL_TOKEN" }
-    // Casts (experimental, VOICE_CALLS.md §2.7). A rate of 0 is the off switch and the default.
+    // Casts (experimental, SPOOL_PROTOCOL.md §7.7). A rate of 0 is the off switch and the default.
     val maxCast = intVar(env, "SPOOL_MAX_CAST", default = 2_048, min = 1)
     require(maxCast + RECORD_ENVELOPE <= maxRecord) {
         "SPOOL_MAX_CAST ($maxCast) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
@@ -435,7 +435,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
 }
 
 /**
- * Entitlement-ticket checking (experimental, VOICE_CALLS.md §2.6), or null when
+ * Entitlement-ticket checking (experimental, SPOOL_PROTOCOL.md §7.6), or null when
  * `SPOOL_TICKET_KEY` is unset. The key is the issuer's raw Ed25519 public key in unpadded base64url,
  * as `knit-spool ticket-keygen` prints it; it is decoded and tried as a verifier here, so a key the
  * JDK cannot use stops the spool at boot rather than refusing the first paying caller.
@@ -493,7 +493,7 @@ private fun ticketGates(raw: String?): Long {
 }
 
 /**
- * The STUN URIs `hello` advertises (experimental, VOICE_CALLS.md §2.6), or none when
+ * The STUN URIs `hello` advertises (experimental, SPOOL_PROTOCOL.md §7.6), or none when
  * `SPOOL_STUN_URLS` is unset. They carry no credential and need no secret, so unlike the TURN
  * settings they stand alone.
  */
@@ -508,7 +508,7 @@ internal fun stunFromEnv(env: (String) -> String?): List<String> {
 }
 
 /**
- * TURN credential issuing (experimental, proposed spec §7.6), or null when `SPOOL_TURN_SECRET` is
+ * TURN credential issuing (experimental, SPOOL_PROTOCOL.md §7.6), or null when `SPOOL_TURN_SECRET` is
  * unset — off by default, and a spool without it advertises nothing and answers `turnreq` with
  * `err malformed`.
  *

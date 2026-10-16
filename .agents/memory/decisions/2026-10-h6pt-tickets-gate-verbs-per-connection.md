@@ -138,7 +138,7 @@ Sending an attachment needs the sender's own ticket. Receiving one needs nothing
 
 ## What shipped
 
-Commits `dc26071` through `6cdcda0` on `exp/turn` (`17a6b84` through `319f0ce` before its rebase), with the spec rows in knit-next `0874ea3b`
+Commits `577c35e` through `37412e2` on `exp/turn` (`17a6b84` through `319f0ce` before its rebase), with the spec rows in knit-next `0874ea3b`
 (`docs/VOICE_CALLS.md` §2.6, S-7.6-22/23, C-7.6-24):
 
 - `FL_FILES`, the `ab` claim, `Reason.BUDGET` and `hello.entGates`, with vectors from the spec.
@@ -192,7 +192,8 @@ without a ticket is refused.
   - `TicketGatesTest`: the default `turn,cast` keeps today's behaviour on a keyed spool;
     with `files` absent, `aput` stays open on a keyed spool; the gates are snapshotted
     per connection across a reload.
-  - `TicketVectorTest`: a golden vector carrying `fl` with `FL_FILES` and an `ab` claim.
+  - `TicketVectorTest`: a golden vector carrying `fl` with `FL_FILES` and an `ab` claim (in
+    `SpecVectorTest` since 2026-10-15, when the spec took §7.6).
   - Conformance checks:
     - `ent-gates`: the shape of `entGates`, and that it agrees with the refusals;
     - `files-ticket`: an unticketed `aput` is refused `ticket` and a ticketed one is

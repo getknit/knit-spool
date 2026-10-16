@@ -261,7 +261,7 @@ class ConformanceSelfTest {
                 maxAttachBytes = MAX_ATTACH_BYTES,
             )
 
-        /** What skips on a spool with no ticket key and no STUN list (VOICE_CALLS.md §2.6). */
+        /** What skips on a spool with no ticket key and no STUN list (SPOOL_PROTOCOL.md §7.6). */
         val TICKET_AND_STUN_CHECKS =
             setOf(
                 "ent-advertised",

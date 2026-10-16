@@ -22,8 +22,8 @@ document:
 
 ### Added
 
-- **Experimental: TURN credentials for Knit voice calls** (the `exp/turn` branch; draft in knit-next
-  `docs/VOICE_CALLS.md` §2, proposed spec §7.6 — **not in the spec yet, and the wire may change**).
+- **Experimental: TURN credentials for Knit voice calls** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.6).
   With `SPOOL_TURN_SECRET` set, `hello` carries `turn: true`, and a connection holding any
   subscription can send `turnreq` for a `turncred`: coturn REST credentials (`<exp>:<random>`,
   `HMAC-SHA1`) for the URLs in `SPOOL_TURN_URLS`. The request names no scope. Budgeted per connection
@@ -38,8 +38,8 @@ document:
   3 allocations per credential, 100 in all, 16000 B/s per session, 12.8 Mbps for the box (the pool
   is exactly 100 × 16000, since coturn reserves the per-session rate for every allocation), and relay
   ports 49160–49999.
-- **Experimental: entitlement tickets and a STUN list** (draft in knit-next `docs/VOICE_CALLS.md`
-  §2.6; ADR 2026-10.bxsg). `SPOOL_STUN_URLS` puts credential-free `stun:` URIs in every `hello`, so
+- **Experimental: entitlement tickets and a STUN list** (knit-next `docs/SPOOL_PROTOCOL.md`
+  §7.6; ADR 2026-10.bxsg). `SPOOL_STUN_URLS` puts credential-free `stun:` URIs in every `hello`, so
   a phone with no TURN can still be reached through a paying peer's relay. `SPOOL_TICKET_KEY` and
   `SPOOL_TICKET_AUDIENCE` add `ent: true` to `hello` and a new `ent` record carrying an Ed25519
   ticket; on such a connection `turnreq` needs a live ticket (else the new `err ticket`, with a
@@ -48,8 +48,8 @@ document:
   ticket-keygen` and `ticket-mint` stand in for an issuer. New conformance checks `ent-advertised`,
   `ent-foreign-key`, `ent-required`, `ent-accepts`, `ent-expired`, `ent-audience` and `stun-shape`
   (`--ticket-key-file`, `--ticket-audience`); the TURN checks present a ticket where one is needed.
-- **Experimental: casts, a walkie-talkie's chunks relayed live and never stored** (draft in knit-next
-  `docs/VOICE_CALLS.md` §2.7, proposed spec §7.7). With `SPOOL_RATE_CASTS` above 0, `hello` carries
+- **Experimental: casts, a walkie-talkie's chunks relayed live and never stored** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.7). With `SPOOL_RATE_CASTS` above 0, `hello` carries
   `cast: { maxBytes, rate }` and a new `cast` record goes to every other subscriber of its scope. It
   never touches the store: no blob, digest, tombstone, listing or disk. A cast has no `q` and is never
   answered. A refused one is dropped and counted in `knit_spool_casts_dropped_total{reason}`, never
@@ -59,8 +59,8 @@ document:
   (`SPOOL_RATE_CASTS_TOTAL`), with `SPOOL_MAX_CAST` bounding the size; all reloadable, and a rate of
   0 stops casts at once. Off by default. New conformance checks `cast-advertised`, `cast-fanout`,
   `cast-silent-refusal`, `cast-ticket` and the advisory `cast-rate`.
-- **Experimental: ticket gates and uploader-paid attachments** (draft in knit-next
-  `docs/VOICE_CALLS.md` §2.6, S-7.6-22/23; ADR 2026-10.h6pt). `SPOOL_TICKET_GATES` picks which
+- **Experimental: ticket gates and uploader-paid attachments** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.6, S-7.6-22/23; ADR 2026-10.h6pt). `SPOOL_TICKET_GATES` picks which
   capabilities a ticket key gates, from `turn`, `files` and `cast`. It defaults to `turn,cast`, so a
   keyed Spool behaves as before, and `hello` names the choice in a new `entGates` beside `ent`. With
   `files` gated, an `aput` needs the uploader's own ticket with the new files flag (bit 1,
@@ -76,7 +76,7 @@ document:
 
 - **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
   now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
-  `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/VOICE_CALLS.md` S-7.6-25). The plain
+  `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25). The plain
   `turn:…:3478?transport=tcp` URL is gone from it: a phone opened an allocation for it on every
   network on every call, and it seldom reached a network the other two missed. A deployment that
   sets `SPOOL_TURN_URLS` itself keeps exactly what it set. 3478/tcp no longer needs to be open on

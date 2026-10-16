@@ -154,8 +154,8 @@ survive only on `exp/turn-pre-rebase`.
     `knit-ticket-key:v1:<base64url(seed ‖ public key)>`, because the JDK cannot derive the
     public half from a seed;
   - the metrics, and the conformance checks listed under the guards below.
-- **The cast gate**, by ADR 2026-10.3wdy (commit `e0355dc`).
-- **The `files` gate**, by ADR 2026-10.h6pt (commits `dc26071` through `6cdcda0`): the `ab`
+- **The cast gate**, by ADR 2026-10.3wdy (commit `f7549b1`).
+- **The `files` gate**, by ADR 2026-10.h6pt (commits `577c35e` through `37412e2`): the `ab`
   claim and the daily upload budget, charged to the uploader only and opt-in through
   `SPOOL_TICKET_GATES`.
 
@@ -183,8 +183,9 @@ survive only on `exp/turn-pre-rebase`.
   product copy without the retention multiplier, or quoting the multiplier at 48 h on a
   spool whose `SPOOL_MAX_TTL_MS` is longer.
 - **Guards:**
-  - `TicketVectorTest`: golden vectors (CBOR bytes, signature, `kid`) on the RFC 8032 TEST 1
-    key pair, with every hex string produced independently of this code;
+  - `SpecVectorTest`: the spec's §13 ticket vectors (CBOR bytes, signature, `kid`) on the RFC 8032
+    TEST 1 key pair that `TicketVectorTest` holds, with every hex string produced independently of
+    this code (moved from `TicketVectorTest` on 2026-10-15, when the spec took §7.6);
   - `TicketCheckTest`: the skew window, audience, `kid` and claim checks;
   - `TicketTest`: the `turnreq` gate, the stable pseudonym suffix, refusal reasons with no
     strike, renewal, mid-connection expiry, a reload never changing a live connection's gate,

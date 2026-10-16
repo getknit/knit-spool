@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-/** The coturn REST credential, pinned to the draft spec's vector (knit-next `docs/VOICE_CALLS.md` §2.2). */
+/** The coturn REST credential, pinned to the spec's §13 vector (knit-next `docs/SPOOL_PROTOCOL.md` §7.6). */
 class TurnCredentialsTest {
     private fun fixture(
         n: Int,
@@ -13,7 +13,7 @@ class TurnCredentialsTest {
     ) = ByteArray(n) { ((it * 7 + seed) and 0xFF).toByte() }
 
     @Test
-    fun theDraftVectorHolds() {
+    fun theSpecVectorHolds() {
         val user = TurnCredentials.user(1_800_000_000L, fixture(TurnCredentials.SUFFIX_BYTES, 11))
         assertEquals("1800000000:bmjbsibhfy2tyq2k", user)
         assertEquals("yV18C+LcL6biIfL7ZVOuV9xVuoU=", TurnCredentials.pass("knit-turn-test-secret", user))
