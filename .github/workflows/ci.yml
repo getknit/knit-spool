@@ -193,7 +193,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: coverage-report
           path: kover
@@ -267,7 +267,7 @@ jobs:
     steps:
       # The checkout is for Dockerfile.dist alone; the daemon comes from the artifact.
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: daemon-dist
           path: ctx/dist
