@@ -49,7 +49,8 @@ class TicketCheckTest {
         ps: ByteArray = fixture().ps,
         fl: Long = Tickets.FL_TURN,
         ab: Long? = null,
-    ) = Ticket(v = v, kid = kid, aud = "lab.example", nbf = nbf, exp = exp, ps = ps, fl = fl, ab = ab)
+        am: Long? = null,
+    ) = Ticket(v = v, kid = kid, aud = "lab.example", nbf = nbf, exp = exp, ps = ps, fl = fl, ab = ab, am = am)
 
     @Test
     fun aGoodTicketIsAcceptedWithItsClaims() {
@@ -71,6 +72,36 @@ class TicketCheckTest {
         assertEquals(1_024L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, ab = 1_024))).ticket.ab)
         assertEquals(0L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, ab = 0))).ticket.ab)
         assertNull(assertIs<Outcome.Accepted>(check()).ticket.ab)
+    }
+
+    @Test
+    fun aSizeCapIsCarriedWhenClaimedAndAbsentOtherwise() {
+        assertEquals(262_144L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, am = 262_144))).ticket.am)
+        assertEquals(0L, assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, am = 0))).ticket.am)
+        assertNull(assertIs<Outcome.Accepted>(check(with(fl = Tickets.FL_FILES, ab = 1_024))).ticket.am)
+    }
+
+    /**
+     * Unknown keys are ignored (B-2-2), so a later claim needs no version bump. The pin for one written
+     * after `am`, the last key this decoder knows: a 10th entry, `"zz": 1`, appended and signed.
+     */
+    @Test
+    fun anUnknownKeyAfterAmIsAccepted() {
+        val (tk, _) = Tickets.issue(SIGNING_KEY, with(fl = Tickets.FL_FILES, ab = 1_024, am = 262_144))
+        assertEquals(0xa9, tk[0].toInt() and 0xFF)
+        val extended = byteArrayOf(0xaa.toByte()) + tk.copyOfRange(1, tk.size) + "627a7a01".hexToByteArray()
+        val accepted = assertIs<Outcome.Accepted>(check(tamper = { _, _ -> extended to Tickets.sign(SIGNING_KEY, extended) }))
+        assertEquals(262_144L, accepted.ticket.am)
+        assertEquals(1_024L, accepted.ticket.ab)
+    }
+
+    /**
+     * An `fl` bit no spool assigns (bit 4) is accepted and carried as is. It grants nothing because no
+     * gate reads it: `TicketFilesTest` pins that for `aput`.
+     */
+    @Test
+    fun anUnknownFlagBitIsAccepted() {
+        assertEquals(16L, assertIs<Outcome.Accepted>(check(with(fl = 16))).ticket.fl)
     }
 
     @Test
@@ -113,6 +144,7 @@ class TicketCheckTest {
                 "a window over two days" to with(exp = nbf + Tickets.MAX_LIFETIME_S + 1),
                 "negative flags" to with(fl = -1),
                 "a negative upload budget" to with(ab = -1),
+                "a negative size cap" to with(fl = Tickets.FL_FILES, am = -1),
             )
         cases.forEach { (name, ticket) -> assertEquals(Reason.MALFORMED, refusal(check(ticket)), name) }
     }

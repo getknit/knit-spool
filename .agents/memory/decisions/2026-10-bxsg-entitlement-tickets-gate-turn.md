@@ -13,6 +13,7 @@ covered scope creation. Amended by ADR 2026-10.h6pt (the `files` gate) and ADR 2
 `cast` gate). The unbuilt parts were moved on 2026-10-15 to ADR 2026-10.x9gq, still proposed:
 `SPOOL_TICKET_KEY_NEXT` and per-pseudonym spool rate limits. The scope-creation gate drafted here
 went with them, and x9gq (accepted 2026-10-16) keeps creation open instead. See [What shipped](#what-shipped).
+Amended 2026-10-17 by ADR 2026-10.h4ps: the claims gain `am` after `ab`.
 
 **Context:** an operator may offer TURN and files to some callers and not others, and the
 spool must tell them apart without holding an account. In the shape considered, a storefront
@@ -78,6 +79,7 @@ Ticket {
   ps:  bstr(16)  // daily pseudonym = HMAC(storefront key, account ‖ aud ‖ UTC day of nbf)[0..16]
   fl:  uint      // bit 0 turn, bit 1 files (h6pt), bit 2 reserved (x9gq), bit 3 cast (3wdy)
   ab:  uint?     // attachment bytes this pseudonym may upload per ticket day (h6pt)
+  am:  uint?     // largest attachment, bytes of A, rounded down to whole chunks (h4ps)
 }
 ```
 

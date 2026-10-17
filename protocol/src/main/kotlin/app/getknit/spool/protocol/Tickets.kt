@@ -17,11 +17,11 @@ import java.util.Base64
  * 2026-10.bxsg). Encoded with [RecordCodec] and signed as bytes; the spool verifies those bytes, never
  * a re-encoding.
  *
- * Every field but [ab] is required and none has a default, because [RecordCodec] omits a field equal
- * to its default and the signed bytes must not depend on which defaults a decoder happens to declare.
- * [ab] is the one optional claim: its default is null, which is only ever omitted, so a ticket that
- * carries it always encodes it. Unknown keys are ignored, so later claims (a creation budget) add
- * without a version bump.
+ * Every field but [ab] and [am] is required and none has a default, because [RecordCodec] omits a
+ * field equal to its default and the signed bytes must not depend on which defaults a decoder happens
+ * to declare. [ab] and [am] are the optional claims: their default is null, which is only ever
+ * omitted, so a ticket that carries one always encodes it, in declaration order. Unknown keys are
+ * ignored, so later claims add without a version bump.
  */
 @Serializable
 class Ticket(
@@ -44,6 +44,12 @@ class Ticket(
      * own `SPOOL_TICKET_ATTACH_BYTES`, which also caps it.
      */
     val ab: Long? = null,
+    /**
+     * The largest attachment, in bytes of `A`, this ticket may `aput` where a spool gates `files`
+     * (S-7.6-31, ADR 2026-10.h4ps), rounded down to whole [A_CHUNK_BYTES] chunks. Null means the
+     * spool's own limit. It can only lower a limit: an attachment within it still meets the store's.
+     */
+    val am: Long? = null,
 ) {
     companion object {
         /** A current-version ticket for [signingKey], its [kid] filled in from the key's public half. */
@@ -55,6 +61,7 @@ class Ticket(
             ps: ByteArray,
             fl: Long,
             ab: Long? = null,
+            am: Long? = null,
         ): Ticket =
             Ticket(
                 v = Tickets.VERSION,
@@ -65,6 +72,7 @@ class Ticket(
                 ps = ps,
                 fl = fl,
                 ab = ab,
+                am = am,
             )
     }
 }
@@ -158,6 +166,9 @@ object Tickets {
 
         /** A gated `aput` whose pseudonym has spent its upload budget for the day (S-7.6-22). */
         BUDGET("budget"),
+
+        /** A gated `aput` whose `total` is over the uploader's ticket's [Ticket.am] (S-7.6-31). */
+        SIZE("size"),
     }
 
     /** The outcome of [check]: the verified claims, or the first reason they were refused. */
@@ -272,7 +283,8 @@ object Tickets {
             ticket.exp >= ticket.nbf &&
             ticket.exp - ticket.nbf <= MAX_LIFETIME_S &&
             ticket.fl >= 0 &&
-            (ticket.ab ?: 0L) >= 0
+            (ticket.ab ?: 0L) >= 0 &&
+            (ticket.am ?: 0L) >= 0
 
     private fun verify(
         key: PublicKey,

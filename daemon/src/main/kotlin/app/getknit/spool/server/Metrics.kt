@@ -80,7 +80,15 @@ class Metrics(
     val ticketAttachBytesChargedTotal = LongAdder()
 
     /**
-     * Ticket refusals by [Tickets.Reason] — on `ent` and on a `turnreq` that needed one. A closed
+     * Of [ticketAttachBytesChargedTotal], those charged under a ticket that carries `am` (ADR
+     * 2026-10.h4ps): what the size-capped holders store, beside everyone else. A second counter
+     * rather than a label, so a query on the first keeps meaning the whole.
+     */
+    val ticketAttachBytesChargedAmTotal = LongAdder()
+
+    /**
+     * Ticket refusals by [Tickets.Reason] — on `ent`, and on a `turnreq` or `aput` that a gate
+     * refused (`missing`, `expired`, `flags`, `size`, `budget`). A closed
      * set, every member rendered from zero, so a field test can tell an expired ticket from a
      * clock-skewed or mis-addressed one without a series appearing mid-test.
      */
@@ -187,6 +195,7 @@ class Metrics(
                 line("knit_spool_ticket_accepted_total", "counter", ticketAcceptedTotal.sum())
                 line("knit_spool_turn_issued_ticketed_total", "counter", turnIssuedTicketedTotal.sum())
                 line("knit_spool_ticket_attach_bytes_charged_total", "counter", ticketAttachBytesChargedTotal.sum())
+                line("knit_spool_ticket_attach_bytes_charged_am_total", "counter", ticketAttachBytesChargedAmTotal.sum())
                 append("# TYPE knit_spool_ticket_refused_total counter\n")
                 ticketRefusedTotal.forEach { (reason, adder) ->
                     append("knit_spool_ticket_refused_total{reason=\"")

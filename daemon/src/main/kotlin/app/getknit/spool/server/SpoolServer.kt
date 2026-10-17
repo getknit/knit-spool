@@ -2,6 +2,7 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.BuildInfo
+import app.getknit.spool.protocol.A_CHUNK_BYTES
 import app.getknit.spool.protocol.Achunk
 import app.getknit.spool.protocol.Aget
 import app.getknit.spool.protocol.Ahas
@@ -1453,10 +1454,14 @@ class SpoolServer(
 
     /**
      * Whether this `aput` may proceed where `files` is gated, and whose budget pays (S-7.6-22, ADR
-     * 2026-10.h6pt): the uploading connection's own live files ticket, with room left for this chunk
-     * under `min(ab, SPOOL_TICKET_ATTACH_BYTES)`. Another subscriber's ticket never admits an upload,
-     * unlike casts' `castUnlocked`: that is the sponsorship the ADR rejected. Refuses with a scoped
+     * 2026-10.h6pt): the uploading connection's own live files ticket, an attachment no larger than its
+     * `am` allows (S-7.6-31, ADR 2026-10.h4ps), and room left for this chunk under
+     * `min(ab, SPOOL_TICKET_ATTACH_BYTES)`. Another subscriber's ticket never admits an upload, unlike
+     * casts' `castUnlocked`: that is the sponsorship the ADR rejected. Refuses with a scoped
      * `err ticket`, never a strike, and returns false; on true, [payer] is what [handleAput] charges.
+     *
+     * The size is checked on every chunk, a re-sent one included: chunks of one `aid` may arrive under
+     * different tickets, and each uploader is held to its own.
      */
     private suspend fun filesAdmitted(
         conn: Conn,
@@ -1468,9 +1473,12 @@ class SpoolServer(
         // for connections told about it (their snapshot), metered at the default.
         val cap = config.ticket?.attachBytes ?: TicketConfig.DEFAULT_ATTACH_BYTES
         val shortfall = ticketShortfall(payer, Tickets.FL_FILES)
+        // Bytes of `A` rounded down to whole chunks, so a cap never admits more than it names.
+        val maxTotal = payer?.am?.let { it / A_CHUNK_BYTES }
         val reason =
             when {
                 shortfall != null -> shortfall
+                maxTotal != null && aput.total > maxTotal -> Tickets.Reason.SIZE
                 payer != null && uploadBudgets.admits(payer, ScopeStore.chunkCharge(aput.data.size), cap) -> return true
                 else -> Tickets.Reason.BUDGET
             }
@@ -1485,6 +1493,7 @@ class SpoolServer(
     ) {
         uploadBudgets.charge(payer, bytes, nowMs / MS_PER_S)
         metrics.ticketAttachBytesChargedTotal.add(bytes)
+        if (payer.am != null) metrics.ticketAttachBytesChargedAmTotal.add(bytes)
     }
 
     private suspend fun handleAget(

@@ -83,6 +83,16 @@ document:
   `err rate`, never struck. The table lives in memory, is capped, and drops a holder once its
   ticket expires.
 
+- **Experimental: a ticket can cap the size of the attachments it uploads** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.6, S-7.6-31; ADR 2026-10.h4ps). A ticket's optional `am` claim names
+  the largest attachment its holder may send, in bytes of the sealed attachment, rounded down to whole
+  48 KiB chunks. Where `files` is gated, an `aput` whose `total` is over it is refused `err ticket`
+  with the new `msg` `size`: checked on every chunk, never a strike, and nothing is stored or charged.
+  `am` only lowers a limit, so the store's own still answers `quota`, and a Spool that does not gate
+  `files` ignores it. `ticket-mint --am BYTES` sets it, `knit_spool_ticket_refused_total` gains
+  `reason="size"`, and `knit_spool_ticket_attach_bytes_charged_am_total` counts the bytes charged
+  under tickets that carry `am`. New conformance check `files-size` (`--ticket-key-file`).
+
 - **`knit_spool_new_scopes_quota_refused_total`**: new scopes refused `quota` at
   `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a shed scope. A rising count means
   the Spool is too small for the conversations reaching it.

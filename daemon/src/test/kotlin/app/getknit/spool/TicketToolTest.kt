@@ -115,6 +115,21 @@ class TicketToolTest {
         assertNull(claims(plain.single()).ab)
     }
 
+    /** A size cap only when given, beside the budget or alone; absent, the spool's own applies. */
+    @Test
+    fun amClaimsTheLargestAttachment() {
+        val (keyFile, _) = keygen()
+        val (_, both) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--files", "--ab", "1310720", "--am", "262144")
+        val ticket = claims(both.single())
+        assertEquals(1_310_720L, ticket.ab)
+        assertEquals(262_144L, ticket.am)
+        val (_, zero) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--files", "--am", "0")
+        assertEquals(0L, claims(zero.single()).am)
+        assertNull(claims(zero.single()).ab)
+        val (_, plain) = mint("--key-file", keyFile.toString(), "--aud", "lab.example", "--files")
+        assertNull(claims(plain.single()).am)
+    }
+
     @Test
     fun badInvocationsExitNonZeroWithoutPrintingAKey() {
         val (keyFile, _) = keygen()
@@ -133,6 +148,9 @@ class TicketToolTest {
                 listOf("--key-file", key, "--aud", "lab.example", "--ab", "-1") to 1,
                 listOf("--key-file", key, "--aud", "lab.example", "--ab", "lots") to 1,
                 listOf("--key-file", key, "--aud", "lab.example", "--ab") to 2,
+                listOf("--key-file", key, "--aud", "lab.example", "--am", "-1") to 1,
+                listOf("--key-file", key, "--aud", "lab.example", "--am", "big") to 1,
+                listOf("--key-file", key, "--aud", "lab.example", "--am") to 2,
             )
         val secret = Files.readString(keyFile).trim()
         cases.forEach { (args, expected) ->

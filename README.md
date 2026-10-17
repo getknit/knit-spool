@@ -377,7 +377,8 @@ Two further switches, for an operator who sells TURN to some callers and not oth
   list existed. Adding `files` makes **sending** an attachment need the sender's own ticket minted
   with `--files`: each stored chunk is charged to that holder's daily budget,
   `min(ab, SPOOL_TICKET_ATTACH_BYTES)`, and a spent budget is refused `err ticket` with `msg`
-  `budget`. Another member's ticket never pays for an upload, and **receiving** never needs one.
+  `budget`. A ticket's `am` lowers the largest attachment its holder may send, and a larger one is
+  refused `size`. Another member's ticket never pays for an upload, and **receiving** never needs one.
 - **`SPOOL_TICKET_TURN_RATE`** limits each holder's TURN credentials by its daily pseudonym, so
   one ticket copied to many addresses shares one budget. The per-connection and per-address
   limits still apply first, and a refusal is `err rate` with `retryMs`, never a strike.
@@ -399,7 +400,7 @@ knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account a
 
 `ticket-mint` prints a `knit-ticket:v1:…` line for a test client; `--cast` adds the cast flag
 ([casts](#-casts-experimental)), `--files` the upload flag, `--ab BYTES` a smaller upload budget,
-and `--no-turn` drops TURN. Conformance takes the same key:
+`--am BYTES` a smaller largest attachment, and `--no-turn` drops TURN. Conformance takes the same key:
 `--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
 `knit_spool_ticket_refused_total{reason}`, `knit_spool_turn_issued_ticketed_total` and
 `knit_spool_ticket_attach_bytes_charged_total` count what happened. The Spool learns each holder's
