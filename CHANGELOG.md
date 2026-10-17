@@ -99,14 +99,16 @@ document:
 
 ### Changed
 
-- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.2` now), in place of
+- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.3` now), in place of
   `0.4.0-SNAPSHOT`.**
   It is what `GET /source`, `knit_spool_build_info` and an `edge` image's
   `org.opencontainers.image.version` label carry. `n` moves on `main` whenever the environment
   contract does — a variable added or removed, a setting moving between reloadable and
   restart-only, a changed default — so a tool that renders a spool's environment can tell from the
   label alone which variables the daemon inside reads. `EnvContractTest` fails a change that moves
-  the contract without the number. Releases are unchanged: a tag still stamps its own version.
+  the contract without the number. It also moves by hand for behaviour no variable shows:
+  `0.4.0-dev.3` is the first build that reads a ticket's `am`. Releases are unchanged: a tag still
+  stamps its own version.
 - **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
   now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
   `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25). The plain
