@@ -21,10 +21,11 @@ import kotlin.test.assertTrue
  * produced independently, by a hand-rolled CBOR encoder and pyca/cryptography's Ed25519, not kotlinx
  * or the JDK.
  *
- * The four `am` vectors are this repo's to produce (S-7.6-31, ADR 2026-10.h4ps) and live here until the
- * spec's §13 carries them. They were made the same independent way, by a hand-rolled CBOR encoder and
- * pyca/cryptography 45.0.7's Ed25519, from [filesFixture]'s inputs with `fl`, `ab` and `am` replaced;
- * the same script reproduced the spec's `tkFiles` and `sigFiles` byte for byte first.
+ * The four `am` vectors are this repo's to produce (S-7.6-31, ADR 2026-10.h4ps). They were made the same
+ * independent way, by a hand-rolled CBOR encoder and pyca/cryptography 45.0.7's Ed25519, from
+ * [filesFixture]'s inputs with `fl`, `ab` and `am` replaced; the same script reproduced the spec's
+ * `tkFiles` and `sigFiles` byte for byte first. The spec's §13 carries `tkFilesAm` and `sigFilesAm`
+ * (knit-next ffabc0fc), so [SpecVectorTest] pins those two; `tkAmOnly` and `sigAmOnly` live here.
  */
 class TicketVectorTest {
     @Test
@@ -50,9 +51,7 @@ class TicketVectorTest {
     /** `am` encodes last, after `ab`, and only when set: 9 entries with both, 8 with `am` alone. */
     @Test
     fun theAmVectorsMatchTheEncoder() {
-        val (tkFilesAm, sigFilesAm) = Tickets.issue(SIGNING_KEY, amFixture(ab = 1_310_720L))
-        assertEquals(TK_FILES_AM, tkFilesAm.toHexString(), "tkFilesAm diverges")
-        assertEquals(SIG_FILES_AM, sigFilesAm.toHexString(), "sigFilesAm diverges")
+        val (tkFilesAm, _) = Tickets.issue(SIGNING_KEY, amFixture(ab = 1_310_720L))
         val (tkAmOnly, sigAmOnly) = Tickets.issue(SIGNING_KEY, amFixture(ab = null))
         assertEquals(TK_AM_ONLY, tkAmOnly.toHexString(), "tkAmOnly diverges")
         assertEquals(SIG_AM_ONLY, sigAmOnly.toHexString(), "sigAmOnly diverges")
@@ -62,7 +61,7 @@ class TicketVectorTest {
 
     @Test
     fun theAmVectorsDecodeToTheirClaims() {
-        val both = RecordCodec.decode<Ticket>(TK_FILES_AM.hexToByteArray())
+        val both = RecordCodec.decode<Ticket>(SPEC.getValue("tkFilesAm").hexToByteArray())
         assertEquals(Tickets.FL_FILES, both?.fl)
         assertEquals(1_310_720L, both?.ab)
         assertEquals(262_144L, both?.am)
@@ -133,15 +132,6 @@ class TicketVectorTest {
             filesFixture().let {
                 Ticket.forKey(SIGNING_KEY, it.aud, it.nbf, it.exp, it.ps, fl = Tickets.FL_FILES, ab = ab, am = 262_144L)
             }
-
-        /** `fl` = 2, `ab` = 1,310,720, `am` = 262,144: 9 entries. */
-        const val TK_FILES_AM =
-            "a9617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
-                "6e62661a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c" +
-                "0d0e0f62666c026261621a0014000062616d1a00040000"
-        const val SIG_FILES_AM =
-            "6ca646d923b0d93996c771aed64d590d8fc515214eb04ec01cbc7ad838863e45" +
-                "c60d831eaa035258542758592712cd7a33e23f7969884f6ae9585053275bc000"
 
         /** `fl` = 2, `am` = 262,144, no `ab`: 8 entries. */
         const val TK_AM_ONLY =

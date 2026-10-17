@@ -358,6 +358,9 @@ class SpecVectorTest {
         val (tkCast, sigCast) = Tickets.issue(TicketVectorTest.SIGNING_KEY, cast)
         assertEquals(EXPECTED.getValue("tkCast"), tkCast.toHex(), "cast ticket body diverges from the spec")
         assertEquals(EXPECTED.getValue("sigCast"), sigCast.toHex(), "cast ticket signature diverges from the spec")
+        val (tkFilesAm, sigFilesAm) = Tickets.issue(TicketVectorTest.SIGNING_KEY, TicketVectorTest.amFixture(ab = 1_310_720L))
+        assertEquals(EXPECTED.getValue("tkFilesAm"), tkFilesAm.toHex(), "am ticket body diverges from the spec")
+        assertEquals(EXPECTED.getValue("sigFilesAm"), sigFilesAm.toHex(), "am ticket signature diverges from the spec")
     }
 
     @Test
@@ -565,6 +568,14 @@ class SpecVectorTest {
                 "sigCast" to
                     "9f0d82c5e15ddc486fc693a848dd2e937df32e505f22631dde6a49f82435d147" +
                     "b64da30b5ac432ef18ee9e2349c4c8915cc8e9d5a3e829f95c2784bc5a5f530f",
+                // S-7.6-31's `am`, copied from knit-next ffabc0fc (docs/SPOOL_PROTOCOL.md §13).
+                "tkFilesAm" to
+                    "a9617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
+                    "6e62661a6b49d200636578701a6b4b238062707350000102030405060708090a0b0c" +
+                    "0d0e0f62666c026261621a0014000062616d1a00040000",
+                "sigFilesAm" to
+                    "6ca646d923b0d93996c771aed64d590d8fc515214eb04ec01cbc7ad838863e45" +
+                    "c60d831eaa035258542758592712cd7a33e23f7969884f6ae9585053275bc000",
             )
     }
 }

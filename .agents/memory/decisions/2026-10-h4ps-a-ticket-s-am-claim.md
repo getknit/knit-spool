@@ -101,8 +101,9 @@ and the fingerprint half did not.
 - **Guards:**
   - `TicketCheckTest`: `am` decodes, a negative `am` is `malformed`, an unknown key after `am` is
     accepted, and an unknown `fl` bit is accepted;
-  - `TicketVectorTest`: `tkFilesAm`/`sigFilesAm` (9 entries) and `tkAmOnly`/`sigAmOnly` (8 entries),
-    produced by a hand-rolled CBOR encoder and pyca/cryptography's Ed25519, not by this code;
+  - `TicketVectorTest`: `tkAmOnly`/`sigAmOnly` (8 entries), and `SpecVectorTest`: the spec's
+    `tkFilesAm`/`sigFilesAm` (9 entries, §13 since knit-next `ffabc0fc`), all produced by a
+    hand-rolled CBOR encoder and pyca/cryptography's Ed25519, not by this code;
   - `TicketFilesTest`: 5 chunks pass and 6 fail at `am` = 262,144; an `am` under one chunk and `0`
     refuse everything; a later chunk and a re-sent chunk under a smaller `am` are refused; a `size`
     refusal stores, charges and strikes nothing; with `files` ungated `am` is ignored; an `am` above
