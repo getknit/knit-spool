@@ -24,3 +24,4 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.us34](decisions/2026-10-us34-freed-sqlite-pages-go-back.md) | freed SQLite pages go back to the disk | store, deploy |
 | [2026-10.x9gq](decisions/2026-10-x9gq-scope-creation-stays-open.md) | scope creation stays open, so ticketed and unticketed members share a spool | tickets, auth, abuse |
 | [2026-10.8ymn](decisions/2026-10-8ymn-main-builds-carry-a-numbered.md) | main builds carry a numbered dev version that moves with the environment contract | versioning, config, release |
+| [2026-10.h4ps](decisions/2026-10-h4ps-a-ticket-s-am-claim.md) | a ticket's am claim caps the attachments it may upload | tickets, attachments |

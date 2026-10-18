@@ -83,20 +83,32 @@ document:
   `err rate`, never struck. The table lives in memory, is capped, and drops a holder once its
   ticket expires.
 
+- **Experimental: a ticket can cap the size of the attachments it uploads** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.6, S-7.6-31; ADR 2026-10.h4ps). A ticket's optional `am` claim names
+  the largest attachment its holder may send, in bytes of the sealed attachment, rounded down to whole
+  48 KiB chunks. Where `files` is gated, an `aput` whose `total` is over it is refused `err ticket`
+  with the new `msg` `size`: checked on every chunk, never a strike, and nothing is stored or charged.
+  `am` only lowers a limit, so the store's own still answers `quota`, and a Spool that does not gate
+  `files` ignores it. `ticket-mint --am BYTES` sets it, `knit_spool_ticket_refused_total` gains
+  `reason="size"`, and `knit_spool_ticket_attach_bytes_charged_am_total` counts the bytes charged
+  under tickets that carry `am`. New conformance check `files-size` (`--ticket-key-file`).
+
 - **`knit_spool_new_scopes_quota_refused_total`**: new scopes refused `quota` at
   `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a shed scope. A rising count means
   the Spool is too small for the conversations reaching it.
 
 ### Changed
 
-- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.2` now), in place of
+- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.3` now), in place of
   `0.4.0-SNAPSHOT`.**
   It is what `GET /source`, `knit_spool_build_info` and an `edge` image's
   `org.opencontainers.image.version` label carry. `n` moves on `main` whenever the environment
   contract does — a variable added or removed, a setting moving between reloadable and
   restart-only, a changed default — so a tool that renders a spool's environment can tell from the
   label alone which variables the daemon inside reads. `EnvContractTest` fails a change that moves
-  the contract without the number. Releases are unchanged: a tag still stamps its own version.
+  the contract without the number. It also moves by hand for behaviour no variable shows:
+  `0.4.0-dev.3` is the first build that reads a ticket's `am`. Releases are unchanged: a tag still
+  stamps its own version.
 - **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
   now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
   `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25). The plain

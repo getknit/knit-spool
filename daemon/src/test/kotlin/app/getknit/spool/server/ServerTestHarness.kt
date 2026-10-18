@@ -194,8 +194,13 @@ fun testEnt(
     expS: Long = nowMs / 1_000 + 86_400,
     signingKey: ByteArray = TEST_TICKET_SIGNING_KEY,
     ab: Long? = null,
+    am: Long? = null,
 ): Ent {
-    val (tk, sig) = Tickets.issue(signingKey, Ticket.forKey(signingKey, aud = aud, nbf = nbfS, exp = expS, ps = ps, fl = fl, ab = ab))
+    val (tk, sig) =
+        Tickets.issue(
+            signingKey,
+            Ticket.forKey(signingKey, aud = aud, nbf = nbfS, exp = expS, ps = ps, fl = fl, ab = ab, am = am),
+        )
     return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
 }
 

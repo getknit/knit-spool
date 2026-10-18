@@ -33,7 +33,8 @@ private val PS_LABEL = "knit/anywhere/v1/ps".toByteArray()
 private val TICKET_AUD = Regex("^[a-z0-9.-]{1,253}$")
 
 private const val MINT_USAGE =
-    "usage: knit-spool ticket-mint --key-file PATH --aud HOST [--account NAME] [--hours 25] [--no-turn] [--cast] [--files] [--ab BYTES]"
+    "usage: knit-spool ticket-mint --key-file PATH --aud HOST [--account NAME] [--hours 25] [--no-turn] [--cast] [--files] " +
+        "[--ab BYTES] [--am BYTES]"
 
 /** Mints a signing key and prints both halves: the private half for the issuer, the public for the spool. */
 internal fun ticketKeygen(out: (String) -> Unit) {
@@ -80,11 +81,13 @@ internal fun ticketMint(
     if (account != null && account.toByteArray().size !in 1..MAX_ACCOUNT_BYTES) {
         return fail(err, "--account must be 1-$MAX_ACCOUNT_BYTES bytes")
     }
-    // An upload budget below the spool's own; absent, the spool's SPOOL_TICKET_ATTACH_BYTES applies.
-    val ab =
-        options["--ab"]?.let {
-            it.toLongOrNull()?.takeIf { bytes -> bytes >= 0 }
-                ?: return fail(err, "--ab must be a byte count, 0 or more")
+    // --ab: an upload budget below the spool's own SPOOL_TICKET_ATTACH_BYTES. --am: the largest
+    // attachment, which the spool rounds down to whole chunks. Absent, the spool's own limit applies.
+    val bytes =
+        listOf("--ab", "--am").associateWith { flag ->
+            options[flag]?.let {
+                it.toLongOrNull()?.takeIf { count -> count >= 0 } ?: return fail(err, "$flag must be a byte count, 0 or more")
+            }
         }
     val nowS = nowMs / MS_PER_SECOND
     val ps = account?.let { pseudonym(signingKey, it, aud, Math.floorDiv(nowS, SECONDS_PER_HOUR * 24)) } ?: randomPseudonym()
@@ -93,7 +96,17 @@ internal fun ticketMint(
     val cast = if ("--cast" in options) Tickets.FL_CAST else 0L
     val files = if ("--files" in options) Tickets.FL_FILES else 0L
     val exp = nowS + hours * SECONDS_PER_HOUR
-    val ticket = Ticket.forKey(signingKey, aud = aud, nbf = nowS, exp = exp, ps = ps, fl = turn or cast or files, ab = ab)
+    val ticket =
+        Ticket.forKey(
+            signingKey,
+            aud = aud,
+            nbf = nowS,
+            exp = exp,
+            ps = ps,
+            fl = turn or cast or files,
+            ab = bytes["--ab"],
+            am = bytes["--am"],
+        )
     val (tk, sig) = Tickets.issue(signingKey, ticket)
     out(Tickets.encodeText(tk, sig))
     return 0
@@ -125,7 +138,7 @@ private fun parseMintArgs(args: List<String>): Map<String, String>? {
     while (i < args.size) {
         when (val flag = args[i]) {
             "--no-turn", "--cast", "--files" -> options[flag] = ""
-            "--key-file", "--aud", "--account", "--hours", "--ab" -> options[flag] = args.getOrNull(++i) ?: return null
+            "--key-file", "--aud", "--account", "--hours", "--ab", "--am" -> options[flag] = args.getOrNull(++i) ?: return null
             else -> return null
         }
         i++

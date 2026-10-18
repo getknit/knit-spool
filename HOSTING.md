@@ -302,6 +302,14 @@ picks the TTL, up to `SPOOL_MAX_TTL_MS`: that is **3 × 32 MiB = 96 MiB** at the
 default, but **8 × 32 MiB = 256 MiB** at the 7-day default ceiling. Budgets are memory only, so a
 restart refills every one.
 
+A ticket may also carry `am`, the largest attachment its holder may send (ADR 2026-10.h4ps). It is
+in bytes of the sealed attachment and rounds down to whole 48 KiB chunks, so `am` = 262,144 admits
+5 chunks. A larger `aput` is refused `err ticket` with `msg` `size` and costs nothing. `am` lowers
+the per-attachment limit for that one ticket and never raises `SPOOL_MAX_ATTACH_BYTES`; the budget
+above still bounds what the holder stores. `knit_spool_ticket_refused_total{reason="size"}` counts
+the refusals, and `knit_spool_ticket_attach_bytes_charged_am_total` counts, out of
+`knit_spool_ticket_attach_bytes_charged_total`, the bytes charged under tickets that carry `am`.
+
 **If you gate `files`, set `SPOOL_MAX_TTL_MS` to the retention you intend to hold:
 `172800000` (48 h) for the reference client**, which declares 48 h on every ordinary scope and
 so loses nothing to it. The daemon's default stays 7 days, and a longer `ttlMs` is clamped to

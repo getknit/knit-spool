@@ -160,6 +160,7 @@ class Ctx(
         expS: Long = nbfS + TICKET_LIFETIME_S,
         fl: Long = Tickets.FL_TURN,
         ab: Long? = null,
+        am: Long? = null,
     ): Ent {
         val ticket =
             Ticket.forKey(
@@ -170,6 +171,7 @@ class Ctx(
                 ps = Random.nextBytes(Tickets.PS_BYTES),
                 fl = fl,
                 ab = ab,
+                am = am,
             )
         val (tk, sig) = Tickets.issue(signingKey, ticket)
         return Ent(t = RecordType.ENT, q = q, tk = tk, sig = sig)
@@ -268,6 +270,7 @@ fun allChecks(): List<Check> =
         entGates(),
         filesTicket(),
         filesReceive(),
+        filesSize(),
         // Experimental (SPOOL_PROTOCOL.md §7.7): casts. cast-rate last of them, since it drains this
         // address's cast budget.
         castAdvertised(),
@@ -571,6 +574,35 @@ private fun filesReceive(): Check =
                 ensure(expect<Achunk>(RecordType.ACHUNK).data.contentEquals(data)) { "achunk data differs from what was put" }
                 ensure(expect<Ok>(RecordType.OK).q == getQ) { "expected aget ok q=$getQ for a member with no ticket" }
             }
+        }
+    }
+
+/**
+ * S-7.6-31: where `files` is gated, a ticket's `am` caps an attachment at `⌊am / aChunkBytes⌋` chunks.
+ * Under `am` = one chunk, an `aput` declaring `total` 2 is refused `ticket` with `msg` `size`, echoing
+ * its `q` and scope, and one declaring `total` 1 is stored: the refusal locks nothing.
+ */
+private fun filesSize(): Check =
+    Check(name = "files-size") { ctx ->
+        ctx.requireFilesGate()
+        val scope = ctx.randomScope()
+        val (cid, data) = ctx.randomBlob(64)
+        ctx.client.connect {
+            hello()
+            val ent = ctx.ent(nextQ(), fl = Tickets.FL_FILES, am = A_CHUNK_BYTES.toLong())
+            send(ent)
+            ensure(expect<Ok>(RecordType.OK).q == ent.q) { "expected ok q=${ent.q} for a files ticket with am" }
+            ctx.subscribeFresh(this, scope)
+            // The last chunk of each, so neither leans on how a spool treats a short non-final chunk.
+            val bigQ = nextQ()
+            send(Aput(t = RecordType.APUT, q = bigQ, scope = scope, aid = ctx.randomScope(), idx = 1, total = 2, cid = cid, data = data))
+            val err = expectErr(ErrCode.TICKET)
+            ensure(err.q == bigQ) { "expected the size refusal to echo q=$bigQ, got ${err.q}" }
+            ensure(err.scope?.contentEquals(scope) == true) { "expected the size refusal to carry the aput's scope" }
+            ensure(err.msg == Tickets.Reason.SIZE.word) { "expected msg \"size\" for total 2 under am = one chunk, got \"${err.msg}\"" }
+            val smallQ = nextQ()
+            send(Aput(t = RecordType.APUT, q = smallQ, scope = scope, aid = ctx.randomScope(), idx = 0, total = 1, cid = cid, data = data))
+            ensure(expect<Ok>(RecordType.OK).q == smallQ) { "expected ok q=$smallQ for total 1 under am = one chunk" }
         }
     }
 

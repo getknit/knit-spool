@@ -51,7 +51,7 @@ class ConformanceSelfTest {
 
     /**
      * A key with the default gates (ADR 2026-10.h6pt): uploads stay open, so the attachment checks pass
-     * with no files ticket and only the two files checks skip. What every keyed spool does on upgrade.
+     * with no files ticket and only the three files checks skip. What every keyed spool does on upgrade.
      */
     @Test
     fun aKeyWithTheDefaultGatesLeavesUploadsOpen() {
@@ -64,7 +64,7 @@ class ConformanceSelfTest {
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
             )
-        run.assertClean(expectedSkips = setOf("files-ticket", "files-receive"))
+        run.assertClean(expectedSkips = setOf("files-ticket", "files-receive", "files-size"))
     }
 
     /**
@@ -274,6 +274,7 @@ class ConformanceSelfTest {
                 "ent-gates",
                 "files-ticket",
                 "files-receive",
+                "files-size",
                 "cast-ticket",
             )
 

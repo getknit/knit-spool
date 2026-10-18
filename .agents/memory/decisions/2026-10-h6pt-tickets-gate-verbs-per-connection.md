@@ -11,7 +11,8 @@ topics: [tickets, attachments, auth, abuse]
 Status: Accepted (2026-10-14). Proposed 2026-10-10, built on `exp/turn` 2026-10-11. Amends ADR
 2026-10.bxsg's `aput` and scope-creation gates. On 2026-10-15 ADR 2026-10.x9gq (proposed)
 replaced the scope-creation gate with keeping creation open. Corrected 2026-10-15: the commit hashes after `exp/turn`'s rebase,
-and the retention multiplier at the spool's `SPOOL_MAX_TTL_MS` ceiling.
+and the retention multiplier at the spool's `SPOOL_MAX_TTL_MS` ceiling. Amended 2026-10-17 by ADR
+2026-10.h4ps: a ticket's `am` caps the size of one attachment, refused `size` before `budget`.
 
 **Context:** an operator should be able to run one kind of spool, with each ticketed
 capability switched on per ticket holder, so there is no separate spool, configured
