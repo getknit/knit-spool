@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-14T06:54:51Z
+  updated: 2026-10-19T10:26:28Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -19,6 +19,25 @@ document:
 # Knit Spool changelog
 
 ## Unreleased
+
+Nothing yet.
+
+## [0.4.0](https://github.com/getknit/knit-spool/releases/tag/v0.4.0) — 2026-10-19T10:26:28Z
+
+> The calls release. A Spool can now back Knit's voice calls and walkie-talkie, all of it
+> experimental and off by default: coturn REST credentials behind `SPOOL_TURN_SECRET`, with a
+> hardened coturn overlay to run beside it; a credential-free STUN list; and casts, a
+> walkie-talkie's chunks fanned out live and never stored. Ed25519 entitlement tickets from an
+> outside issuer can gate TURN, casts and attachment uploads, with budgets per holder, a size cap,
+> and a second key for rotating the first. Every Spool, ticketed or not, gains a database file that
+> gives freed space back and empty scopes that no longer hold `SPOOL_MAX_SCOPES` slots for ever,
+> and a new scope behind proof-of-work costs one rate-limit token instead of two. Pre-1.0, so every
+> interface below is still subject to change. The wire is additive only — new records and optional
+> `hello` fields, each behind a setting that is off by default — so a 0.3.0 client talks to a 0.4.0
+> Spool unchanged. **A persistent store is converted on the first boot**: one `VACUUM` switches it
+> to incremental auto-vacuum and needs about twice the live data free in the data directory; with
+> too little room it warns and boots as before. Read the *Fixed* entries before upgrading a Spool
+> with a `SPOOL_DATA_DIR`.
 
 ### Added
 
@@ -97,18 +116,21 @@ document:
   `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a shed scope. A rising count means
   the Spool is too small for the conversations reaching it.
 
+- `knit_spool_store_file_bytes`: the SQLite file plus its write-ahead log, on disk. Absent on an
+  in-memory spool.
+
 ### Changed
 
-- **Development builds report a numbered version, `0.4.0-dev.<n>` (`0.4.0-dev.3` now), in place of
-  `0.4.0-SNAPSHOT`.**
+- **Development builds report a numbered version, `<next minor>-dev.<n>`, in place of
+  `<next minor>-SNAPSHOT`.**
   It is what `GET /source`, `knit_spool_build_info` and an `edge` image's
   `org.opencontainers.image.version` label carry. `n` moves on `main` whenever the environment
   contract does — a variable added or removed, a setting moving between reloadable and
   restart-only, a changed default — so a tool that renders a spool's environment can tell from the
   label alone which variables the daemon inside reads. `EnvContractTest` fails a change that moves
   the contract without the number. It also moves by hand for behaviour no variable shows:
-  `0.4.0-dev.3` is the first build that reads a ticket's `am`. Releases are unchanged: a tag still
-  stamps its own version.
+  `0.4.0-dev.3` was the first build that read a ticket's `am`. Builds after this release start at
+  `0.5.0-dev.1`. Releases are unchanged: a tag still stamps its own version.
 - **A relayed call opens fewer TURN allocations.** The TURN overlay's default `SPOOL_TURN_URLS` is
   now one URL per transport, `turn:${SPOOL_DOMAIN}:3478?transport=udp` then
   `turns:${SPOOL_DOMAIN}:5349?transport=tcp` (knit-next `docs/SPOOL_PROTOCOL.md` S-7.6-25). The plain
@@ -133,11 +155,6 @@ document:
 - `:conformance`'s runner is callable: `runSuite` and `SuiteOptions` are public, and `Report`
   takes its output streams. The CLI's behaviour and exit codes are unchanged.
 
-### Added
-
-- `knit_spool_store_file_bytes`: the SQLite file plus its write-ahead log, on disk. Absent on an
-  in-memory spool.
-
 ### Fixed
 
 - **The SQLite file gives freed space back** (ADR 2026-10.us34). SQLite reuses freed pages but never
@@ -159,6 +176,11 @@ document:
   commons or a scope a live connection subscribes to, and neither ever drops a frame. A reclaimed
   scope that comes back passes the new-scope gates (PoW, per-IP bucket) like any new one. Counted
   in the new `knit_spool_reclaims_total`.
+- **A new scope on a proof-of-work Spool costs one `SPOOL_RATE_NEW_SCOPES` token, not two.** A
+  client mines only when asked (knit-next C-8-4), so each new scope arrives once bare and once
+  stamped, and the bare ask took a token before it was refused `err pow`: the per-address budget
+  was half what it said. A stamp-less ask is now refused before the bucket, and a stamped one still
+  pays before it is hashed.
 
 ## [0.3.0](https://github.com/getknit/knit-spool/releases/tag/v0.3.0) — 2026-09-16T20:56:18Z
 

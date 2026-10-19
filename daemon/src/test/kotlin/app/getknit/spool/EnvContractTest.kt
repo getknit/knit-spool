@@ -61,11 +61,10 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. dev.3 moved by hand, with the
-         * fingerprint unchanged from dev.2: it is the first build to read a ticket's `am`, which no
-         * variable shows (ADR 2026-10.h4ps).
+         * The development version and the contract's fingerprint at it. 0.5.0-dev.1 is the reset after
+         * the 0.4.0 release, so the fingerprint is 0.4.0's, unchanged since 0.4.0-dev.2.
          */
-        val PINNED = "0.4.0-dev.3" to "8e76a44330defb5d"
+        val PINNED = "0.5.0-dev.1" to "8e76a44330defb5d"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

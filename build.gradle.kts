@@ -29,9 +29,9 @@ allprojects {
     // a KNOWN_VARS entry, a field crossing between the reload halves, a default — because whatever
     // renders a spool's environment reads it off the image label to know what the daemon accepts.
     // EnvContractTest fails until it does. After a release it resets to the next minor's `-dev.1`.
-    // A behaviour the contract cannot see may move it by hand too: dev.3 is the first to read a
-    // ticket's `am` (ADR 2026-10.h4ps).
-    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.4.0-dev.3"
+    // A behaviour the contract cannot see may move it by hand too: 0.4.0-dev.3 was the first to
+    // read a ticket's `am` (ADR 2026-10.h4ps).
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.5.0-dev.1"
 }
 
 // ---- coverage ----
