@@ -141,6 +141,29 @@ class DeployConfigTest {
         assertTrue(urls.none { it.startsWith("turn:") && "transport=tcp" in it }, "a plain turn:…?transport=tcp URL is in the default")
     }
 
+    /**
+     * `TURN_TLS_PORT` is for a TURN box of its own, and the overlay does not pass it, so `turns:`
+     * beside a Spool listens on the entrypoint's default. The URL the Spool hands out has to name
+     * that same port, or every TLS-only caller is sent somewhere nothing listens.
+     */
+    @Test
+    fun theTurnOverlayAdvertisesTheEntrypointsTlsPort() {
+        val overlay = repoRoot.resolve("deploy/docker-compose.turn.yml").readText()
+        val entrypoint = repoRoot.resolve("deploy/coturn/entrypoint.sh").readText()
+        assertTrue(
+            overlay.lines().none { it.trimStart().startsWith("TURN_TLS_PORT:") },
+            "the overlay passes TURN_TLS_PORT, so its default turns: URL can name the wrong port",
+        )
+        val port =
+            Regex("""\$\{TURN_TLS_PORT:-(\d+)\}""").find(entrypoint)?.groupValues?.get(1)
+                ?: fail("deploy/coturn/entrypoint.sh has no TURN_TLS_PORT default")
+        val urls = overlay.lines().single { it.trimStart().startsWith("SPOOL_TURN_URLS:") }
+        assertTrue(
+            "turns:\${SPOOL_DOMAIN}:$port?" in urls,
+            "the overlay's turns: URL does not name the entrypoint's default TLS port $port: $urls",
+        )
+    }
+
     @Test
     fun everyVariableTheDaemonReadsIsReachableFromEnv() {
         val unreachable = KNOWN_VARS - declared().keys - exempt

@@ -11,34 +11,69 @@
 # It then watches Caddy's copy. A renewal is re-copied and turnserver is sent SIGUSR2, which 4.18
 # answers with reload_ssl_certs (mainrelay.c) — no restart, so no relayed call drops. The signal
 # is sent from in here, never with `docker kill -s`, which would mark the container
-# manually-stopped and leave it down after the next reboot.
+# manually-stopped and leave it down after the next reboot. A renewal writes the certificate and
+# the key one after the other, so a change is looked at again 5 s later and installed only if
+# neither has moved; a pair still moving waits for the next poll.
 #
 # With no certificate yet (Caddy's first boot) it starts plain turn: on 3478 and restarts with TLS
 # once one appears, polling every minute until then.
+#
+# On a TURN box of its own, with no Caddy, it runs unchanged given:
+#   TURN_CERT_FILE, TURN_KEY_FILE  both set: read these instead of searching Caddy's directory, e.g.
+#       /etc/letsencrypt mounted read-only at /letsencrypt and certbot's live/<domain>/fullchain.pem
+#       and privkey.pem. certbot repoints those symlinks on renewal, and cp and sha256sum follow
+#       them. Its files are 0600 root too, under 0700 directories, which root reads as their owner.
+#       Until both exist it runs plain, as above.
+#   TURN_TLS_PORT  where turns: listens, 5349 by default. A port below 1024 needs only
+#       NET_BIND_SERVICE, which docker-compose.turn.yml already grants: turnserver binds its
+#       listeners as root, before the drop.
 set -eu
 
 : "${SPOOL_TURN_SECRET:?set SPOOL_TURN_SECRET in deploy/.env}"
 : "${SPOOL_DOMAIN:?set SPOOL_DOMAIN in deploy/.env}"
 MIN_PORT="${TURN_MIN_PORT:-49160}"
 MAX_PORT="${TURN_MAX_PORT:-49999}"
+TLS_PORT="${TURN_TLS_PORT:-5349}"
 POLL_S="${TURN_CERT_POLL_S:-21600}"
+CERT_FILE="${TURN_CERT_FILE:-}"
+KEY_FILE="${TURN_KEY_FILE:-}"
 RUN=/run/turn
 CONF="$RUN/turnserver.conf"
 PID=
 
 log() { echo "knit-turn: $*"; }
 
-# The newest certificate Caddy holds for the domain, whichever ACME issuer it came from.
+if [ -n "$CERT_FILE" ] && [ -n "$KEY_FILE" ]; then
+  where="at $CERT_FILE"
+elif [ -n "$CERT_FILE$KEY_FILE" ]; then
+  log "set both TURN_CERT_FILE and TURN_KEY_FILE, or neither"
+  exit 1
+else
+  where="for $SPOOL_DOMAIN under /caddy"
+fi
+
+# The certificate to serve, or nothing yet. Never fails, so `set -e` cannot take a missing file for
+# an error.
 find_cert() {
-  # shellcheck disable=SC2012 # names are Caddy's own: <issuer>/<domain>/<domain>.crt
-  ls -t /caddy/caddy/certificates/*/"$SPOOL_DOMAIN/$SPOOL_DOMAIN.crt" 2>/dev/null | head -n 1
+  if [ -n "$CERT_FILE" ]; then
+    if [ -r "$CERT_FILE" ] && [ -r "$KEY_FILE" ]; then echo "$CERT_FILE"; fi
+  else
+    # The newest certificate Caddy holds for the domain, whichever ACME issuer it came from.
+    # shellcheck disable=SC2012 # names are Caddy's own: <issuer>/<domain>/<domain>.crt
+    ls -t /caddy/caddy/certificates/*/"$SPOOL_DOMAIN/$SPOOL_DOMAIN.crt" 2>/dev/null | head -n 1
+  fi
 }
 
-fingerprint() { sha256sum "$1" | cut -d ' ' -f 1; }
+key_for() {
+  if [ -n "$KEY_FILE" ]; then echo "$KEY_FILE"; else echo "${1%.crt}.key"; fi
+}
+
+# Both files: the key can change without the certificate.
+fingerprint() { cat "$1" "$(key_for "$1")" | sha256sum | cut -d ' ' -f 1; }
 
 install_cert() {
   cp "$1" "$RUN/cert.pem"
-  cp "${1%.crt}.key" "$RUN/key.pem"
+  cp "$(key_for "$1")" "$RUN/key.pem"
   chown root:nogroup "$RUN/cert.pem" "$RUN/key.pem"
   chmod 0640 "$RUN/cert.pem" "$RUN/key.pem"
 }
@@ -53,7 +88,7 @@ write_conf() {
     echo "realm=$SPOOL_DOMAIN"
     echo "listening-port=3478"
     if [ "$1" = tls ]; then
-      echo "tls-listening-port=5349"
+      echo "tls-listening-port=$TLS_PORT"
       echo "cert=$RUN/cert.pem"
       echo "pkey=$RUN/key.pem"
     else
@@ -116,6 +151,12 @@ stop() {
   PID=
 }
 
+# In the background and waited on, so TERM interrupts the sleep instead of waiting it out.
+pause() {
+  sleep "$1" &
+  wait $! || true
+}
+
 trap 'stop; exit 0' TERM INT
 
 chown root:nogroup "$RUN"
@@ -127,7 +168,7 @@ if [ -n "$source_cert" ]; then
   seen=$(fingerprint "$source_cert")
   mode=tls
 else
-  log "no certificate for $SPOOL_DOMAIN under /caddy yet; starting without turns: and polling for one"
+  log "no certificate $where yet; starting without turns: and polling for one"
   seen=
   mode=plain
 fi
@@ -136,10 +177,7 @@ start
 log "turnserver started ($mode), relay ports $MIN_PORT-$MAX_PORT"
 
 while :; do
-  if [ "$mode" = tls ]; then wait_s=$POLL_S; else wait_s=60; fi
-  # In the background and waited on, so TERM interrupts the sleep instead of waiting it out.
-  sleep "$wait_s" &
-  wait $! || true
+  if [ "$mode" = tls ]; then pause "$POLL_S"; else pause 60; fi
   if ! kill -0 "$PID" 2>/dev/null; then
     log "turnserver exited; leaving it to the restart policy"
     exit 1
@@ -148,6 +186,11 @@ while :; do
   [ -n "$source_cert" ] || continue
   current=$(fingerprint "$source_cert")
   [ "$current" != "$seen" ] || continue
+  pause 5
+  if [ "$(fingerprint "$source_cert")" != "$current" ]; then
+    log "certificate still changing; looking again at the next poll"
+    continue
+  fi
   install_cert "$source_cert"
   seen=$current
   if [ "$mode" = plain ]; then
@@ -155,7 +198,7 @@ while :; do
     write_conf tls
     stop
     start
-    log "certificate found; restarted with turns: on 5349"
+    log "certificate found; restarted with turns: on $TLS_PORT"
   else
     kill -USR2 "$PID"
     log "certificate renewed; asked turnserver to reload it"

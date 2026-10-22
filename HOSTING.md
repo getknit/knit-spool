@@ -265,8 +265,11 @@ Memory is small: coturn idles in tens of megabytes, and the overlay caps it at 9
 fits the 1 GB budget beside the tiny overlay's Spool and Caddy. CPU is per packet: a relayed call is
 about 200 packets a second through coturn, twice that when both callers relay through the same box.
 On a single shared core that competes with the Spool, so a relay meant to carry much more than the
-defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it. Each allocation takes one
-UDP port from the 840-port default range (49160–49999), which leaves room to raise
+defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it.
+`deploy/coturn/entrypoint.sh` runs there unchanged, without Caddy: `TURN_CERT_FILE` and
+`TURN_KEY_FILE` point it at the box's own certificate and key (certbot's `live/` files, say), and
+`TURN_TLS_PORT` moves `turns:` off 5349, to 443 if nothing else on the box holds it. Each allocation
+takes one UDP port from the 840-port default range (49160–49999), which leaves room to raise
 `TURN_TOTAL_QUOTA` without reopening the firewall; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the
 firewall rule) if the quota ever passes it.
 

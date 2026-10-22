@@ -20,7 +20,21 @@ document:
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- **The coturn entrypoint runs on a TURN box of its own.** `deploy/coturn/entrypoint.sh` takes three
+  opt-in settings for a box with no Caddy: `TURN_CERT_FILE` and `TURN_KEY_FILE` (both or neither)
+  name the certificate and key to serve, such as certbot's `live/` files, in place of Caddy's, and
+  until both exist it runs plain and polls; `TURN_TLS_PORT` moves `turns:` off 5349, and a port below
+  1024 binds before turnserver drops root. Unset, nothing changes. The overlay passes none of them.
+
+### Fixed
+
+- **A certificate renewal can no longer load a mismatched pair.** Caddy and certbot write the
+  certificate and the key one after the other, so a poll between the two could hand coturn one
+  without the other. The relay now fingerprints both files and installs a change only once it has
+  held still for 5 s; one still moving waits for the next poll. A key that changes without its
+  certificate now counts as a renewal too.
 
 ## [0.4.0](https://github.com/getknit/knit-spool/releases/tag/v0.4.0) — 2026-10-19T10:26:28Z
 
