@@ -340,6 +340,8 @@ class SpoolServer(
                 "ticketKey" to if (ticket == null) "unset" else "set",
                 "ticketKeyNext" to if (ticket?.next == null) "unset" else "set",
                 "ticketAud" to (ticket?.audience ?: "unset"),
+                // Read live by every `ent`, like the key: never announced, so nothing waits on a hello.
+                "ticketAudAlias" to (ticket?.audienceAlias ?: "unset"),
                 // Snapshotted per connection, like the key's presence: a reload reaches new ones only.
                 "ticketGates" to (ticket?.gateWords() ?: "unset"),
                 // Read live by every gated `aput`, so a lower cap bites on a pseudonym's next chunk.
@@ -417,14 +419,20 @@ class SpoolServer(
 
     /**
      * What entitlement tickets ([Tickets]) are checked against (experimental, SPOOL_PROTOCOL.md
-     * §7.6): the issuer's public key and the audience a ticket must name to be good here. Only the
-     * public half — whoever issues tickets holds the signing key, and nothing in the daemon can mint.
+     * §7.6): the issuer's public key and the names a ticket's audience must be one of to be good
+     * here. Only the public half — whoever issues tickets holds the signing key, and nothing in the
+     * daemon can mint.
      */
     class TicketConfig(
         val key: PublicKey,
         /** [Tickets.kid] of [key], computed once rather than on every `ent`. */
         val kid: ByteArray,
         val audience: String,
+        /**
+         * `SPOOL_TICKET_AUDIENCE_ALIAS`: a second name accepted beside [audience] while the spool is
+         * renamed and both names reach it. Never announced.
+         */
+        val audienceAlias: String? = null,
         /**
          * The [Ticket.fl] bits a connection needs a ticket for, `SPOOL_TICKET_GATES` (ADR 2026-10.h6pt).
          * Advertised as `entGates` and snapshotted per connection from the hello it was sent.
@@ -443,6 +451,9 @@ class SpoolServer(
          */
         val turnRatePer10Min: Int = DEFAULT_TURN_RATE,
     ) {
+        /** Every name a ticket's `aud` may give: [audience], and [audienceAlias] mid-rename. */
+        val audiences: Set<String> = setOfNotNull(audience, audienceAlias)
+
         /** Every key a ticket may be signed by, with its `kid`: [key] first, then [next]. */
         val verifiers: List<Pair<PublicKey, ByteArray>> = listOfNotNull(key to kid, next?.let { it.key to it.kid })
 
@@ -1379,11 +1390,11 @@ class SpoolServer(
 
     /**
      * Checks an entitlement ticket and binds it to the connection (experimental, SPOOL_PROTOCOL.md
-     * §7.6, S-7.6-14/15). The verifying key is read live, so a reload that rotates it judges the
-     * next `ent`. A refusal is never a strike — an expired ticket is ordinary life for a phone that
-     * slept through its refresh — and leaves any earlier accepted ticket in place, so a failed
-     * renewal cannot take away what the connection already holds. Neither the ticket nor its
-     * pseudonym is ever logged (S-7.6-18).
+     * §7.6, S-7.6-14/15). The verifying keys and the audiences are read live, so a reload that
+     * rotates a key or renames the spool judges the next `ent`. A refusal is never a strike — an
+     * expired ticket is ordinary life for a phone that slept through its refresh — and leaves any
+     * earlier accepted ticket in place, so a failed renewal cannot take away what the connection
+     * already holds. Neither the ticket nor its pseudonym is ever logged (S-7.6-18).
      */
     private suspend fun handleEnt(
         conn: Conn,
@@ -1401,7 +1412,7 @@ class SpoolServer(
                 // Advertised at hello, then the key was reloaded away: nothing left to check against.
                 Tickets.Outcome.Refused(Tickets.Reason.KEY)
             } else {
-                Tickets.check(ent.tk, ent.sig, tickets.verifiers, tickets.audience, clock() / MS_PER_S)
+                Tickets.check(ent.tk, ent.sig, tickets.verifiers, tickets.audiences, clock() / MS_PER_S)
             }
         when (outcome) {
             is Tickets.Outcome.Accepted -> {

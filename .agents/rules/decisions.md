@@ -19,6 +19,7 @@ growing an explanation, that explanation belongs in the ADR.
 | `cast`, `handleCast` / `fanOutCast`, `SPOOL_*CAST*` or `Tickets.FL_CAST` | [ADR 2026-10.3wdy](../memory/decisions/2026-10-3wdy-casts-fan-out-unstored.md) |
 | `aput` gating, `Tickets.FL_FILES`, `SPOOL_TICKET_GATES` or `entGates` | [ADR 2026-10.h6pt](../memory/decisions/2026-10-h6pt-tickets-gate-verbs-per-connection.md) |
 | a ticket's `am`, `Tickets.Reason.SIZE` or `ticket-mint --am` | [ADR 2026-10.h4ps](../memory/decisions/2026-10-h4ps-a-ticket-s-am-claim.md) |
+| a ticket's `aud`, `SPOOL_TICKET_AUDIENCE_ALIAS`, `TicketConfig.audiences` or renaming a ticketed spool | [ADR 2026-10.zprp](../memory/decisions/2026-10-zprp-a-renamed-spool-accepts-tickets.md) |
 | scope creation on a ticketed spool, `create` in `SPOOL_TICKET_GATES`, `SPOOL_TICKET_KEY_NEXT` or per-pseudonym rate limits | [ADR 2026-10.x9gq](../memory/decisions/2026-10-x9gq-scope-creation-stays-open.md) |
 | `KNOWN_VARS`, `bootOnly()` / `reloadable()`, a config default, the version literal or `EnvContractTest` | [ADR 2026-10.8ymn](../memory/decisions/2026-10-8ymn-main-builds-carry-a-numbered.md) |
 

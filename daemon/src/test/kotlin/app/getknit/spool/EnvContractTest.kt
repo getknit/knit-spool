@@ -61,10 +61,10 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. 0.5.0-dev.1 is the reset after
-         * the 0.4.0 release, so the fingerprint is 0.4.0's, unchanged since 0.4.0-dev.2.
+         * The development version and the contract's fingerprint at it. dev.2 adds
+         * `SPOOL_TICKET_AUDIENCE_ALIAS` and its `ticketAudAlias` report field (ADR 2026-10.zprp).
          */
-        val PINNED = "0.5.0-dev.1" to "8e76a44330defb5d"
+        val PINNED = "0.5.0-dev.2" to "b62a743417092bd0"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

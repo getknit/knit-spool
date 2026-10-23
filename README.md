@@ -229,6 +229,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
 | `SPOOL_TICKET_KEY_NEXT` | unset | *experimental:* a second issuer public key, accepted beside the key during a rotation; a ticket's `kid` picks which one checks it. Must differ from the key, and needs it. Reloadable |
 | `SPOOL_TICKET_AUDIENCE` | — | the lowercase host name tickets must name to be good here; required with the key |
+| `SPOOL_TICKET_AUDIENCE_ALIAS` | unset | *experimental:* a second host name tickets may name, while the Spool is renamed and both names reach it. Must differ from the audience, and needs it and the key. Never announced. Reloadable |
 | `SPOOL_TICKET_GATES` | `turn,cast` | *experimental:* which capabilities need a ticket, from `turn`, `files` and `cast`; `hello` says so in `entGates`. `files` gates **sending** attachments only. Needs the key. Reloadable |
 | `SPOOL_TICKET_ATTACH_BYTES` | `33554432` | with `files` gated, the most one ticket holder may upload a day, whatever its ticket claims (32 MiB). Needs the key. Reloadable |
 | `SPOOL_TICKET_TURN_RATE` | `16` | *experimental:* TURN credentials per ticket holder per 10 minutes (burst half that, at least 2), across all its connections and addresses, on top of `SPOOL_TURN_RATE`. **0 = off.** 0–240. Needs the key and `SPOOL_TURN_SECRET`. Reloadable |
@@ -390,6 +391,12 @@ Two further switches, for an operator who sells TURN to some callers and not oth
 
   No step touches a ticket a live connection already holds. Each step only changes which keys
   judge the next `ent`.
+- **`SPOOL_TICKET_AUDIENCE_ALIAS`** renames a ticketed Spool without refusing anyone's ticket (ADR
+  2026-10.zprp). A ticket names one host, and a client asks for one for the host it dialled, so
+  while both names reach the Spool, set the new name as `SPOOL_TICKET_AUDIENCE` and the old one as
+  the alias. Clear the alias once every client has moved, and before the old name is given to
+  another Spool. Until then one account can hold a ticket for each name, and so two pseudonyms and twice the
+  per-holder budgets.
 
 The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
 
@@ -624,7 +631,7 @@ this feature exists to avoid.
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE`, `SPOOL_TICKET_GATES` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_TICKET_ATTACH_BYTES` | immediately — read on every gated `aput`; what holders already spent stays spent |
-| `SPOOL_TICKET_KEY_NEXT` | immediately — read by every `ent`; a ticket a connection already holds stays held |
+| `SPOOL_TICKET_KEY_NEXT`, `SPOOL_TICKET_AUDIENCE_ALIAS` | immediately — read by every `ent`; a ticket a connection already holds stays held |
 | `SPOOL_TICKET_TURN_RATE` | immediately — read on every ticketed `turnreq`; a changed rate refills each holder's bucket |
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |

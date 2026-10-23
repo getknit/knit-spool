@@ -22,6 +22,14 @@ document:
 
 ### Added
 
+- **Experimental: renaming a ticketed Spool, `SPOOL_TICKET_AUDIENCE_ALIAS`** (ADR 2026-10.zprp). A
+  second host name a ticket's `aud` may give, beside `SPOOL_TICKET_AUDIENCE`, so a Spool that
+  answers to its old and new names during a rename accepts tickets minted for either. A lowercase
+  host name, refused without the key and the audience or when it repeats the audience; reloadable,
+  read by every `ent`, and reported as `ticketAudAlias`. Never announced in `hello`. One account
+  can hold a ticket for each name while the alias is set, and so two pseudonyms and twice the
+  per-holder budgets. The development version is `0.5.0-dev.2`, the first build that reads it.
+
 - **The coturn entrypoint runs on a TURN box of its own.** `deploy/coturn/entrypoint.sh` takes three
   opt-in settings for a box with no Caddy: `TURN_CERT_FILE` and `TURN_KEY_FILE` (both or neither)
   name the certificate and key to serve, such as certbot's `live/` files, in place of Caddy's, and

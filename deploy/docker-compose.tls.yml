@@ -105,6 +105,8 @@ services:
       # must name; with them, turnreq needs a ticket. Both or neither.
       SPOOL_TICKET_KEY:
       SPOOL_TICKET_AUDIENCE:
+      # A second name tickets may give while the spool is renamed and both names reach it. Needs both.
+      SPOOL_TICKET_AUDIENCE_ALIAS:
       # A second public key during a rotation; a ticket's kid picks which one checks it. Needs the key.
       SPOOL_TICKET_KEY_NEXT:
       # Which capabilities need a ticket (turn, files, cast; default turn,cast), and the most one

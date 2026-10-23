@@ -29,7 +29,7 @@ class Ticket(
     val v: Int,
     /** `SHA-256(raw public key)[0..8]`: which key signed it. */
     val kid: ByteArray,
-    /** The one spool this ticket is good for — its `SPOOL_TICKET_AUDIENCE`. */
+    /** The one spool this ticket is good for, by one of its names: `SPOOL_TICKET_AUDIENCE` or its alias. */
     val aud: String,
     /** Unix seconds. */
     val nbf: Long,
@@ -256,12 +256,15 @@ object Tickets {
      * [keys] is every key the spool accepts, each with its `kid`: one, or two mid-rotation
      * (`SPOOL_TICKET_KEY_NEXT`). The ticket's `kid` picks a single key and only that key's signature
      * is tried, so a ticket naming neither is refused `key` and nothing is ever verified twice.
+     *
+     * [audiences] is every name the spool answers to: one, or two while it is being renamed
+     * (`SPOOL_TICKET_AUDIENCE_ALIAS`). A ticket's `aud` must be one of them.
      */
     fun check(
         tk: ByteArray,
         sig: ByteArray,
         keys: List<Pair<PublicKey, ByteArray>>,
-        aud: String,
+        audiences: Set<String>,
         nowS: Long,
     ): Outcome {
         if (tk.size > MAX_TK_BYTES || sig.size != SIG_BYTES) return Outcome.Refused(Reason.MALFORMED)
@@ -269,7 +272,7 @@ object Tickets {
         if (ticket == null || !wellFormed(ticket)) return Outcome.Refused(Reason.MALFORMED)
         val key = keys.firstOrNull { (_, kid) -> ticket.kid.contentEquals(kid) }?.first ?: return Outcome.Refused(Reason.KEY)
         if (!verify(key, tk, sig)) return Outcome.Refused(Reason.SIGNATURE)
-        if (ticket.aud != aud) return Outcome.Refused(Reason.AUDIENCE)
+        if (ticket.aud !in audiences) return Outcome.Refused(Reason.AUDIENCE)
         if (nowS < ticket.nbf - SKEW_S) return Outcome.Refused(Reason.EARLY)
         if (nowS - SKEW_S > ticket.exp) return Outcome.Refused(Reason.EXPIRED)
         return Outcome.Accepted(ticket)

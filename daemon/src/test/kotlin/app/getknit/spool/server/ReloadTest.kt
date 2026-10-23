@@ -234,6 +234,56 @@ class ReloadTest {
         }
     }
 
+    /**
+     * Renaming a ticketed spool (`SPOOL_TICKET_AUDIENCE_ALIAS`) is hitless the same way. The new name
+     * becomes the audience with the old one as its alias, so a ticket for either is accepted while
+     * both names reach the spool; dropping the alias refuses old-name tickets from the next `ent` on,
+     * without touching one a live connection already holds.
+     */
+    @Test
+    fun renamingATicketedSpoolIsHitlessForLiveConnections() {
+        val clock = FakeClock(1_800_000_000_000L)
+        val oldName = TEST_TICKET_AUD
+        val newName = "renamed.test"
+
+        fun named(ticket: SpoolServer.TicketConfig) = testConfig(turn = testTurn(), ticket = ticket)
+        withServer(named(testTicketConfig(audience = oldName)), clock = clock) {
+            connect {
+                helloHandshake()
+                present(testEnt(clock.now, aud = oldName))
+                credential(q = 1L)
+
+                // The rename: the new name is the audience and the old one its alias. Either is good.
+                assertTrue(spool.reload(named(testTicketConfig(audience = newName, audienceAlias = oldName))).isEmpty())
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 2L)
+                connect {
+                    helloHandshake()
+                    present(testEnt(clock.now, aud = oldName))
+                    present(testEnt(clock.now, q = 3L, aud = newName))
+                    credential(q = 4L)
+                }
+
+                // Every client has moved: drop the alias. Old-name `ent`s are refused from here, but
+                // what this connection already holds still works.
+                assertTrue(spool.reload(named(testTicketConfig(audience = newName))).isEmpty())
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 5L)
+                connect {
+                    helloHandshake()
+                    sendRecord(testEnt(clock.now, q = 6L, aud = oldName))
+                    val err = expectRecord<Err>(RecordType.ERR)
+                    assertEquals(ErrCode.TICKET, err.code)
+                    assertEquals(Tickets.Reason.AUDIENCE.word, err.msg)
+                    present(testEnt(clock.now, q = 7L, aud = newName))
+                }
+                clock.advance(TURN_TOKEN_MS)
+                credential(q = 8L)
+            }
+            assertEquals(0L, spool.metrics.errCount(ErrCode.RATE))
+        }
+    }
+
     private companion object {
         /** One per-connection TURN token at [testTurn]'s 60 per ten minutes, so the bucket never runs dry here. */
         const val TURN_TOKEN_MS = 10_000L

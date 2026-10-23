@@ -13,7 +13,8 @@ covered scope creation. Amended by ADR 2026-10.h6pt (the `files` gate) and ADR 2
 `cast` gate). The unbuilt parts were moved on 2026-10-15 to ADR 2026-10.x9gq, still proposed:
 `SPOOL_TICKET_KEY_NEXT` and per-pseudonym spool rate limits. The scope-creation gate drafted here
 went with them, and x9gq (accepted 2026-10-16) keeps creation open instead. See [What shipped](#what-shipped).
-Amended 2026-10-17 by ADR 2026-10.h4ps: the claims gain `am` after `ab`.
+Amended 2026-10-17 by ADR 2026-10.h4ps: the claims gain `am` after `ab`. Amended 2026-10-22 by
+ADR 2026-10.zprp: a spool being renamed accepts `aud` for either of its names.
 
 **Context:** an operator may offer TURN and files to some callers and not others, and the
 spool must tell them apart without holding an account. In the shape considered, a storefront

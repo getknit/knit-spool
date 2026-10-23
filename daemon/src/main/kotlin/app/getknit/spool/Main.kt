@@ -71,6 +71,7 @@ internal val KNOWN_VARS =
         "SPOOL_TICKET_KEY",
         "SPOOL_TICKET_KEY_NEXT",
         "SPOOL_TICKET_AUDIENCE",
+        "SPOOL_TICKET_AUDIENCE_ALIAS",
         "SPOOL_TICKET_GATES",
         "SPOOL_TICKET_ATTACH_BYTES",
         "SPOOL_TICKET_TURN_RATE",
@@ -451,9 +452,9 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
  * as `knit-spool ticket-keygen` prints it; it is decoded and tried as a verifier here, so a key the
  * JDK cannot use stops the spool at boot rather than refusing the first paying caller.
  *
- * An audience, gates or an attach budget without a key is refused rather than ignored, for the TURN
- * settings' reason. None is a secret, but the key is still never echoed: a refusal that printed it
- * would invite pasting the private half next time to "check".
+ * An audience, an alias, gates or an attach budget without a key is refused rather than ignored,
+ * for the TURN settings' reason. None is a secret, but the key is still never echoed: a refusal that
+ * printed it would invite pasting the private half next time to "check".
  */
 internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? {
     val rawKey = env("SPOOL_TICKET_KEY")?.takeIf { it.isNotEmpty() }
@@ -463,6 +464,7 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
     val rawAttach = env("SPOOL_TICKET_ATTACH_BYTES")
     val rawNext = env("SPOOL_TICKET_KEY_NEXT")?.takeIf { it.isNotEmpty() }
     val rawTurnRate = env("SPOOL_TICKET_TURN_RATE")
+    val alias = env("SPOOL_TICKET_AUDIENCE_ALIAS")?.takeIf { it.isNotEmpty() }
     if (rawKey == null) {
         require(audience == null) { "SPOOL_TICKET_AUDIENCE needs SPOOL_TICKET_KEY; set it, or unset the audience" }
         require(rawGates == null) { "SPOOL_TICKET_GATES needs SPOOL_TICKET_KEY; set it, or unset the gates" }
@@ -471,10 +473,17 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
             "SPOOL_TICKET_KEY_NEXT is set but SPOOL_TICKET_KEY is not: set both during a rotation, then promote NEXT into KEY"
         }
         require(rawTurnRate == null) { "SPOOL_TICKET_TURN_RATE needs SPOOL_TICKET_KEY; set it, or unset the rate" }
+        require(alias == null) {
+            "SPOOL_TICKET_AUDIENCE_ALIAS needs SPOOL_TICKET_KEY and SPOOL_TICKET_AUDIENCE; set them, or unset the alias"
+        }
         return null
     }
     requireNotNull(audience) { "SPOOL_TICKET_KEY is set but SPOOL_TICKET_AUDIENCE is not: tickets must name the spool they are for" }
     require(TICKET_AUDIENCE.matches(audience)) { "SPOOL_TICKET_AUDIENCE must be a lowercase host name, got \"$audience\"" }
+    if (alias != null) {
+        require(TICKET_AUDIENCE.matches(alias)) { "SPOOL_TICKET_AUDIENCE_ALIAS must be a lowercase host name, got \"$alias\"" }
+        require(alias != audience) { "SPOOL_TICKET_AUDIENCE_ALIAS must differ from SPOOL_TICKET_AUDIENCE" }
+    }
     val raw = ticketKeyBytes("SPOOL_TICKET_KEY", rawKey)
     val next = rawNext?.let { ticketKeyBytes("SPOOL_TICKET_KEY_NEXT", it) }
     require(next == null || !next.contentEquals(raw)) { "SPOOL_TICKET_KEY_NEXT must differ from SPOOL_TICKET_KEY" }
@@ -482,6 +491,7 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
         key = Tickets.publicKey(raw),
         kid = Tickets.kid(raw),
         audience = audience,
+        audienceAlias = alias,
         gates = ticketGates(rawGates),
         attachBytes = longVar(env, "SPOOL_TICKET_ATTACH_BYTES", default = SpoolServer.TicketConfig.DEFAULT_ATTACH_BYTES, min = 0),
         next = next?.let { SpoolServer.TicketKey(Tickets.publicKey(it), Tickets.kid(it)) },

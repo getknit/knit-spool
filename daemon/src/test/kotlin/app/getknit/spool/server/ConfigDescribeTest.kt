@@ -34,6 +34,8 @@ class ConfigDescribeTest {
         val ticketed = fields(testConfig(ticket = testTicketConfig()).describe())
         assertEquals("set", ticketed["ticketKey"])
         assertEquals(TEST_TICKET_AUD, ticketed["ticketAud"])
+        assertEquals("unset", ticketed["ticketAudAlias"])
+        assertEquals("old.test", fields(testConfig(ticket = testTicketConfig(audienceAlias = "old.test")).describe())["ticketAudAlias"])
         assertEquals("unset", fields["ticketGates"])
         assertEquals("turn,cast", ticketed["ticketGates"])
         assertEquals("33554432", ticketed["ticketAttachBytes"])

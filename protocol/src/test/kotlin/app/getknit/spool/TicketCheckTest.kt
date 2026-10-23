@@ -36,7 +36,7 @@ class TicketCheckTest {
         tamper: (ByteArray, ByteArray) -> Pair<ByteArray, ByteArray> = { tk, sig -> tk to sig },
     ): Outcome {
         val (tk, sig) = Tickets.issue(SIGNING_KEY, ticket).let { (tk, sig) -> tamper(tk, sig) }
-        return Tickets.check(tk, sig, listOf(key to kid), aud, nowS)
+        return Tickets.check(tk, sig, listOf(key to kid), setOf(aud), nowS)
     }
 
     private fun refusal(outcome: Outcome): Reason = assertIs<Outcome.Refused>(outcome).reason
@@ -50,7 +50,8 @@ class TicketCheckTest {
         fl: Long = Tickets.FL_TURN,
         ab: Long? = null,
         am: Long? = null,
-    ) = Ticket(v = v, kid = kid, aud = "lab.example", nbf = nbf, exp = exp, ps = ps, fl = fl, ab = ab, am = am)
+        aud: String = "lab.example",
+    ) = Ticket(v = v, kid = kid, aud = aud, nbf = nbf, exp = exp, ps = ps, fl = fl, ab = ab, am = am)
 
     @Test
     fun aGoodTicketIsAcceptedWithItsClaims() {
@@ -109,18 +110,33 @@ class TicketCheckTest {
         assertEquals(Reason.AUDIENCE, refusal(check(aud = "other.example")))
     }
 
+    /**
+     * Mid-rename a spool answers to two names (`SPOOL_TICKET_AUDIENCE_ALIAS`): a ticket naming either
+     * is its own, and one naming a third is still `audience`.
+     */
+    @Test
+    fun aTicketNamingEitherOfTwoNamesIsTheSpoolsOwn() {
+        val names = setOf("lab.example", "old.example")
+        for (aud in names) {
+            val (tk, sig) = Tickets.issue(SIGNING_KEY, with(aud = aud))
+            assertEquals(aud, assertIs<Outcome.Accepted>(Tickets.check(tk, sig, listOf(key to kid), names, nbf + 60)).ticket.aud)
+        }
+        val (tk, sig) = Tickets.issue(SIGNING_KEY, with(aud = "other.example"))
+        assertEquals(Reason.AUDIENCE, refusal(Tickets.check(tk, sig, listOf(key to kid), names, nbf + 60)))
+    }
+
     @Test
     fun aTicketFromAnotherKeyIsRefusedByItsKeyIdBeforeAnySignatureWork() {
         val stranger = Tickets.generateSigningKey()
         val (tk, sig) = Tickets.issue(stranger, fixture().let { Ticket.forKey(stranger, it.aud, it.nbf, it.exp, it.ps, it.fl) })
-        assertEquals(Reason.KEY, refusal(Tickets.check(tk, sig, listOf(key to kid), "lab.example", nbf)))
+        assertEquals(Reason.KEY, refusal(Tickets.check(tk, sig, listOf(key to kid), setOf("lab.example"), nbf)))
     }
 
     @Test
     fun aTicketClaimingOurKeyIdButSignedByAnotherIsASignatureFailure() {
         val stranger = Tickets.generateSigningKey()
         val (tk, sig) = Tickets.issue(stranger, fixture())
-        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(tk, sig, listOf(key to kid), "lab.example", nbf)))
+        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(tk, sig, listOf(key to kid), setOf("lab.example"), nbf)))
     }
 
     @Test
@@ -216,15 +232,15 @@ class TicketCheckTest {
         val base = fixture()
 
         val (oldTk, oldSig) = Tickets.issue(SIGNING_KEY, base)
-        assertIs<Outcome.Accepted>(Tickets.check(oldTk, oldSig, keys, "lab.example", nbf))
+        assertIs<Outcome.Accepted>(Tickets.check(oldTk, oldSig, keys, setOf("lab.example"), nbf))
         val (nextTk, nextSig) = Tickets.issue(nextSigning, Ticket.forKey(nextSigning, base.aud, base.nbf, base.exp, base.ps, base.fl))
-        assertIs<Outcome.Accepted>(Tickets.check(nextTk, nextSig, keys, "lab.example", nbf))
+        assertIs<Outcome.Accepted>(Tickets.check(nextTk, nextSig, keys, setOf("lab.example"), nbf))
 
         val stranger = Tickets.generateSigningKey()
         val (strangerTk, strangerSig) = Tickets.issue(stranger, Ticket.forKey(stranger, base.aud, base.nbf, base.exp, base.ps, base.fl))
-        assertEquals(Reason.KEY, refusal(Tickets.check(strangerTk, strangerSig, keys, "lab.example", nbf)))
+        assertEquals(Reason.KEY, refusal(Tickets.check(strangerTk, strangerSig, keys, setOf("lab.example"), nbf)))
 
         val (crossTk, crossSig) = Tickets.issue(SIGNING_KEY, Ticket.forKey(nextSigning, base.aud, base.nbf, base.exp, base.ps, base.fl))
-        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(crossTk, crossSig, keys, "lab.example", nbf)))
+        assertEquals(Reason.SIGNATURE, refusal(Tickets.check(crossTk, crossSig, keys, setOf("lab.example"), nbf)))
     }
 }

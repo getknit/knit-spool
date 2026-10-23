@@ -453,6 +453,35 @@ class ConfigTest {
         assertEquals(16, assertNotNull(withTicket().ticket).turnRatePer10Min)
     }
 
+    /**
+     * `SPOOL_TICKET_AUDIENCE_ALIAS` is a second name for a spool being renamed: empty is unset, it is a
+     * lowercase host name like the audience, and it is refused without the key and the audience or
+     * when it repeats the audience.
+     */
+    @Test
+    fun theAudienceAliasIsASecondNameAndMustDiffer() {
+        assertEquals(setOf("spool.example"), assertNotNull(withTicket().ticket).audiences)
+        assertNull(assertNotNull(withTicket("SPOOL_TICKET_AUDIENCE_ALIAS" to "").ticket).audienceAlias)
+        val renaming = withTicket("SPOOL_TICKET_AUDIENCE_ALIAS" to "old.example")
+        assertEquals(setOf("spool.example", "old.example"), assertNotNull(renaming.ticket).audiences)
+        assertEquals("old.example", renaming.reloadable()["ticketAudAlias"])
+        assertEquals("unset", withTicket().reloadable()["ticketAudAlias"])
+
+        val orphan = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TICKET_AUDIENCE_ALIAS" to "old.example")) }
+        assertTrue(orphan.message!!.contains("SPOOL_TICKET_KEY"), orphan.message!!)
+        val noAudience =
+            assertFailsWith<IllegalArgumentException> {
+                config(mapOf("SPOOL_TICKET_KEY" to ticketKey, "SPOOL_TICKET_AUDIENCE_ALIAS" to "old.example"))
+            }
+        assertTrue(noAudience.message!!.contains("SPOOL_TICKET_AUDIENCE"), noAudience.message!!)
+        val same = assertFailsWith<IllegalArgumentException> { withTicket("SPOOL_TICKET_AUDIENCE_ALIAS" to "spool.example") }
+        assertTrue(same.message!!.contains("must differ"), same.message!!)
+        for (bad in listOf("Old.Example", "old example", "old.example:443", "x".repeat(254))) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { withTicket("SPOOL_TICKET_AUDIENCE_ALIAS" to bad) }
+            assertTrue(e.message!!.contains("SPOOL_TICKET_AUDIENCE_ALIAS"), e.message!!)
+        }
+    }
+
     @Test
     fun theAudienceIsALowercaseHostName() {
         for (bad in listOf("Spool.Example", "spool example", "spool.example:443", "x".repeat(254))) {
