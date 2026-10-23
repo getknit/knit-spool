@@ -9,8 +9,8 @@ topics: [tickets, config]
 # ADR 2026-10.zprp — a renamed spool accepts tickets for both its names
 
 Status: Accepted (2026-10-22). Amends ADR 2026-10.bxsg: `aud` names the one spool a ticket is good
-for, by either of its names while it is renamed. The spec wording is pending in knit-next; see
-[The spec](#the-spec).
+for, by either of its names while it is renamed. The spec text is knit-next `16a80a41`
+(`docs/SPOOL_PROTOCOL.md` §7.6: S-7.6-14 amended, S-7.6-47); see [The spec](#the-spec).
 
 **Context:** a ticket names one host in `aud`, and a spool refuses one whose `aud` is not its
 `SPOOL_TICKET_AUDIENCE` with `err ticket` `audience` (S-7.6-14). The Knit client asks the issuer for
@@ -51,12 +51,15 @@ Alternatives rejected:
 
 ## The spec
 
-S-7.6-14's normative text already says "`aud` is its own", and this daemon reads a spool's own names
-as its audience and its alias. The `Ticket` layout's comment in `docs/SPOOL_PROTOCOL.md` §7.6 still
-says "`aud`: the one spool it is good for", which a reader takes as one name. The amendment ("one of
-its own names") belongs in knit-next and is not made from this repo. Until it lands, `:conformance`
-gains no check for a second audience: conformance tests what the spec says, and a check that only
-this server passes does not belong there.
+S-7.6-14 said "`aud` is its own", and the `Ticket` layout's comment said "the one spool it is good
+for", which a reader took as one name. knit-next `16a80a41` makes it explicit: S-7.6-14 accepts an
+`aud` that is one of the spool's own names, and the new S-7.6-47 defines them as the host names its
+members reach it by, one or, while it is being renamed, its old and its new. HELLO names none of
+them, and dropping one refuses a later `ent` for it while a held ticket stays held. This daemon's
+audience and alias are those two names.
+
+`:conformance` has no check for S-7.6-47 yet. It would need to be told the second name, as it is told
+the first with `--ticket-audience`, and the existing checks already pass against either name.
 
 ## The version
 
