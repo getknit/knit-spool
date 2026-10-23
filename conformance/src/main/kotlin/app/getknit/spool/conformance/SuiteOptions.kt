@@ -24,4 +24,9 @@ class SuiteOptions(
     val ticketSigningKey: ByteArray? = null,
     /** The audience the spool's tickets must name; needed with [ticketSigningKey]. */
     val ticketAudience: String? = null,
+    /**
+     * The spool's second name while it is being renamed (S-7.6-47), when supplied; null skips
+     * `ent-audience-alias`. Needs [ticketAudience], and differs from it.
+     */
+    val ticketAudienceAlias: String? = null,
 )

@@ -34,17 +34,24 @@ class ConformanceSelfTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** Nothing is skipped: every optional feature is on and every limit is inside the probes' reach. */
+    /**
+     * Nothing is skipped: every optional feature is on, a second ticket audience included (S-7.6-47),
+     * and every limit is inside the probes' reach.
+     */
     @Test
     fun everyCheckPassesWithTokenPowCommonsModerationTurnAndTickets() {
         val run =
             runSuiteAgainst(
-                everyFeature(ticket = testTicketConfig(gates = EVERY_GATE), stunUrls = listOf("stun:spool.example:3478")),
+                everyFeature(
+                    ticket = testTicketConfig(gates = EVERY_GATE, audienceAlias = TICKET_ALIAS),
+                    stunUrls = listOf("stun:spool.example:3478"),
+                ),
                 token = TOKEN,
                 commonsSecret = TEST_COMMONS_SECRET,
                 turnSecret = TEST_TURN_SECRET,
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
+                ticketAudienceAlias = TICKET_ALIAS,
             )
         run.assertClean(expectedSkips = emptySet())
     }
@@ -64,7 +71,7 @@ class ConformanceSelfTest {
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
             )
-        run.assertClean(expectedSkips = setOf("files-ticket", "files-receive", "files-size"))
+        run.assertClean(expectedSkips = setOf("ent-audience-alias", "files-ticket", "files-receive", "files-size"))
     }
 
     /**
@@ -82,7 +89,7 @@ class ConformanceSelfTest {
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
             )
-        run.assertClean(expectedSkips = setOf("ent-required", "cast-ticket"))
+        run.assertClean(expectedSkips = setOf("ent-required", "ent-audience-alias", "cast-ticket"))
     }
 
     /**
@@ -199,6 +206,7 @@ class ConformanceSelfTest {
         turnSecret: String? = null,
         ticketSigningKey: ByteArray? = null,
         ticketAudience: String? = null,
+        ticketAudienceAlias: String? = null,
         destructive: Boolean = true,
     ): Run {
         val tap = ByteArrayOutputStream()
@@ -220,6 +228,7 @@ class ConformanceSelfTest {
                     turnSecret = turnSecret,
                     ticketSigningKey = ticketSigningKey,
                     ticketAudience = ticketAudience,
+                    ticketAudienceAlias = ticketAudienceAlias,
                 )
             exitCode = runSuite(http, options, out = PrintStream(tap, true), err = PrintStream(summary, true))
         }
@@ -270,6 +279,7 @@ class ConformanceSelfTest {
                 "ent-accepts",
                 "ent-expired",
                 "ent-audience",
+                "ent-audience-alias",
                 "stun-shape",
                 "ent-gates",
                 "files-ticket",
@@ -277,6 +287,9 @@ class ConformanceSelfTest {
                 "files-size",
                 "cast-ticket",
             )
+
+        /** The spool's old name in the every-feature run, as `SPOOL_TICKET_AUDIENCE_ALIAS`. */
+        const val TICKET_ALIAS = "old.spool.test"
 
         /** Every capability `SPOOL_TICKET_GATES` can gate today. */
         val EVERY_GATE = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST

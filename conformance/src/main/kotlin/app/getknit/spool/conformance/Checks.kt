@@ -133,6 +133,8 @@ class Ctx(
     val ticketSigningKey: ByteArray? = null,
     /** The audience from `--ticket-audience`; set exactly when [ticketSigningKey] is. */
     val ticketAudience: String? = null,
+    /** The spool's second name from `--ticket-audience-alias`, or null — `ent-audience-alias` skips then. */
+    val ticketAudienceAlias: String? = null,
 ) {
     /** Mined stamps by scope hex — a stamp is reusable across connections (the spool caches too). */
     private val stamps = HashMap<String, PowStamp>()
@@ -265,6 +267,7 @@ fun allChecks(): List<Check> =
         entAccepts(),
         entExpired(),
         entAudience(),
+        entAudienceAlias(),
         stunShape(),
         // Experimental (SPOOL_PROTOCOL.md §7.6, S-7.6-22/23): which capabilities a ticket gates, and files.
         entGates(),
@@ -485,6 +488,25 @@ private fun entAudience(): Check =
             hello()
             send(ctx.ent(nextQ(), aud = FOREIGN_AUDIENCE))
             expectErr(ErrCode.TICKET)
+        }
+    }
+
+/**
+ * S-7.6-14, S-7.6-47: a spool being renamed takes a ticket for either of its names, on one
+ * connection, one after the other. Only the operator knows the second name, so it skips without one.
+ */
+private fun entAudienceAlias(): Check =
+    Check(name = "ent-audience-alias") { ctx ->
+        ctx.requireEnt()
+        val alias = ctx.ticketAudienceAlias ?: throw SkipCheck("no --ticket-audience-alias; the spool's second name is not known")
+        ctx.client.connect {
+            hello()
+            val second = ctx.ent(nextQ(), aud = alias)
+            send(second)
+            ensure(expect<Ok>(RecordType.OK).q == second.q) { "expected ok q=${second.q} for a ticket naming $alias" }
+            val first = ctx.ent(nextQ())
+            send(first)
+            ensure(expect<Ok>(RecordType.OK).q == first.q) { "expected ok q=${first.q} for a ticket naming the audience" }
         }
     }
 

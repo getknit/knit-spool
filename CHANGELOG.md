@@ -29,6 +29,8 @@ document:
   read by every `ent`, and reported as `ticketAudAlias`. Never announced in `hello`. One account
   can hold a ticket for each name while the alias is set, and so two pseudonyms and twice the
   per-holder budgets. The development version is `0.5.0-dev.2`, the first build that reads it.
+  Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.6 (S-7.6-14, S-7.6-47). New conformance check
+  `ent-audience-alias`, run with `--ticket-audience-alias`.
 
 - **The coturn entrypoint runs on a TURN box of its own.** `deploy/coturn/entrypoint.sh` takes three
   opt-in settings for a box with no Caddy: `TURN_CERT_FILE` and `TURN_KEY_FILE` (both or neither)

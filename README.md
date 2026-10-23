@@ -408,7 +408,8 @@ knit-spool ticket-mint --key-file ticket.key --aud spool.example.com --account a
 `ticket-mint` prints a `knit-ticket:v1:…` line for a test client; `--cast` adds the cast flag
 ([casts](#-casts-experimental)), `--files` the upload flag, `--ab BYTES` a smaller upload budget,
 `--am BYTES` a smaller largest attachment, and `--no-turn` drops TURN. Conformance takes the same key:
-`--ticket-key-file ticket.key --ticket-audience spool.example.com`. `knit_spool_ticket_accepted_total`,
+`--ticket-key-file ticket.key --ticket-audience spool.example.com`, plus `--ticket-audience-alias` with
+the old name on a Spool being renamed. `knit_spool_ticket_accepted_total`,
 `knit_spool_ticket_refused_total{reason}`, `knit_spool_turn_issued_ticketed_total` and
 `knit_spool_ticket_attach_bytes_charged_total` count what happened. The Spool learns each holder's
 pseudonym and can link their connections within a day; it never logs a ticket or a pseudonym, and

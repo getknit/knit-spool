@@ -17,7 +17,7 @@ private const val USAGE =
     "usage: knit-spool-conformance <ws(s)://host[:port]/spool/v1> " +
         "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive] " +
         "[--commons-invite knit-commons:v1:...] [--turn-secret-file PATH] " +
-        "[--ticket-key-file PATH --ticket-audience HOST]"
+        "[--ticket-key-file PATH --ticket-audience HOST [--ticket-audience-alias HOST]]"
 
 /**
  * The conformance CLI: validates ANY spool implementation over a live WebSocket against
@@ -55,6 +55,7 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
     var turnSecretFile: String? = null
     var ticketKeyFile: String? = null
     var ticketAudience: String? = null
+    var ticketAudienceAlias: String? = null
     var i = 0
     while (i < args.size) {
         when (val arg = args[i]) {
@@ -95,6 +96,10 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
 
             "--ticket-audience" -> {
                 ticketAudience = args.getOrNull(++i) ?: usageExit()
+            }
+
+            "--ticket-audience-alias" -> {
+                ticketAudienceAlias = args.getOrNull(++i) ?: usageExit()
             }
 
             else -> {
@@ -141,9 +146,17 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
                     ?: argExit("--ticket-key-file $it does not hold a knit-ticket-key:v1: signing key")
             },
         ticketAudience = ticketAudience,
+        ticketAudienceAlias = ticketAudienceAlias,
     ).also { options ->
         if ((options.ticketSigningKey == null) != (options.ticketAudience == null)) {
             argExit("--ticket-key-file and --ticket-audience go together")
+        }
+        // Like a key with no audience: an alias the run cannot use would skip its check and look clean.
+        if (options.ticketAudienceAlias != null && options.ticketAudience == null) {
+            argExit("--ticket-audience-alias needs --ticket-key-file and --ticket-audience")
+        }
+        if (options.ticketAudienceAlias != null && options.ticketAudienceAlias == options.ticketAudience) {
+            argExit("--ticket-audience-alias must differ from --ticket-audience")
         }
     }
 }

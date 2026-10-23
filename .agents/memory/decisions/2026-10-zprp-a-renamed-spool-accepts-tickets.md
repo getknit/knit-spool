@@ -58,8 +58,9 @@ members reach it by, one or, while it is being renamed, its old and its new. HEL
 them, and dropping one refuses a later `ent` for it while a held ticket stays held. This daemon's
 audience and alias are those two names.
 
-`:conformance` has no check for S-7.6-47 yet. It would need to be told the second name, as it is told
-the first with `--ticket-audience`, and the existing checks already pass against either name.
+`:conformance` checks it as `ent-audience-alias`: given the second name with `--ticket-audience-alias`,
+it presents a ticket for that name and then one for the audience on one connection, and expects `ok`
+to both. Without the flag the check skips, because only the operator knows a spool's second name.
 
 ## The version
 
@@ -93,6 +94,7 @@ environment must gate the alias on this version rather than set it and hope.
     equal to it, or not a host name, and reported as `ticketAudAlias`;
   - `ReloadTest.renamingATicketedSpoolIsHitlessForLiveConnections`: set and cleared with one
     connection live throughout;
+  - the conformance check `ent-audience-alias`, run in process by `ConformanceSelfTest`;
   - `ConfigDescribeTest` reports the field;
   - `DeployConfigTest` checks that `docker-compose.tls.yml` passes the variable through;
   - `EnvContractTest`, pinned at `0.5.0-dev.2`.

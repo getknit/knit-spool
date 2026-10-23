@@ -40,6 +40,7 @@ suspend fun runSuite(
             turnSecret = options.turnSecret,
             ticketSigningKey = options.ticketSigningKey,
             ticketAudience = options.ticketAudience,
+            ticketAudienceAlias = options.ticketAudienceAlias,
         )
     val checks = allChecks()
     val report = Report(checks.size, out, err)
