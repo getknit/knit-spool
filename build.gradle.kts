@@ -31,7 +31,7 @@ allprojects {
     // EnvContractTest fails until it does. After a release it resets to the next minor's `-dev.1`.
     // A behaviour the contract cannot see may move it by hand too: 0.4.0-dev.3 was the first to
     // read a ticket's `am` (ADR 2026-10.h4ps).
-    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.5.0-dev.2"
+    version = (findProperty("spoolVersion") as String?)?.takeIf { it.isNotBlank() } ?: "0.6.0-dev.1"
 }
 
 // ---- coverage ----

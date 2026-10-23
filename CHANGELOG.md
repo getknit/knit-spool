@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-19T10:26:28Z
+  updated: 2026-10-23T02:59:11Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -20,6 +20,19 @@ document:
 
 ## Unreleased
 
+Nothing yet.
+
+## [0.5.0](https://github.com/getknit/knit-spool/releases/tag/v0.5.0) — 2026-10-23T02:59:11Z
+
+> The rename release. A ticketed Spool can answer to two names while it moves from one to the
+> other: `SPOOL_TICKET_AUDIENCE_ALIAS` accepts tickets minted for the old name beside the new, and
+> the conformance suite checks it. The coturn entrypoint runs on a TURN box of its own, reading its
+> certificate from files such as certbot's and serving `turns:` on a port of its choosing, and a
+> certificate renewal can no longer hand coturn a certificate without its key. Pre-1.0, so every
+> interface below is still subject to change. Nothing on the wire changes and every new setting is
+> off by default: a 0.4.0 client talks to a 0.5.0 Spool as before, and a 0.4.0 Spool's environment
+> carries over as it is.
+
 ### Added
 
 - **Experimental: renaming a ticketed Spool, `SPOOL_TICKET_AUDIENCE_ALIAS`** (ADR 2026-10.zprp). A
@@ -28,7 +41,7 @@ document:
   host name, refused without the key and the audience or when it repeats the audience; reloadable,
   read by every `ent`, and reported as `ticketAudAlias`. Never announced in `hello`. One account
   can hold a ticket for each name while the alias is set, and so two pseudonyms and twice the
-  per-holder budgets. The development version is `0.5.0-dev.2`, the first build that reads it.
+  per-holder budgets. `0.5.0-dev.2` was the first development build to read it.
   Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.6 (S-7.6-14, S-7.6-47). New conformance check
   `ent-audience-alias`, run with `--ticket-audience-alias`.
 
