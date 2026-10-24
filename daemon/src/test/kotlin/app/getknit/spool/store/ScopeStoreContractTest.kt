@@ -237,18 +237,18 @@ abstract class ScopeStoreContractTest {
             val isHeld: (ByteArray) -> Boolean = { it.contentEquals(held) }
 
             // Inside every scope's 10 s TTL: nothing is idle yet.
-            assertTrue(store.reclaimIdle(now = 10_000L, held = isHeld).isEmpty())
+            assertTrue(store.reclaimIdleAll(now = 10_000L, held = isHeld).isEmpty())
 
             // The frame expires to a tombstone at 10_001, which outlives the scope's idleness.
             store.sweepAll(now = 15_000L)
-            val first = store.reclaimIdle(now = 15_000L, held = isHeld)
+            val first = store.reclaimIdleAll(now = 15_000L, held = isHeld)
             assertEquals(listOf(bare.toList()), first.map { it.toList() })
             assertTrue(store.isUnknownScope(bare))
             assertTrue(!store.isUnknownScope(recent) && !store.isUnknownScope(held) && !store.isUnknownScope(tombstoned))
 
             // Once the tombstone and the attachment have aged out, the rest go too — except held.
             store.sweepAll(now = 40_000L)
-            val second = store.reclaimIdle(now = 40_000L, held = isHeld).map { it.toList() }.toSet()
+            val second = store.reclaimIdleAll(now = 40_000L, held = isHeld).map { it.toList() }.toSet()
             assertEquals(setOf(recent.toList(), tombstoned.toList(), attached.toList()), second)
             assertEquals(1, store.scopeCount())
             assertEquals(0L, store.totalBytes())
@@ -293,17 +293,42 @@ abstract class ScopeStoreContractTest {
             val now = 20_000L
 
             val first = store.sweep(now, after = null, limit = 2)
-            assertEquals(listOf(0x01, 0x03), first.changes.map { it.scopeId[0].toInt() and 0xFF })
+            assertEquals(listOf(0x01, 0x03), first.items.map { it.scopeId[0].toInt() and 0xFF })
             assertTrue(assertNotNull(first.next).contentEquals(cursorScope))
             assertTrue(assertNotNull(store.shedOldestScope()).scopeId.contentEquals(cursorScope))
 
             val second = store.sweep(now, after = first.next, limit = 2)
-            assertEquals(listOf(0x05, 0x07), second.changes.map { it.scopeId[0].toInt() and 0xFF })
+            assertEquals(listOf(0x05, 0x07), second.items.map { it.scopeId[0].toInt() and 0xFF })
             val third = store.sweep(now, after = second.next, limit = 2)
-            assertEquals(listOf(0x90), third.changes.map { it.scopeId[0].toInt() and 0xFF })
+            assertEquals(listOf(0x90), third.items.map { it.scopeId[0].toInt() and 0xFF })
             assertNull(third.next, "a short batch ends the pass")
-            assertTrue((first.changes + second.changes + third.changes).all { it.digest.count == 0 })
+            assertTrue((first.items + second.items + third.items).all { it.digest.count == 0 })
             assertTrue(store.sweepAll(now + 1).isEmpty(), "each expiry is reported once")
+        }
+    }
+
+    /**
+     * ADR 2026-10.d9ez: the idle reclaim pages like the sweep. A held scope still moves the cursor,
+     * and a batch that drops the scope it ended on does not lose its place.
+     */
+    @Test
+    fun reclaimBatchesSurviveDroppingTheScopeTheyEndedOn() {
+        createStore().use { store ->
+            val ids = (1..5).map { b -> ByteArray(32) { b.toByte() } }
+            ids.forEach { store.subscribed(it, now = 0L) }
+            val isHeld: (ByteArray) -> Boolean = { it.contentEquals(ids[1]) }
+            val now = 20_000L
+
+            val first = store.reclaimIdle(now, isHeld, after = null, limit = 2)
+            assertEquals(listOf(1), first.items.map { it[0].toInt() })
+            assertTrue(assertNotNull(first.next).contentEquals(ids[1]), "the held scope ends the window")
+            val second = store.reclaimIdle(now, isHeld, after = first.next, limit = 2)
+            assertEquals(listOf(3, 4), second.items.map { it[0].toInt() })
+            assertTrue(assertNotNull(second.next).contentEquals(ids[3]))
+            val third = store.reclaimIdle(now, isHeld, after = second.next, limit = 2)
+            assertEquals(listOf(5), third.items.map { it[0].toInt() })
+            assertNull(third.next, "a short batch ends the pass")
+            assertEquals(1, store.scopeCount())
         }
     }
 
@@ -336,7 +361,7 @@ abstract class ScopeStoreContractTest {
 
             assertEquals(listOf(framed.toList()), changes.map { it.scopeId.toList() })
             assertEquals(0L, store.totalBytes(), "the attachment's chunk was not swept")
-            val reclaimed = store.reclaimIdle(now = 26_000L, held = { false }).map { it.toList() }.toSet()
+            val reclaimed = store.reclaimIdleAll(now = 26_000L, held = { false }).map { it.toList() }.toSet()
             assertEquals(setOf(tombstoned.toList(), attachTombstoned.toList()), reclaimed)
         }
     }

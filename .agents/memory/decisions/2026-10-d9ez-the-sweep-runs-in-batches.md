@@ -27,13 +27,15 @@ It looked like a memory limit, because the worst trials also ran with a starved 
 sweep as the cause.
 
 **Decision:** `ScopeStore.sweep(now, after, limit)` sweeps at most `limit` scopes in
-unsigned scope-id order, starting after the cursor `after`. It returns a `SweepBatch` of
-changes plus the next cursor, which is null once the pass is done. `sweepTick` makes one
-store call per batch of `SWEEP_BATCH_SCOPES` (512) and broadcasts each batch's digests as
-it lands. This is the pattern `reclaimSpace` uses (ADR 2026-10.us34). The store dispatcher
-is `limitedParallelism(1)` and runs work FIFO, so records queued during a batch run before
-the next batch. There is no whole-pass form in main; tests loop the cursor with
-`sweepAll`.
+unsigned scope-id order, starting after the cursor `after`. It returns a `ScopeBatch` of
+changes plus the next cursor, which is null once the pass is done. `reclaimIdle` (ADR
+2026-10.d2zb) pages the same way and returns the ids it dropped. It was the other
+statement over every scope in the tick. `sweepTick` runs each pass through `inBatches`:
+one store call per batch of `SWEEP_BATCH_SCOPES` (512), with each batch's digests
+broadcast as it lands. This is the pattern `reclaimSpace` uses (ADR 2026-10.us34). The
+store dispatcher is `limitedParallelism(1)` and runs work FIFO, so records queued during a
+batch run before the next batch. There is no whole-pass form in main; tests loop the cursor
+with `sweepAll` and `reclaimIdleAll`.
 
 In `SqliteScopeStore` a batch is one windowed `SELECT` over `scopes` (`SWEEP_WINDOW_SQL`).
 It returns each scope's row together with a due flag built from four `EXISTS` clauses,
@@ -44,8 +46,10 @@ indexed column on the left (`b.arrived_at < ? - s.ttl_ms`), and `EXPLAIN QUERY P
 shows a primary-key range on `scopes` with covering-index seeks on `idx_blobs_eviction`,
 `idx_tombstones_expiry` and `idx_attachments_eviction`. `attachment_tombstones` has no
 expiry index. It seeks by `scope_id` and filters, the same as the delete
-`sweepAttachments` already runs. `InMemoryScopeStore` keys its scopes in a `TreeMap`, so
-it pages the same way, since lowercase hex sorts like the unsigned bytes it spells.
+`sweepAttachments` already runs. The reclaim's window (`RECLAIM_WINDOW_SQL`) carries an
+idle-and-bare flag the same way. Both step through one `window` helper that reads the rows
+out before any delete. `InMemoryScopeStore` keys its scopes in a `TreeMap`, so it pages the
+same way, since lowercase hex sorts like the unsigned bytes it spells.
 
 The alternative a reader reaches for first is a per-scope `next_due` column with an index,
 so the sweep reads only due scopes and never walks the rest. That would be exact, but it
@@ -72,11 +76,12 @@ proportional to the scopes with something to expire, and the expiry itself is no
 What changed is that it no longer holds the store for the whole pass. A scope with nothing
 due still costs four index seeks inside native SQLite per pass.
 
-`reclaimIdle` is still one statement over every scope: ~10–38 ms at 256,000 on that
-desktop, depending on how many are past their TTL. It is the next thing to batch if scope
-counts keep rising. `subscribe` runs `SELECT COUNT(*) FROM scopes` for every new scope.
-That made seeding 256,000 scopes superlinear (185 s, against 32 s for 100,000). It is not
-a stall, but it is O(scopes) per new scope.
+The whole-pass `reclaimIdle` cost ~10–38 ms at 256,000 on that desktop, depending on how
+many scopes were past their TTL. A pass that drops many scopes at once, after a mass
+disconnect for example, also paid every delete and its cascades in that one call. Batched,
+a window drops at most 512. `subscribe` runs `SELECT COUNT(*) FROM scopes` for every new
+scope. That made seeding 256,000 scopes superlinear (185 s, against 32 s for 100,000). It
+is not a stall, but it is O(scopes) per new scope.
 
 The `TreeMap` has a trap. `TreeMap.remove` of a node with two children moves its
 successor's key and value into that node. An entry held across the `remove` then reads the
@@ -95,8 +100,11 @@ Guards:
   of the four kinds.
 - `ScopeStoreContractTest.sweepBatchesWalkEveryScopeOnceInIdOrder` covers the cursor, the
   unsigned order, and a cursor scope shed between batches.
-- `sweepAll` defaults to batches of 2, so every other sweep assertion in the contract tests
-  also runs a multi-batch pass on both stores.
+- `SweeperTest.theIdleReclaimRunsInBatches` fails if the reclaim runs in one call, and
+  `ScopeStoreContractTest.reclaimBatchesSurviveDroppingTheScopeTheyEndedOn` covers its
+  cursor.
+- `sweepAll` and `reclaimIdleAll` default to batches of 2, so every other sweep and reclaim
+  assertion in the contract tests also runs a multi-batch pass on both stores.
 
 The capacity numbers come from `bench/cx43`. Re-run its `scopes128k`/`scopes256k` trials
 before raising `SPOOL_MAX_SCOPES` past the ~20,000 ADR 2026-10.4ynr holds it to.

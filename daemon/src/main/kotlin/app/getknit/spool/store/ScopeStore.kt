@@ -137,9 +137,12 @@ class SweepChange(
     val digest: DigestInfo,
 )
 
-/** One [ScopeStore.sweep] batch: its changes, and where the next batch starts — null once the pass is done. */
-class SweepBatch(
-    val changes: List<SweepChange>,
+/**
+ * One batch of a pass over every scope ([ScopeStore.sweep], [ScopeStore.reclaimIdle]): what it
+ * produced, and where the next batch starts — null once the pass is done.
+ */
+class ScopeBatch<T>(
+    val items: List<T>,
     val next: ByteArray?,
 )
 
@@ -267,17 +270,20 @@ interface ScopeStore : AutoCloseable {
         now: Long,
         after: ByteArray?,
         limit: Int,
-    ): SweepBatch
+    ): ScopeBatch<SweepChange>
 
     /**
      * Drops every bare scope not in [held] whose last activity is older than its own `ttlMs` — the
-     * longest it ever promised to hold a frame — and returns their ids. Call after [sweep], which
-     * is what empties them.
+     * longest it ever promised to hold a frame — among up to [limit] scopes after [after], and
+     * returns their ids. Batched like [sweep], for the same reason. Call after the [sweep] pass,
+     * which is what empties them.
      */
     fun reclaimIdle(
         now: Long,
         held: (ByteArray) -> Boolean,
-    ): List<ByteArray>
+        after: ByteArray?,
+        limit: Int,
+    ): ScopeBatch<ByteArray>
 
     /**
      * Drops the least-recently-active scope entirely (watermark policy), or null when there is

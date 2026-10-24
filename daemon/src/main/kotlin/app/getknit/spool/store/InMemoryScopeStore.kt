@@ -49,7 +49,7 @@ class InMemoryScopeStore(
     }
 
     /**
-     * Sorted by key so [sweep] can page by cursor the way the SQLite store does: lowercase hex sorts
+     * Sorted by key so [sweep] and [reclaimIdle] can page by cursor the way the SQLite store does: lowercase hex sorts
      * like the unsigned bytes it spells. It also breaks `lastActivity` ties by scope id, as SQLite does.
      *
      * Copy an entry's key and value out before removing it: `TreeMap.remove` of a node with two
@@ -185,29 +185,50 @@ class InMemoryScopeStore(
         now: Long,
         after: ByteArray?,
         limit: Int,
-    ): SweepBatch {
-        require(limit > 0) { "limit must be positive, was $limit" }
-        val window = (if (after == null) scopes else scopes.tailMap(hex(after), false)).entries.take(limit)
+    ): ScopeBatch<SweepChange> {
+        val window = window(after, limit)
         val changes =
             window.mapNotNull { (key, scope) ->
                 if (sweepScope(scope, now)) SweepChange(unhex(key), digestInfo(scope)) else null
             }
-        return SweepBatch(changes, next = if (window.size == limit) unhex(window.last().key) else null)
+        return ScopeBatch(changes, next(window, limit))
     }
 
     @Synchronized
     override fun reclaimIdle(
         now: Long,
         held: (ByteArray) -> Boolean,
-    ): List<ByteArray> {
+        after: ByteArray?,
+        limit: Int,
+    ): ScopeBatch<ByteArray> {
+        val window = window(after, limit)
         val idle =
-            scopes.entries
-                .filter { isBare(it.value) && it.value.lastActivity + it.value.bounds.ttlMs < now }
-                .map { it.key }
-                .filter { !held(unhex(it)) }
+            window
+                .filter { (key, scope) -> isBare(scope) && scope.lastActivity + scope.bounds.ttlMs < now && !held(unhex(key)) }
+                .map { it.first }
         idle.forEach { scopes.remove(it) }
-        return idle.map(::unhex)
+        return ScopeBatch(idle.map(::unhex), next(window, limit))
     }
+
+    /** Up to [limit] scopes after [after] in key order, copied out of the map so the caller may remove them. */
+    private fun window(
+        after: ByteArray?,
+        limit: Int,
+    ): List<Pair<String, Scope>> {
+        require(limit > 0) { "limit must be positive, was $limit" }
+        val tail = if (after == null) scopes else scopes.tailMap(hex(after), false)
+        return tail.entries
+            .asSequence()
+            .take(limit)
+            .map { it.key to it.value }
+            .toList()
+    }
+
+    /** Where the batch after [window] starts: null once a short window has ended the pass. */
+    private fun next(
+        window: List<Pair<String, Scope>>,
+        limit: Int,
+    ): ByteArray? = if (window.size == limit) unhex(window.last().first) else null
 
     /** See [ScopeStore]: nothing but the row. A bare scope's byte counters are already zero. */
     private fun isBare(scope: Scope): Boolean =

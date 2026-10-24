@@ -42,6 +42,7 @@ import app.getknit.spool.store.DigestInfo
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.PushResult
+import app.getknit.spool.store.ScopeBatch
 import app.getknit.spool.store.ScopeStore
 import app.getknit.spool.store.SubscribeResult
 import io.ktor.http.ContentType
@@ -1944,22 +1945,18 @@ class SpoolServer(
 
     /**
      * One sweeper pass: expiry broadcasts, idle-scope reclaim, cache pruning, watermark. Exposed for
-     * tests. Expiry runs one store call per batch of scopes, like [reclaimSpace], so records queued
-     * behind it run between batches instead of waiting out a pass that grows with the scope count
+     * tests. Expiry and the reclaim each run [inBatches], like [reclaimSpace], so records queued
+     * behind them run between batches instead of waiting out a pass that grows with the scope count
      * (ADR 2026-10.d9ez).
      */
     internal suspend fun sweepTick() {
         val now = clock()
-        var cursor: ByteArray? = null
-        do {
-            val batch = withStore { store.sweep(now, cursor, SWEEP_BATCH_SCOPES) }
-            batch.changes.forEach { broadcastDigest(it.scopeId, it.digest) }
-            cursor = batch.next
-        } while (cursor != null)
-        val reclaimed = withStore { store.reclaimIdle(now, ::isHeld) }
-        if (reclaimed.isNotEmpty()) {
-            metrics.reclaimsTotal.add(reclaimed.size.toLong())
-            log.debug("sweep: reclaimed {} idle bare scope(s)", reclaimed.size)
+        inBatches({ store.sweep(now, it, SWEEP_BATCH_SCOPES) }) { broadcastDigest(it.scopeId, it.digest) }
+        var reclaimed = 0L
+        inBatches({ store.reclaimIdle(now, ::isHeld, it, SWEEP_BATCH_SCOPES) }) { reclaimed++ }
+        if (reclaimed > 0) {
+            metrics.reclaimsTotal.add(reclaimed)
+            log.debug("sweep: reclaimed {} idle bare scope(s)", reclaimed)
         }
         val minDay = Pow.utcDay(now) - 1
         powAccepted.entries.removeIf { it.value < minDay }
@@ -1968,6 +1965,23 @@ class SpoolServer(
         pruneIdleClients(seenBefore = now - IP_IDLE_MS)
         maybeShed()
         reclaimSpace()
+    }
+
+    /**
+     * Runs a pass over every scope one store call per batch, cursor to cursor, handing each item to
+     * [each] as its batch lands. The store dispatcher runs FIFO, so whatever queued during one batch
+     * runs before the next.
+     */
+    private suspend fun <T> inBatches(
+        batch: (after: ByteArray?) -> ScopeBatch<T>,
+        each: (T) -> Unit,
+    ) {
+        var cursor: ByteArray? = null
+        do {
+            val done = withStore { batch(cursor) }
+            done.items.forEach(each)
+            cursor = done.next
+        } while (cursor != null)
     }
 
     /**

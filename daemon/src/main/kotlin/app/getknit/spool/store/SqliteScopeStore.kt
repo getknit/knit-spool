@@ -93,6 +93,11 @@ class SqliteScopeStore private constructor(
                 "OR EXISTS (SELECT 1 FROM attachment_tombstones x WHERE x.scope_id = s.scope_id AND x.expires_at < ?) " +
                 "FROM scopes s WHERE s.scope_id > ? ORDER BY s.scope_id LIMIT ?"
 
+        /** One [reclaimIdle] batch: the next scopes after a cursor in key order, each with whether it is bare and idle past its TTL. */
+        private const val RECLAIM_WINDOW_SQL =
+            "SELECT s.scope_id, s.last_activity + s.ttl_ms < ? AND $BARE_SQL " +
+                "FROM scopes s WHERE s.scope_id > ? ORDER BY s.scope_id LIMIT ?"
+
         fun open(
             dataDir: Path,
             hardLimits: HardLimits,
@@ -636,25 +641,15 @@ class SqliteScopeStore private constructor(
         now: Long,
         after: ByteArray?,
         limit: Int,
-    ): SweepBatch {
-        require(limit > 0) { "limit must be positive, was $limit" }
-        return tx {
-            val window = prep(SWEEP_WINDOW_SQL)
-            for (param in 1..4) window.setLong(param, now)
-            // An empty blob sorts before every scope id (SQLite compares blobs by memcmp, shorter first).
-            window.setBytes(5, after ?: ByteArray(0))
-            window.setInt(6, limit)
-            var seen = 0
-            var last: ByteArray? = null
+    ): ScopeBatch<SweepChange> =
+        tx {
+            val select = prep(SWEEP_WINDOW_SQL)
+            for (param in 1..4) select.setLong(param, now)
             val due = ArrayList<Pair<ByteArray, ScopeRow>>()
-            window.executeQuery().use { rows ->
-                while (rows.next()) {
-                    val scopeId = rows.getBytes(1)
-                    seen++
-                    last = scopeId
-                    if (rows.getBoolean(9)) due.add(scopeId to scopeRow(rows, from = 2))
+            val next =
+                window(select, cursorParam = 5, after, limit) { rows ->
+                    if (rows.getBoolean(9)) due.add(rows.getBytes(1) to scopeRow(rows, from = 2))
                 }
-            }
             val changes =
                 due.mapNotNull { (scopeId, row) ->
                     val attachBefore = row.attachBytes
@@ -662,8 +657,36 @@ class SqliteScopeStore private constructor(
                     if (changed || row.attachBytes != attachBefore) writeRow(scopeId, row, lastActivity = null)
                     if (changed) SweepChange(scopeId, digestInfo(row)) else null
                 }
-            SweepBatch(changes, next = if (seen == limit) last else null)
+            ScopeBatch(changes, next)
         }
+
+    /**
+     * Steps one key-ordered window ([SWEEP_WINDOW_SQL], [RECLAIM_WINDOW_SQL]) whose last two
+     * parameters, from [cursorParam], are the cursor and the limit. Hands [each] every row, then
+     * returns where the next window starts: null once a short window has ended the pass. The rows
+     * are read out before the caller writes anything, so no cursor is open across its deletes.
+     */
+    private fun window(
+        select: PreparedStatement,
+        cursorParam: Int,
+        after: ByteArray?,
+        limit: Int,
+        each: (ResultSet) -> Unit,
+    ): ByteArray? {
+        require(limit > 0) { "limit must be positive, was $limit" }
+        // An empty blob sorts before every scope id (SQLite compares blobs by memcmp, shorter first).
+        select.setBytes(cursorParam, after ?: ByteArray(0))
+        select.setInt(cursorParam + 1, limit)
+        var seen = 0
+        var last: ByteArray? = null
+        select.executeQuery().use { rows ->
+            while (rows.next()) {
+                seen++
+                last = rows.getBytes(1)
+                each(rows)
+            }
+        }
+        return if (seen == limit) last else null
     }
 
     @Synchronized
@@ -702,20 +725,24 @@ class SqliteScopeStore private constructor(
             shed
         }
 
+    /** One batch of the idle reclaim, windowed like [sweep] (ADR 2026-10.d9ez). */
     @Synchronized
     override fun reclaimIdle(
         now: Long,
         held: (ByteArray) -> Boolean,
-    ): List<ByteArray> =
+        after: ByteArray?,
+        limit: Int,
+    ): ScopeBatch<ByteArray> =
         tx {
-            val select = prep("SELECT s.scope_id FROM scopes s WHERE s.last_activity + s.ttl_ms < ? AND $BARE_SQL")
+            val select = prep(RECLAIM_WINDOW_SQL)
             select.setLong(1, now)
             val idle = ArrayList<ByteArray>()
-            select.executeQuery().use { rows ->
-                while (rows.next()) rows.getBytes(1).takeUnless(held)?.let(idle::add)
-            }
+            val next =
+                window(select, cursorParam = 2, after, limit) { rows ->
+                    if (rows.getBoolean(2)) rows.getBytes(1).takeUnless(held)?.let(idle::add)
+                }
             idle.forEach(::deleteScope)
-            idle
+            ScopeBatch(idle, next)
         }
 
     /** Deletes one scope and everything under it; the caller settles [bytesTotal]. */

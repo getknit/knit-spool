@@ -15,9 +15,10 @@ import app.getknit.spool.protocol.Sub
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.PushResult
+import app.getknit.spool.store.ScopeBatch
 import app.getknit.spool.store.ScopeStore
 import app.getknit.spool.store.SqliteScopeStore
-import app.getknit.spool.store.SweepBatch
+import app.getknit.spool.store.SweepChange
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import org.junit.jupiter.api.io.TempDir
@@ -35,9 +36,13 @@ class SweeperTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** Logs sweep batches and pushes in the order the store runs them, and pauses in each batch to stand in for a big store. */
-    private class SlowSweepStore(
+    /**
+     * Logs sweep and reclaim batches and pushes in the order the store runs them. Each sweep batch
+     * pauses [sweepPauseMs] to stand in for a big store.
+     */
+    private class CallLogStore(
         private val inner: ScopeStore,
+        private val sweepPauseMs: Long = 0L,
     ) : ScopeStore by inner {
         val calls: MutableList<String> = Collections.synchronizedList(ArrayList())
         val firstBatch = CompletableDeferred<Unit>()
@@ -46,11 +51,21 @@ class SweeperTest {
             now: Long,
             after: ByteArray?,
             limit: Int,
-        ): SweepBatch {
+        ): ScopeBatch<SweepChange> {
             calls += "sweep"
             firstBatch.complete(Unit)
-            Thread.sleep(20)
+            Thread.sleep(sweepPauseMs)
             return inner.sweep(now, after, limit)
+        }
+
+        override fun reclaimIdle(
+            now: Long,
+            held: (ByteArray) -> Boolean,
+            after: ByteArray?,
+            limit: Int,
+        ): ScopeBatch<ByteArray> {
+            calls += "reclaim"
+            return inner.reclaimIdle(now, held, after, limit)
         }
 
         override fun push(
@@ -71,16 +86,9 @@ class SweeperTest {
      */
     @Test
     fun aRecordQueuedMidSweepRunsBeforeThePassEnds() {
-        val limits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 16_384)
-        val store = SlowSweepStore(InMemoryScopeStore(limits))
-        repeat(10 * SWEEP_BATCH_SCOPES) { i ->
-            val s = ByteArray(32)
-            s[0] = 0x7f
-            s[1] = (i ushr 8).toByte()
-            s[2] = i.toByte()
-            store.subscribe(s, testBounds(), now = 0L, held = { false })
-        }
-        withServer(testConfig(hardLimits = limits), store = store) {
+        val store = CallLogStore(InMemoryScopeStore(manyScopes), sweepPauseMs = 20L)
+        store.seedBareScopes(10 * SWEEP_BATCH_SCOPES, now = 0L)
+        withServer(testConfig(hardLimits = manyScopes), store = store) {
             connect {
                 helloHandshake()
                 subscribe(testScope(1))
@@ -94,6 +102,34 @@ class SweeperTest {
         }
         val pushAt = store.calls.indexOf("push")
         assertTrue(pushAt in 1 until store.calls.lastIndexOf("sweep"), "the push ran at ${store.calls}")
+    }
+
+    /** ADR 2026-10.d9ez: the idle reclaim drops scopes a batch at a time too, and counts every one. */
+    @Test
+    fun theIdleReclaimRunsInBatches() {
+        val store = CallLogStore(InMemoryScopeStore(manyScopes))
+        withServer(testConfig(hardLimits = manyScopes), store = store) {
+            store.seedBareScopes(3 * SWEEP_BATCH_SCOPES, now = clock.now)
+            clock.advance(20_000)
+            spool.sweepTick()
+            assertEquals(0, store.scopeCount())
+            assertEquals(3L * SWEEP_BATCH_SCOPES, spool.metrics.reclaimsTotal.sum())
+        }
+        assertTrue(store.calls.count { it == "reclaim" } >= 3, "the reclaim ran as ${store.calls}")
+    }
+
+    private val manyScopes = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 16_384)
+
+    /** [count] empty scopes, last active at [now], none of which collides with a `testScope`. */
+    private fun ScopeStore.seedBareScopes(
+        count: Int,
+        now: Long,
+    ) = repeat(count) { i ->
+        val s = ByteArray(32)
+        s[0] = 0x7f
+        s[1] = (i ushr 8).toByte()
+        s[2] = i.toByte()
+        subscribe(s, testBounds(), now, held = { false })
     }
 
     /**

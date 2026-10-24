@@ -2,20 +2,30 @@
 package app.getknit.spool.store
 
 /**
- * A whole sweep pass, cursor by cursor. Tests only: the server sweeps one batch per store call
- * (ADR 2026-10.d9ez). The small default [limit] makes every pass a test runs a multi-batch one, so
- * each sweep assertion also checks that batching changes nothing.
+ * A whole pass over every scope, cursor by cursor. Tests only: the server makes one store call per
+ * batch (ADR 2026-10.d9ez). The small default limit makes every pass a test runs a multi-batch one,
+ * so each sweep and reclaim assertion also checks that batching changes nothing.
  */
+private fun <T> drain(batch: (after: ByteArray?) -> ScopeBatch<T>): List<T> {
+    val items = ArrayList<T>()
+    var cursor: ByteArray? = null
+    do {
+        val done = batch(cursor)
+        items += done.items
+        cursor = done.next
+    } while (cursor != null)
+    return items
+}
+
+/** A whole [ScopeStore.sweep] pass; see [drain]. */
 fun ScopeStore.sweepAll(
     now: Long,
     limit: Int = 2,
-): List<SweepChange> {
-    val changes = ArrayList<SweepChange>()
-    var cursor: ByteArray? = null
-    do {
-        val batch = sweep(now, cursor, limit)
-        changes += batch.changes
-        cursor = batch.next
-    } while (cursor != null)
-    return changes
-}
+): List<SweepChange> = drain { sweep(now, it, limit) }
+
+/** A whole [ScopeStore.reclaimIdle] pass; see [drain]. */
+fun ScopeStore.reclaimIdleAll(
+    now: Long,
+    held: (ByteArray) -> Boolean,
+    limit: Int = 2,
+): List<ByteArray> = drain { reclaimIdle(now, held, it, limit) }
