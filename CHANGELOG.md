@@ -20,7 +20,13 @@ document:
 
 ## Unreleased
 
-Nothing yet.
+### Fixed
+
+- **The sweeper no longer pauses delivery once a period.** Expiry ran as one pass over every
+  scope with the store held throughout, so every push, sub and pull waited out a stall that grew
+  with the scope count, about 7.6 s a minute at 256,000 scopes. It now sweeps 512 scopes per store
+  call and lets queued records run between calls, skips scopes with nothing to expire, and writes
+  back only the rows it changed. A scope with nothing due no longer costs a write every period.
 
 ## [0.5.0](https://github.com/getknit/knit-spool/releases/tag/v0.5.0) — 2026-10-23T02:59:11Z
 

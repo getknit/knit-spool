@@ -122,6 +122,13 @@ private const val RECLAIM_BATCH_PAGES = 2_048
 private const val RECLAIM_BATCHES_PER_TICK = 64
 
 /**
+ * Scopes one [ScopeStore.sweep] call covers: a batch of scopes with nothing due is a fraction of a
+ * millisecond, and one whose every scope is due stays in the tens of ms on a VPS core (ADR
+ * 2026-10.d9ez has the measurements). Internal for SweeperTest.
+ */
+internal const val SWEEP_BATCH_SCOPES = 512
+
+/**
  * Most client entries the per-IP table holds before an accept sheds every idle one. Entries with a
  * live connection number at most the connections, so the idle ones are what a client rotating
  * addresses could grow without bound — one per address, each held [IP_IDLE_MS] — and this bounds
@@ -1935,11 +1942,20 @@ class SpoolServer(
         }
     }
 
-    /** One sweeper pass: expiry broadcasts, idle-scope reclaim, cache pruning, watermark. Exposed for tests. */
+    /**
+     * One sweeper pass: expiry broadcasts, idle-scope reclaim, cache pruning, watermark. Exposed for
+     * tests. Expiry runs one store call per batch of scopes, like [reclaimSpace], so records queued
+     * behind it run between batches instead of waiting out a pass that grows with the scope count
+     * (ADR 2026-10.d9ez).
+     */
     internal suspend fun sweepTick() {
         val now = clock()
-        val changes = withStore { store.sweep(now) }
-        changes.forEach { broadcastDigest(it.scopeId, it.digest) }
+        var cursor: ByteArray? = null
+        do {
+            val batch = withStore { store.sweep(now, cursor, SWEEP_BATCH_SCOPES) }
+            batch.changes.forEach { broadcastDigest(it.scopeId, it.digest) }
+            cursor = batch.next
+        } while (cursor != null)
         val reclaimed = withStore { store.reclaimIdle(now, ::isHeld) }
         if (reclaimed.isNotEmpty()) {
             metrics.reclaimsTotal.add(reclaimed.size.toLong())

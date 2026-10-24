@@ -7,6 +7,7 @@ import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -239,14 +240,14 @@ abstract class ScopeStoreContractTest {
             assertTrue(store.reclaimIdle(now = 10_000L, held = isHeld).isEmpty())
 
             // The frame expires to a tombstone at 10_001, which outlives the scope's idleness.
-            store.sweep(now = 15_000L)
+            store.sweepAll(now = 15_000L)
             val first = store.reclaimIdle(now = 15_000L, held = isHeld)
             assertEquals(listOf(bare.toList()), first.map { it.toList() })
             assertTrue(store.isUnknownScope(bare))
             assertTrue(!store.isUnknownScope(recent) && !store.isUnknownScope(held) && !store.isUnknownScope(tombstoned))
 
             // Once the tombstone and the attachment have aged out, the rest go too — except held.
-            store.sweep(now = 40_000L)
+            store.sweepAll(now = 40_000L)
             val second = store.reclaimIdle(now = 40_000L, held = isHeld).map { it.toList() }.toSet()
             assertEquals(setOf(recent.toList(), tombstoned.toList(), attached.toList()), second)
             assertEquals(1, store.scopeCount())
@@ -263,12 +264,80 @@ abstract class ScopeStoreContractTest {
             val (id, data) = blob(1)
             store.push(scope, id, data, now = 0L)
 
-            assertTrue(store.sweep(now = 1L).isEmpty())
-            val changes = store.sweep(now = 20_000L)
+            assertTrue(store.sweepAll(now = 1L).isEmpty())
+            val changes = store.sweepAll(now = 20_000L)
             assertEquals(1, changes.size)
             assertTrue(changes.single().scopeId.contentEquals(scope))
             assertEquals(0, changes.single().digest.count)
-            assertTrue(store.sweep(now = 20_001L).isEmpty())
+            assertTrue(store.sweepAll(now = 20_001L).isEmpty())
+        }
+    }
+
+    /**
+     * ADR 2026-10.d9ez: a pass is a run of batches in unsigned scope-id order, each starting after the
+     * last id the one before it covered, and it survives that scope being dropped in between.
+     */
+    @Test
+    fun sweepBatchesWalkEveryScopeOnceInIdOrder() {
+        createStore().use { store ->
+            // 0x90 sorts last: the order is unsigned, in both stores.
+            val ids = listOf(0x90, 0x05, 0x03, 0x07, 0x01).map { b -> ByteArray(32) { b.toByte() } }
+            val cursorScope = ids[2]
+            val (id, data) = blob(1)
+            ids.forEach { s ->
+                // The scope the first batch ends on is the least recently active, so a shed takes it.
+                val at = if (s === cursorScope) 0L else 1L
+                store.subscribed(s, now = at)
+                store.push(s, id, data, now = at)
+            }
+            val now = 20_000L
+
+            val first = store.sweep(now, after = null, limit = 2)
+            assertEquals(listOf(0x01, 0x03), first.changes.map { it.scopeId[0].toInt() and 0xFF })
+            assertTrue(assertNotNull(first.next).contentEquals(cursorScope))
+            assertTrue(assertNotNull(store.shedOldestScope()).scopeId.contentEquals(cursorScope))
+
+            val second = store.sweep(now, after = first.next, limit = 2)
+            assertEquals(listOf(0x05, 0x07), second.changes.map { it.scopeId[0].toInt() and 0xFF })
+            val third = store.sweep(now, after = second.next, limit = 2)
+            assertEquals(listOf(0x90), third.changes.map { it.scopeId[0].toInt() and 0xFF })
+            assertNull(third.next, "a short batch ends the pass")
+            assertTrue((first.changes + second.changes + third.changes).all { it.digest.count == 0 })
+            assertTrue(store.sweepAll(now + 1).isEmpty(), "each expiry is reported once")
+        }
+    }
+
+    /**
+     * Each kind of expiring row on its own makes a scope due. The SQLite store skips a scope it does
+     * not find due without sweeping it (ADR 2026-10.d9ez), so a kind missing from its test would be
+     * left in place: a tombstone or attachment tombstone keeps the scope from being reclaimed, and an
+     * attachment keeps its bytes.
+     */
+    @Test
+    fun eachKindOfExpiryMakesAScopeDue() {
+        createStore().use { store ->
+            val framed = ByteArray(32) { 11 }
+            val tombstoned = ByteArray(32) { 12 }
+            val attached = ByteArray(32) { 13 }
+            val attachTombstoned = ByteArray(32) { 14 }
+            listOf(framed, tombstoned, attached, attachTombstoned).forEach { store.subscribed(it) }
+            val (id, data) = blob(1)
+            val (cid, chunkData) = chunk(1)
+            val aid = ByteArray(32) { 7 }
+            // Aged into a tombstone and an attachment tombstone that expire at 20_001.
+            store.push(tombstoned, id, data, now = 0L)
+            assertIs<AputResult.Stored>(store.attachmentPut(attachTombstoned, aid, 0, 1, cid, chunkData, now = 0L))
+            store.sweepAll(now = 10_001L)
+            // Live until 25_000.
+            store.push(framed, id, data, now = 15_000L)
+            assertIs<AputResult.Stored>(store.attachmentPut(attached, aid, 0, 1, cid, chunkData, now = 15_000L))
+
+            val changes = store.sweepAll(now = 26_000L)
+
+            assertEquals(listOf(framed.toList()), changes.map { it.scopeId.toList() })
+            assertEquals(0L, store.totalBytes(), "the attachment's chunk was not swept")
+            val reclaimed = store.reclaimIdle(now = 26_000L, held = { false }).map { it.toList() }.toSet()
+            assertEquals(setOf(tombstoned.toList(), attachTombstoned.toList()), reclaimed)
         }
     }
 
@@ -282,7 +351,7 @@ abstract class ScopeStoreContractTest {
 
             // Four 40-byte pushes, one evicted by maxFrames=3.
             assertEquals(120L, store.totalBytes())
-            store.sweep(now = 20_000L)
+            store.sweepAll(now = 20_000L)
             assertEquals(0L, store.totalBytes())
         }
     }
@@ -523,7 +592,7 @@ abstract class ScopeStoreContractTest {
             store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L)
 
             // Expiry stamps from the FIRST chunk and is never extended by a later one.
-            store.sweep(now = 1L + bounds.ttlMs + 1)
+            store.sweepAll(now = 1L + bounds.ttlMs + 1)
             val expired = store.attachmentPresence(scope, aid, now = 1L + bounds.ttlMs + 1)
             assertEquals(0, expired.total)
             assertEquals(true, expired.dead)
@@ -660,7 +729,7 @@ abstract class ScopeStoreContractTest {
             store.attachmentPut(scope, aid, 0, 1, cid, data, now = 1L)
             assertEquals(floor, store.totalBytes())
 
-            store.sweep(now = 1L + bounds.ttlMs + 1)
+            store.sweepAll(now = 1L + bounds.ttlMs + 1)
             assertEquals(true, store.attachmentPresence(scope, aid, now = 1L + bounds.ttlMs + 1).dead)
             assertEquals(0L, store.totalBytes())
         }

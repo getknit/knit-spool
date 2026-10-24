@@ -202,6 +202,42 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
     }
 
     /**
+     * ADR 2026-10.d9ez: a sweep with nothing due commits nothing. The whole-pass sweep rewrote every
+     * scope row each period, sending the scopes table through the WAL for no change. `data_version`
+     * moves only when another connection commits, so a second connection sees any write the sweep makes.
+     */
+    @Test
+    fun aSweepWithNothingDueWritesNothing() {
+        val manyScopes = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 2_000)
+        SqliteScopeStore.open(tempDir, manyScopes).use { store ->
+            val (id, data) = blob(1)
+            repeat(1_000) { i ->
+                val s = ByteArray(32)
+                s[0] = (i ushr 8).toByte()
+                s[1] = i.toByte()
+                store.subscribe(s, bounds, now = 0L, held = { false })
+                store.push(s, id, data, now = 0L)
+            }
+            DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { probe ->
+                fun dataVersion(): Long =
+                    probe.createStatement().use { statement ->
+                        statement.executeQuery("PRAGMA data_version").use { rows ->
+                            rows.next()
+                            rows.getLong(1)
+                        }
+                    }
+
+                val before = dataVersion()
+                assertTrue(store.sweepAll(now = 5_000L, limit = 64).isEmpty())
+                assertEquals(before, dataVersion(), "a sweep with nothing due wrote to the store")
+                // The probe does see the store's commits: a pass that expires every frame moves it.
+                assertEquals(1_000, store.sweepAll(now = 20_000L, limit = 64).size)
+                assertTrue(dataVersion() != before)
+            }
+        }
+    }
+
+    /**
      * ADR 2026-10.us34: the TTL sweep empties the tables, and the reclaim, not the sweep, gives the
      * space back. Calling it once and checking the freelist fell by a whole batch is what pins the
      * `executeUpdate`: `execute()` steps `incremental_vacuum` once and frees one page per call.
@@ -210,7 +246,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
     fun reclaimSpaceShrinksTheFileAfterFramesExpire() {
         SqliteScopeStore.open(tempDir, roomy).use { store ->
             store.bigBlobs(400) // 25 MiB
-            store.sweep(now = 20_000L)
+            store.sweepAll(now = 20_000L)
             assertEquals(0L, store.totalBytes())
             val bloated = assertNotNull(store.storeFileBytes())
             assertTrue(bloated > 20L * 1024 * 1024, "the expired frames should still be in the file: $bloated")
@@ -231,7 +267,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
     fun reclaimSpaceLeavesASmallFreelistAlone() {
         SqliteScopeStore.open(tempDir, roomy).use { store ->
             store.bigBlobs(32) // 2 MiB
-            store.sweep(now = 20_000L)
+            store.sweepAll(now = 20_000L)
             val before = store.storeFileBytes()
             val freeBefore = pragma("freelist_count")
             assertTrue(freeBefore > 0)
@@ -251,7 +287,7 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
         var digest = 0L
         SqliteScopeStore.open(tempDir, roomy).use { store ->
             store.bigBlobs(400)
-            store.sweep(now = 20_000L)
+            store.sweepAll(now = 20_000L)
             val (id, data) = blob(1)
             assertIs<PushResult.Stored>(store.push(scope, id, data, now = 20_000L))
             digest = assertIs<DigestInfo>(store.digest(scope, now = 20_001L)).digest

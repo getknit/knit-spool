@@ -137,6 +137,12 @@ class SweepChange(
     val digest: DigestInfo,
 )
 
+/** One [ScopeStore.sweep] batch: its changes, and where the next batch starts — null once the pass is done. */
+class SweepBatch(
+    val changes: List<SweepChange>,
+    val next: ByteArray?,
+)
+
 /** A scope dropped by the storage watermark ([ScopeStore.shedOldestScope]). */
 class ShedScope(
     val scopeId: ByteArray,
@@ -251,10 +257,17 @@ interface ScopeStore : AutoCloseable {
     ): PushResult
 
     /**
-     * Expires live blobs and tombstones across all scopes; returns one [SweepChange] per scope
-     * whose live set changed. Call periodically.
+     * Expires live blobs and tombstones in up to [limit] scopes, in scope-id order, starting after
+     * [after] (from the first scope when null); returns one [SweepChange] per scope whose live set
+     * changed, and the cursor for the next batch. Call periodically, one batch per store call, so
+     * records queued behind the sweep run between batches instead of waiting out the whole pass
+     * (ADR 2026-10.d9ez). There is deliberately no whole-pass form.
      */
-    fun sweep(now: Long): List<SweepChange>
+    fun sweep(
+        now: Long,
+        after: ByteArray?,
+        limit: Int,
+    ): SweepBatch
 
     /**
      * Drops every bare scope not in [held] whose last activity is older than its own `ttlMs` — the

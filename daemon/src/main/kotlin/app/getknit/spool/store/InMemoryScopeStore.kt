@@ -4,6 +4,7 @@ package app.getknit.spool.store
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import java.security.MessageDigest
+import java.util.TreeMap
 
 /**
  * In-memory [ScopeStore] — the default when no data dir is configured, and the test workhorse.
@@ -47,7 +48,15 @@ class InMemoryScopeStore(
         var attachBytes = 0L
     }
 
-    private val scopes = LinkedHashMap<String, Scope>()
+    /**
+     * Sorted by key so [sweep] can page by cursor the way the SQLite store does: lowercase hex sorts
+     * like the unsigned bytes it spells. It also breaks `lastActivity` ties by scope id, as SQLite does.
+     *
+     * Copy an entry's key and value out before removing it: `TreeMap.remove` of a node with two
+     * children moves its successor's key and value into that node, so a held entry reads the wrong
+     * scope afterwards.
+     */
+    private val scopes = TreeMap<String, Scope>()
     private var bytesTotal = 0L
 
     @Synchronized
@@ -77,9 +86,10 @@ class InMemoryScopeStore(
                 scopes.entries
                     .filter { isBare(it.value) }
                     .sortedBy { it.value.lastActivity }
-                    .firstOrNull { !held(unhex(it.key)) } ?: return SubscribeResult.QuotaExceeded
-            scopes.remove(victim.key)
-            reclaimed = unhex(victim.key)
+                    .firstOrNull { !held(unhex(it.key)) }
+                    ?.key ?: return SubscribeResult.QuotaExceeded
+            scopes.remove(victim)
+            reclaimed = unhex(victim)
         }
         val clamped =
             ScopeBounds(
@@ -171,10 +181,19 @@ class InMemoryScopeStore(
     }
 
     @Synchronized
-    override fun sweep(now: Long): List<SweepChange> =
-        scopes.entries.mapNotNull { (key, scope) ->
-            if (sweepScope(scope, now)) SweepChange(unhex(key), digestInfo(scope)) else null
-        }
+    override fun sweep(
+        now: Long,
+        after: ByteArray?,
+        limit: Int,
+    ): SweepBatch {
+        require(limit > 0) { "limit must be positive, was $limit" }
+        val window = (if (after == null) scopes else scopes.tailMap(hex(after), false)).entries.take(limit)
+        val changes =
+            window.mapNotNull { (key, scope) ->
+                if (sweepScope(scope, now)) SweepChange(unhex(key), digestInfo(scope)) else null
+            }
+        return SweepBatch(changes, next = if (window.size == limit) unhex(window.last().key) else null)
+    }
 
     @Synchronized
     override fun reclaimIdle(
@@ -200,16 +219,16 @@ class InMemoryScopeStore(
     @Synchronized
     override fun shedOldestScope(pinned: ByteArray?): ShedScope? {
         val pinnedHex = pinned?.let(::hex)
-        val oldest =
+        val (key, oldest) =
             scopes.entries
                 .filter { it.key != pinnedHex }
                 .minByOrNull { it.value.lastActivity } ?: return null
-        scopes.remove(oldest.key)
-        val freed = oldest.value.liveBytes + oldest.value.attachBytes
+        scopes.remove(key)
+        val freed = oldest.liveBytes + oldest.attachBytes
         bytesTotal -= freed
         return ShedScope(
-            scopeId = unhex(oldest.key),
-            bounds = oldest.value.bounds,
+            scopeId = unhex(key),
+            bounds = oldest.bounds,
             freedBytes = freed,
         )
     }

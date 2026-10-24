@@ -123,6 +123,8 @@ class PowGateTest {
             assertEquals(2L, spool.metrics.powVerifiedTotal.sum())
             // A took the one slot; B's stamp was verified and then not cached.
             store.shedOldestScope()
+            // Both stores break activity ties by scope id, so A comes back the newer one and the next shed takes B.
+            clock.advance(1)
             connect {
                 helloHandshake()
                 subscribe(a, pow = stampFor(a, day))

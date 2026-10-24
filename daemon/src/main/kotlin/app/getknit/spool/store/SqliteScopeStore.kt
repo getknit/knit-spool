@@ -11,6 +11,7 @@ import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
+import java.sql.ResultSet
 import java.sql.Statement
 import java.util.concurrent.atomic.AtomicLong
 
@@ -73,6 +74,24 @@ class SqliteScopeStore private constructor(
                 "AND NOT EXISTS (SELECT 1 FROM tombstones t WHERE t.scope_id = s.scope_id) " +
                 "AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.scope_id = s.scope_id) " +
                 "AND NOT EXISTS (SELECT 1 FROM attachment_tombstones x WHERE x.scope_id = s.scope_id)"
+
+        /** The `scopes` columns a [ScopeRow] is built from, in [scopeRow]'s order. */
+        private const val ROW_COLUMNS = "max_frames, ttl_ms, max_blob, digest, live_count, live_bytes, attach_bytes"
+
+        /**
+         * One [sweep] batch: the next scopes after a cursor in key order, each with its row and whether
+         * [sweepScope] would find anything to expire there. The four `EXISTS` mirror [sweepScope] and
+         * [sweepAttachments] clause for clause, so a scope with nothing due costs no statement of its
+         * own and no write (ADR 2026-10.d9ez). Each cutoff keeps the bare indexed column on the left
+         * and the outer row's `ttl_ms` on the right, so it still range-seeks the per-scope indexes.
+         */
+        private const val SWEEP_WINDOW_SQL =
+            "SELECT s.scope_id, $ROW_COLUMNS, " +
+                "EXISTS (SELECT 1 FROM blobs b WHERE b.scope_id = s.scope_id AND b.arrived_at < ? - s.ttl_ms) " +
+                "OR EXISTS (SELECT 1 FROM tombstones t WHERE t.scope_id = s.scope_id AND t.expires_at < ?) " +
+                "OR EXISTS (SELECT 1 FROM attachments a WHERE a.scope_id = s.scope_id AND a.arrived_at < ? - s.ttl_ms) " +
+                "OR EXISTS (SELECT 1 FROM attachment_tombstones x WHERE x.scope_id = s.scope_id AND x.expires_at < ?) " +
+                "FROM scopes s WHERE s.scope_id > ? ORDER BY s.scope_id LIMIT ?"
 
         fun open(
             dataDir: Path,
@@ -606,20 +625,46 @@ class SqliteScopeStore private constructor(
             PushResult.Stored(digestInfo(row), evictedOrExpired = expired || evicted)
         }
 
+    /**
+     * One batch of the sweep (ADR 2026-10.d9ez). Only scopes [SWEEP_WINDOW_SQL] marks due are swept,
+     * and a row is written back only when the sweep moved it: a tombstone aging out does not. Every
+     * scope used to be read and rewritten in one transaction per pass, a stall that grew with the
+     * scope count with every record queued behind it (knit-spool#4).
+     */
     @Synchronized
-    override fun sweep(now: Long): List<SweepChange> =
-        tx {
-            val scopeIds = ArrayList<ByteArray>()
-            prep("SELECT scope_id FROM scopes").executeQuery().use { rows ->
-                while (rows.next()) scopeIds.add(rows.getBytes(1))
+    override fun sweep(
+        now: Long,
+        after: ByteArray?,
+        limit: Int,
+    ): SweepBatch {
+        require(limit > 0) { "limit must be positive, was $limit" }
+        return tx {
+            val window = prep(SWEEP_WINDOW_SQL)
+            for (param in 1..4) window.setLong(param, now)
+            // An empty blob sorts before every scope id (SQLite compares blobs by memcmp, shorter first).
+            window.setBytes(5, after ?: ByteArray(0))
+            window.setInt(6, limit)
+            var seen = 0
+            var last: ByteArray? = null
+            val due = ArrayList<Pair<ByteArray, ScopeRow>>()
+            window.executeQuery().use { rows ->
+                while (rows.next()) {
+                    val scopeId = rows.getBytes(1)
+                    seen++
+                    last = scopeId
+                    if (rows.getBoolean(9)) due.add(scopeId to scopeRow(rows, from = 2))
+                }
             }
-            scopeIds.mapNotNull { scopeId ->
-                val row = readRow(scopeId) ?: return@mapNotNull null
-                val changed = sweepScope(scopeId, row, now)
-                writeRow(scopeId, row, lastActivity = null)
-                if (changed) SweepChange(scopeId, digestInfo(row)) else null
-            }
+            val changes =
+                due.mapNotNull { (scopeId, row) ->
+                    val attachBefore = row.attachBytes
+                    val changed = sweepScope(scopeId, row, now)
+                    if (changed || row.attachBytes != attachBefore) writeRow(scopeId, row, lastActivity = null)
+                    if (changed) SweepChange(scopeId, digestInfo(row)) else null
+                }
+            SweepBatch(changes, next = if (seen == limit) last else null)
         }
+    }
 
     @Synchronized
     override fun shedOldestScope(pinned: ByteArray?): ShedScope? =
@@ -1041,25 +1086,28 @@ class SqliteScopeStore private constructor(
     }
 
     private fun readRow(scopeId: ByteArray): ScopeRow? {
-        val select =
-            prep("SELECT max_frames, ttl_ms, max_blob, digest, live_count, live_bytes, attach_bytes FROM scopes WHERE scope_id = ?")
+        val select = prep("SELECT $ROW_COLUMNS FROM scopes WHERE scope_id = ?")
         select.setBytes(1, scopeId)
-        return select.executeQuery().use { rows ->
-            if (!rows.next()) return@use null
-            ScopeRow(
-                bounds =
-                    ScopeBounds(
-                        maxFrames = rows.getInt(1),
-                        ttlMs = rows.getLong(2),
-                        maxBlob = rows.getInt(3),
-                    ),
-                digest = rows.getLong(4),
-                liveCount = rows.getInt(5),
-                liveBytes = rows.getLong(6),
-                attachBytes = rows.getLong(7),
-            )
-        }
+        return select.executeQuery().use { rows -> if (rows.next()) scopeRow(rows, from = 1) else null }
     }
+
+    /** The [ROW_COLUMNS] of the current result row, the first of them at column [from]. */
+    private fun scopeRow(
+        rows: ResultSet,
+        from: Int,
+    ): ScopeRow =
+        ScopeRow(
+            bounds =
+                ScopeBounds(
+                    maxFrames = rows.getInt(from),
+                    ttlMs = rows.getLong(from + 1),
+                    maxBlob = rows.getInt(from + 2),
+                ),
+            digest = rows.getLong(from + 3),
+            liveCount = rows.getInt(from + 4),
+            liveBytes = rows.getLong(from + 5),
+            attachBytes = rows.getLong(from + 6),
+        )
 
     private fun writeRow(
         scopeId: ByteArray,

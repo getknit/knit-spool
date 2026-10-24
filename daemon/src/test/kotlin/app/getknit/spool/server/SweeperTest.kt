@@ -13,11 +13,17 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeSub
 import app.getknit.spool.protocol.Sub
 import app.getknit.spool.store.HardLimits
+import app.getknit.spool.store.InMemoryScopeStore
 import app.getknit.spool.store.PushResult
+import app.getknit.spool.store.ScopeStore
 import app.getknit.spool.store.SqliteScopeStore
+import app.getknit.spool.store.SweepBatch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.util.Collections
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -28,6 +34,67 @@ import kotlin.test.assertTrue
 class SweeperTest {
     @TempDir
     lateinit var tempDir: Path
+
+    /** Logs sweep batches and pushes in the order the store runs them, and pauses in each batch to stand in for a big store. */
+    private class SlowSweepStore(
+        private val inner: ScopeStore,
+    ) : ScopeStore by inner {
+        val calls: MutableList<String> = Collections.synchronizedList(ArrayList())
+        val firstBatch = CompletableDeferred<Unit>()
+
+        override fun sweep(
+            now: Long,
+            after: ByteArray?,
+            limit: Int,
+        ): SweepBatch {
+            calls += "sweep"
+            firstBatch.complete(Unit)
+            Thread.sleep(20)
+            return inner.sweep(now, after, limit)
+        }
+
+        override fun push(
+            scopeId: ByteArray,
+            blobId: ByteArray,
+            data: ByteArray,
+            now: Long,
+        ): PushResult {
+            calls += "push"
+            return inner.push(scopeId, blobId, data, now)
+        }
+    }
+
+    /**
+     * knit-spool#4, ADR 2026-10.d9ez: the sweep holds the store one batch at a time, so a record that
+     * arrives mid-pass runs between batches instead of after the whole pass. A sweep that held the
+     * store for the pass would log the push after its only batch.
+     */
+    @Test
+    fun aRecordQueuedMidSweepRunsBeforeThePassEnds() {
+        val limits = HardLimits(maxBlob = 1_024, maxFramesCap = 100, maxTtlMs = 86_400_000L, maxScopes = 16_384)
+        val store = SlowSweepStore(InMemoryScopeStore(limits))
+        repeat(10 * SWEEP_BATCH_SCOPES) { i ->
+            val s = ByteArray(32)
+            s[0] = 0x7f
+            s[1] = (i ushr 8).toByte()
+            s[2] = i.toByte()
+            store.subscribe(s, testBounds(), now = 0L, held = { false })
+        }
+        withServer(testConfig(hardLimits = limits), store = store) {
+            connect {
+                helloHandshake()
+                subscribe(testScope(1))
+                val pass = launch { spool.sweepTick() }
+                store.firstBatch.await()
+                val (id, data) = testBlob(1)
+                sendRecord(Push(t = RecordType.PUSH, q = 1L, scope = testScope(1), blobId = id, data = data))
+                expectRecord<Ok>(RecordType.OK)
+                pass.join()
+            }
+        }
+        val pushAt = store.calls.indexOf("push")
+        assertTrue(pushAt in 1 until store.calls.lastIndexOf("sweep"), "the push ran at ${store.calls}")
+    }
 
     /**
      * ADR 2026-10.us34: the tick that expires a scope's frames also hands their pages back, so the
