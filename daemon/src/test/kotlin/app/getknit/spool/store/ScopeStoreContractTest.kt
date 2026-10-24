@@ -186,6 +186,39 @@ abstract class ScopeStoreContractTest {
         }
     }
 
+    /**
+     * Every path that drops a scope gives its slot back. The SQLite store keeps the cap's count in
+     * memory instead of a `COUNT(*)` per new scope (ADR 2026-10.ywkw), so a path that forgot to settle
+     * it would refuse a scope there was room for, or admit one past the cap.
+     */
+    @Test
+    fun everyWayAScopeGoesGivesItsSlotBack() {
+        createStore().use { store ->
+            // Holding every scope keeps a full subscribe from evicting, so the cap refuses instead.
+            val everyone: (ByteArray) -> Boolean = { true }
+
+            fun newScope(n: Int) = store.subscribe(ByteArray(32) { n.toByte() }, bounds, now = 0L, held = everyone)
+
+            (1..limits.maxScopes).forEach { assertIs<SubscribeResult.Subscribed>(newScope(it)) }
+            assertIs<SubscribeResult.QuotaExceeded>(newScope(100))
+
+            assertNotNull(store.shedOldestScope())
+            assertIs<SubscribeResult.Subscribed>(newScope(101))
+            assertIs<SubscribeResult.QuotaExceeded>(newScope(102))
+
+            // Every scope is bare and idle past its 10 s TTL.
+            assertEquals(limits.maxScopes, store.reclaimIdleAll(now = 20_000L, held = { false }).size)
+            (110 until 110 + limits.maxScopes).forEach { assertIs<SubscribeResult.Subscribed>(newScope(it)) }
+            assertIs<SubscribeResult.QuotaExceeded>(newScope(120))
+
+            // A full subscribe that evicts trades one row for one.
+            val evicting = store.subscribe(ByteArray(32) { 121 }, bounds, now = 0L, held = { false })
+            assertNotNull(assertIs<SubscribeResult.Subscribed>(evicting).reclaimed)
+            assertIs<SubscribeResult.QuotaExceeded>(newScope(122))
+            assertEquals(limits.maxScopes, store.scopeCount())
+        }
+    }
+
     @Test
     fun subscribeAtTheCapEvictsTheLeastRecentlyActiveBareScope() {
         createStore().use { store ->

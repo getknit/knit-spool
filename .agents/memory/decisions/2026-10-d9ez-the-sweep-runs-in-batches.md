@@ -79,9 +79,9 @@ due still costs four index seeks inside native SQLite per pass.
 The whole-pass `reclaimIdle` cost ~10–38 ms at 256,000 on that desktop, depending on how
 many scopes were past their TTL. A pass that drops many scopes at once, after a mass
 disconnect for example, also paid every delete and its cascades in that one call. Batched,
-a window drops at most 512. `subscribe` runs `SELECT COUNT(*) FROM scopes` for every new
-scope. That made seeding 256,000 scopes superlinear (185 s, against 32 s for 100,000). It
-is not a stall, but it is O(scopes) per new scope.
+a window drops at most 512. The same benchmark showed seeding 256,000 scopes was
+superlinear (185 s, against 32 s for 100,000), because `subscribe` counted every scope for
+each new one. ADR 2026-10.ywkw takes that count out.
 
 The `TreeMap` has a trap. `TreeMap.remove` of a node with two children moves its
 successor's key and value into that node. An entry held across the `remove` then reads the

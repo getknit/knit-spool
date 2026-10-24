@@ -27,3 +27,4 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.h4ps](decisions/2026-10-h4ps-a-ticket-s-am-claim.md) | a ticket's am claim caps the attachments it may upload | tickets, attachments |
 | [2026-10.zprp](decisions/2026-10-zprp-a-renamed-spool-accepts-tickets.md) | a renamed spool accepts tickets for both its names | tickets, config |
 | [2026-10.d9ez](decisions/2026-10-d9ez-the-sweep-runs-in-batches.md) | the sweep runs in batches and visits only due scopes | store, sweep, capacity |
+| [2026-10.ywkw](decisions/2026-10-ywkw-a-new-scope-is-admitted.md) | a new scope is admitted without counting every scope | store, quota, capacity |

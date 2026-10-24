@@ -75,6 +75,13 @@ class SqliteScopeStore private constructor(
                 "AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.scope_id = s.scope_id) " +
                 "AND NOT EXISTS (SELECT 1 FROM attachment_tombstones x WHERE x.scope_id = s.scope_id)"
 
+        /**
+         * A full [subscribe]'s eviction candidates, least recently active first. [BARE_SQL] leads with
+         * `live_count = 0`, so the scan runs on `idx_scopes_empty` and never visits a scope holding a
+         * frame. Internal for SqliteScopeStoreTest, which checks that plan.
+         */
+        internal const val BARE_BY_ACTIVITY_SQL = "SELECT s.scope_id FROM scopes s WHERE $BARE_SQL ORDER BY s.last_activity ASC"
+
         /** The `scopes` columns a [ScopeRow] is built from, in [scopeRow]'s order. */
         private const val ROW_COLUMNS = "max_frames, ttl_ms, max_blob, digest, live_count, live_bytes, attach_bytes"
 
@@ -113,6 +120,15 @@ class SqliteScopeStore private constructor(
 
     private val statements = HashMap<String, PreparedStatement>()
     private val bytesTotal = AtomicLong(0L)
+
+    /**
+     * Rows in `scopes` as of the last commit, so a new scope's quota check is not a `COUNT(*)` over
+     * every row (ADR 2026-10.ywkw). [scopeDelta] is the open transaction's inserts minus deletes,
+     * folded in by [tx] only once it commits, so a rolled-back transaction leaves the count alone.
+     * [scopeCount] still asks the database: it doubles as the health check's probe.
+     */
+    private var scopeRows = 0
+    private var scopeDelta = 0
 
     /**
      * Reused across pushes — `getInstance` costs ~1.2 us of provider lookup per call, and every
@@ -156,6 +172,10 @@ class SqliteScopeStore private constructor(
                 """.trimIndent(),
             )
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_scopes_activity ON scopes(last_activity)")
+            // Only scopes holding no frame, so a full subscribe looks for a bare one to evict without
+            // walking every scope that holds frames (ADR 2026-10.ywkw). Partial, so a downgraded
+            // binary simply maintains it; no schema_version step.
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_scopes_empty ON scopes(last_activity) WHERE live_count = 0")
             statement.executeUpdate(
                 """
                 CREATE TABLE IF NOT EXISTS blobs (
@@ -377,6 +397,7 @@ class SqliteScopeStore private constructor(
                 while (rows.next()) {
                     scopes.add(Triple(rows.getBytes(1), rows.getLong(2), rows.getInt(3) to rows.getLong(4)))
                 }
+                scopeRows = scopes.size
                 for ((scopeId, storedDigest, storedCounts) in scopes) {
                     var digest = 0L
                     var count = 0
@@ -475,14 +496,9 @@ class SqliteScopeStore private constructor(
             var row = readRow(scopeId)
             var reclaimed: ByteArray? = null
             if (row == null) {
-                val count =
-                    prep("SELECT COUNT(*) FROM scopes").executeQuery().use { rows ->
-                        rows.next()
-                        rows.getInt(1)
-                    }
-                if (count >= hardLimits.maxScopes) {
+                if (scopeRows + scopeDelta >= hardLimits.maxScopes) {
                     reclaimed =
-                        prep("SELECT s.scope_id FROM scopes s WHERE $BARE_SQL ORDER BY s.last_activity ASC")
+                        prep(BARE_BY_ACTIVITY_SQL)
                             .executeQuery()
                             .use { rows ->
                                 var found: ByteArray? = null
@@ -502,6 +518,7 @@ class SqliteScopeStore private constructor(
                 insert.setInt(4, clamped.maxBlob)
                 insert.setLong(5, now)
                 insert.executeUpdate()
+                scopeDelta++
                 row = ScopeRow(clamped, digest = 0L, liveCount = 0, liveBytes = 0L, attachBytes = 0L)
             } else {
                 row.bounds = clamped
@@ -754,7 +771,7 @@ class SqliteScopeStore private constructor(
         deleteChunks.executeUpdate()
         val delete = prep("DELETE FROM scopes WHERE scope_id = ?")
         delete.setBytes(1, scopeId)
-        delete.executeUpdate()
+        scopeDelta -= delete.executeUpdate()
     }
 
     @Synchronized
@@ -1182,10 +1199,13 @@ class SqliteScopeStore private constructor(
         try {
             val result = block()
             connection.commit()
+            scopeRows += scopeDelta
             result
         } catch (e: Throwable) {
             runCatching { connection.rollback() }
             throw e
+        } finally {
+            scopeDelta = 0
         }
 
     private fun prep(sql: String): PreparedStatement = statements.getOrPut(sql) { connection.prepareStatement(sql) }

@@ -28,6 +28,11 @@ document:
   call and lets queued records run between calls, skips scopes with nothing to expire, and writes
   back only the rows it changed. A scope with nothing due no longer costs a write every period.
   Dropping idle empty scopes runs in batches the same way.
+- **A new scope no longer costs a pass over every scope.** A persistent store counted all its
+  scopes for each new one, and at `SPOOL_MAX_SCOPES` walked every scope looking for an empty one
+  to evict, even to refuse. That walk was ~17 ms at 100,000 scopes on a fast disk. The count is now
+  kept as scopes come and go. The search for an empty scope runs on an index of empty scopes, so
+  a full spool whose scopes all hold frames refuses at once.
 
 ## [0.5.0](https://github.com/getknit/knit-spool/releases/tag/v0.5.0) — 2026-10-23T02:59:11Z
 

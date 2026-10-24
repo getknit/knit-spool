@@ -113,6 +113,40 @@ class SqliteScopeStoreTest : ScopeStoreContractTest() {
         }
     }
 
+    /** The cap's running count is rebuilt from the rows on open, not carried over from the last run (ADR 2026-10.ywkw). */
+    @Test
+    fun theScopeCapCountsWhatTheFileHoldsAfterAReopen() {
+        val everyone: (ByteArray) -> Boolean = { true }
+        createStore().use { store ->
+            repeat(limits.maxScopes) { n -> store.subscribe(ByteArray(32) { (n + 1).toByte() }, bounds, now = 0L, held = everyone) }
+            assertNotNull(store.shedOldestScope())
+        }
+        createStore().use { store ->
+            assertIs<SubscribeResult.Subscribed>(store.subscribe(ByteArray(32) { 100 }, bounds, now = 0L, held = everyone))
+            assertIs<SubscribeResult.QuotaExceeded>(store.subscribe(ByteArray(32) { 101 }, bounds, now = 0L, held = everyone))
+        }
+    }
+
+    /**
+     * ADR 2026-10.ywkw: a full subscribe looks for a bare scope to evict on `idx_scopes_empty`, so a
+     * spool whose every scope holds frames refuses in a seek instead of a walk of every scope.
+     */
+    @Test
+    fun aFullSubscribeSearchesOnlyEmptyScopes() {
+        createStore().use { store ->
+            store.subscribe(scope, bounds, now = 0L, held = { false })
+            DriverManager.getConnection("jdbc:sqlite:${tempDir.resolve("spool.db")}").use { probe ->
+                val plan =
+                    probe.createStatement().use { statement ->
+                        statement.executeQuery("EXPLAIN QUERY PLAN ${SqliteScopeStore.BARE_BY_ACTIVITY_SQL}").use { rows ->
+                            buildList { while (rows.next()) add(rows.getString("detail")) }
+                        }
+                    }
+                assertTrue(plan.first().contains("idx_scopes_empty"), "plan was $plan")
+            }
+        }
+    }
+
     /** A closed store refuses rather than answering from a dead connection. */
     @Test
     fun aClosedStoreRefusesInsteadOfAnsweringStale() {
