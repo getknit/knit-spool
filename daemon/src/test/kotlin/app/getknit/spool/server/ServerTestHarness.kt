@@ -147,11 +147,36 @@ fun testCommons(
 /** A TURN secret long enough for the parser, and distinctive enough to grep a log for. */
 const val TEST_TURN_SECRET = "test-turn-secret-0123456789abcdefghij"
 
+/** Server 2's secret: distinct from [TEST_TURN_SECRET], so a credential shows which server it was signed for. */
+const val TEST_TURN_SECRET_2 = "test-turn-secret-two-0123456789abcdefgh"
+
+/** Server 1's URLs, one per transport, the overlay's default shape. Its entry is `spool.example:3478`. */
+val TEST_TURN_URLS = listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp")
+
+/**
+ * Server 2's URLs: an IPv6 literal in capitals with no port on its UDP URL, so its entry,
+ * `[2001:db8::7]:3478`, is lowercased and defaulted rather than copied.
+ */
+val TEST_TURN_URLS_2 = listOf("turn:[2001:DB8::7]?transport=udp", "turns:[2001:db8::7]:5349?transport=tcp")
+
+/** Server 2 on a host of its own, for [testTurn]'s `more`. */
+fun testTurnServer2(
+    urls: List<String> = TEST_TURN_URLS_2,
+    secret: String = TEST_TURN_SECRET_2,
+): SpoolServer.TurnServer = SpoolServer.TurnServer(number = 2, secret = secret, urls = urls)
+
+/** Server 1 with [TEST_TURN_SECRET], then [more] in number order. */
 fun testTurn(
-    urls: List<String> = listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"),
+    urls: List<String> = TEST_TURN_URLS,
     ttlS: Long = 300L,
     ratePer10Min: Int = 60,
-): SpoolServer.TurnConfig = SpoolServer.TurnConfig(secret = TEST_TURN_SECRET, urls = urls, ttlS = ttlS, ratePer10Min = ratePer10Min)
+    more: List<SpoolServer.TurnServer> = emptyList(),
+): SpoolServer.TurnConfig =
+    SpoolServer.TurnConfig(
+        servers = listOf(SpoolServer.TurnServer(number = 1, secret = TEST_TURN_SECRET, urls = urls)) + more,
+        ttlS = ttlS,
+        ratePer10Min = ratePer10Min,
+    )
 
 /** RFC 8032 §7.1 TEST 1 as `seed ‖ public key` — the pair the protocol's ticket vectors use. */
 val TEST_TICKET_SIGNING_KEY =

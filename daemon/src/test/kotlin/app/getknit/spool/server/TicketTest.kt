@@ -97,7 +97,7 @@ class TicketTest {
                 assertEquals(TurnCredentials.pass(TEST_TURN_SECRET, cred.user), cred.pass)
             }
             assertEquals(1L, spool.metrics.ticketAcceptedTotal.sum())
-            assertEquals(1L, spool.metrics.turnIssuedTicketedTotal.sum())
+            assertEquals(1L, spool.metrics.turnIssuedTicketedTotal.count(1))
         }
     }
 
@@ -128,6 +128,32 @@ class TicketTest {
                 present(testEnt(clock.now, ps = bob))
                 assertNotEquals(suffixes.first(), credential(q = 3L).user.substringAfter(':'))
             }
+        }
+    }
+
+    /**
+     * S-7.6-50: a holder's suffix is the same on every server, so each server's `user-quota` counts
+     * the holder, and the ticketed twin of the issue count is split by server like the plain one.
+     */
+    @Test
+    fun aPseudonymsSuffixIsTheSameOnEveryServer() {
+        val clock = FakeClock(now)
+        val alice = ByteArray(Tickets.PS_BYTES) { 0x0a }
+        withServer(ticketed(turn = testTurn(more = listOf(testTurnServer2()))), clock = clock) {
+            connect {
+                helloHandshake()
+                present(testEnt(clock.now, ps = alice))
+                val one = credential(q = 1L)
+                sendRecord(TurnReq(t = RecordType.TURNREQ, q = 2L, host = "[2001:db8::7]:3478"))
+                val two = expectRecord<TurnCred>(RecordType.TURNCRED)
+                assertEquals(TEST_TURN_URLS_2, two.urls)
+                assertEquals(one.user.substringAfter(':'), two.user.substringAfter(':'))
+                assertEquals(TurnCredentials.pass(TEST_TURN_SECRET_2, two.user), two.pass)
+            }
+            assertEquals(1L, spool.metrics.turnIssuedTicketedTotal.count(1))
+            assertEquals(1L, spool.metrics.turnIssuedTicketedTotal.count(2))
+            val scraped = http.get("http://127.0.0.1:$port/metrics").bodyAsText()
+            assertTrue(scraped.contains("knit_spool_turn_issued_ticketed_total{server=\"2\"} 1\n"), scraped)
         }
     }
 
@@ -343,7 +369,7 @@ class TicketTest {
                 assertEquals(ErrCode.RATE, expectRecord<Err>(RecordType.ERR).code)
             }
             assertEquals(2, spool.turnBudgetCount())
-            assertEquals(3L, spool.metrics.turnIssuedTicketedTotal.sum())
+            assertEquals(3L, spool.metrics.turnIssuedTicketedTotal.count(1))
         }
     }
 

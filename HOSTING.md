@@ -29,6 +29,7 @@ the [README](README.md#-deploy) has the rest.
 - [Architecture](#architecture)
 - [What a commons costs](#what-a-commons-costs)
 - [What TURN costs](#what-turn-costs)
+- [Several TURN boxes](#several-turn-boxes)
 - [What casts cost](#what-casts-cost)
 - [What ticketed uploads hold](#what-ticketed-uploads-hold)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
@@ -278,6 +279,40 @@ defaults belongs on its own box, with `SPOOL_TURN_URLS` pointing at it.
 takes one UDP port from the 840-port default range (49160–49999), which leaves room to raise
 `TURN_TOTAL_QUOTA` without reopening the firewall; widen `TURN_MIN_PORT`/`TURN_MAX_PORT` (and the
 firewall rule) if the quota ever passes it.
+
+## Several TURN boxes
+
+A Spool signs credentials for up to four TURN boxes: server 1 is `SPOOL_TURN_SECRET` and
+`SPOOL_TURN_URLS`, and servers 2 to 4 are `SPOOL_TURN_2_*` through `SPOOL_TURN_4_*`. Phones measure
+each box from where they are and allocate on the nearest, one box per call, so a second box adds its
+quota to the first's instead of mirroring it (ADR 2026-10.u5f4). Phones nowhere near the Spool still
+reach a box near them: a Spool in Europe can name a box in Los Angeles for its callers there.
+
+- **One secret per box.** Each box's coturn holds its own `static-auth-secret`, and the Spool signs for
+  a box with that box's secret alone, so a leaked secret mints credentials for one box, not all of
+  them. Equal secrets are allowed, but they give that up.
+- **`denied-peer-ip` on every box.** A credential holder can relay to any address the box can reach,
+  so every box refuses loopback, private, link-local and CGNAT peers. Run each one with
+  `deploy/coturn/entrypoint.sh`, which writes that list; a coturn configured by hand needs it added.
+- **The host is a server's identity.** `hello` names each box by the `host:port` of its UDP URL, a
+  phone names the one it wants in `turnreq`, and reads which box a credential is for from its URLs.
+  With two or more boxes, each one's URLs must name a single host, and no two boxes may share one.
+  Two coturn processes on one host are one box to every phone.
+- **Server 1 is the fallback, not the nearest.** A client that predates several boxes asks without a
+  host, and one that names a box the Spool does not list, and both get server 1. Keep it the box
+  most of your callers would choose anyway, and keep it up: old clients have no other.
+- **Every box needs a UDP listener phones can measure.** A phone sends a STUN Binding request to each
+  box's UDP entry, port 3478 unless its `turn:` URL says otherwise, and coturn answers it without a
+  credential. With two or more boxes, a box with only `turns:` or `transport=tcp` URLs is refused at
+  boot. Open 3478/udp on every box's firewall, beside its relay range.
+- **Restart-only.** Adding, removing or re-keying a box is a restart of the Spool, which reconnects
+  its members, like any other TURN setting. A box's coturn restarts on its own schedule.
+- **Capacity adds up, load does not move.** The Spool never probes a box. When the nearest one is
+  full, it refuses the allocation, and the phone tries its next box once, before its offer or answer
+  leaves (knit-next C-7.6-54). `knit_spool_turn_issued_total{server="<n>"}` shows how the choices fall.
+
+The overlay's coturn (`docker-compose.turn.yml`) is always server 1. A further box runs
+`deploy/coturn/entrypoint.sh` on a host of its own, as [What TURN costs](#what-turn-costs) describes.
 
 ## What casts cost
 

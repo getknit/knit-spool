@@ -40,8 +40,26 @@ document:
   `https://getknit.app/r#…`, which joins the Spool and the room in one tap (knit-next
   `docs/RELAY_INVITE.md`). A private Spool's token goes into the link from `--token-file`, never
   from the command line. `--room <n>` prints the variable names for room *n*.
+- **Up to four TURN servers per Spool, and a phone picks the nearest** (spec S-7.6-48 to
+  S-7.6-50, knit-next `58c0bded9`; ADR 2026-10.u5f4). Server 1 is `SPOOL_TURN_SECRET` and
+  `SPOOL_TURN_URLS` as before; servers 2 to 4 are `SPOOL_TURN_2_SECRET` and `SPOOL_TURN_2_URLS`
+  through `_4_`, each with its own secret, numbered with no gap, and boot-only like every TURN
+  setting. `hello` gains `turnHosts`, the `host:port` of each server's UDP URL in server order,
+  and `turnreq` an optional `host`: the Spool signs with that server's secret and answers with
+  its URLs only, and an absent or unknown `host` gets server 1, so clients that predate it keep
+  today's server. The lifetime and every TURN budget stay shared, whichever server is asked for.
+  With two or more servers, boot refuses a server whose URLs name more than one host, two servers
+  on one host, and a server with no `turn:` URL over UDP; one server keeps every URL list it was
+  accepted with. The conformance suite gains `turn-hosts-select`. The environment contract moves,
+  so the development version is `0.6.0-dev.3`.
 
 ### Changed
+
+- **`knit_spool_turn_issued_total` and `knit_spool_turn_issued_ticketed_total` carry a
+  `server="<n>"` label**, one series per configured TURN server, rendered from zero. A query on
+  the unlabelled name needs a `sum`. The ticketed twin is no longer rendered on a Spool with a
+  ticket key and no TURN, where it could only ever read 0. The boot line's `turn=` and
+  `turnSecret=` fields list each server, comma-joined, and read as before with one.
 
 - **A Spool with no `SPOOL_TOKEN` leaves room names out of `hello`** (spec S-7.4-19). Anyone who
   connects reads `hello`, so a room's name there was public; it now reaches members through the

@@ -207,6 +207,11 @@ class RoomInfo(
  * [cast] says the spool fans out [Cast]s, and within what (experimental, SPOOL_PROTOCOL.md §7.7). Omitted
  * when casts are off. Where [ticketGates] has [Tickets.FL_CAST], a cast is admitted only on a scope a
  * cast ticket has unlocked.
+ *
+ * [turnHosts] names, beside [turn], each TURN server's entry ([TurnUris.entry] of its UDP URL), in
+ * server order (S-7.6-48): what a client measures and names in [TurnReq.host]. Omitted, never empty,
+ * when no server has a UDP URL. Last in the class, after [rooms], as §13's `helloSpoolTurnHosts`
+ * orders it.
  */
 @Serializable
 class Hello(
@@ -223,6 +228,7 @@ class Hello(
     val cast: CastInfo? = null,
     val entGates: Long? = null,
     val rooms: List<RoomInfo>? = null,
+    val turnHosts: List<String>? = null,
 ) {
     /**
      * The [Ticket.fl] bits this spool requires a ticket for (S-7.6-13): none without [ent], and
@@ -338,17 +344,22 @@ class Ahas(
 /**
  * Client→spool: ask for one TURN credential (experimental, SPOOL_PROTOCOL.md §7.6). Names no scope on
  * purpose — the spool must not learn which conversation is calling. Answered by [TurnCred] or `err`.
+ *
+ * [host] names the server the client ranks best, one of the spool's [Hello.turnHosts] (S-7.6-49). An
+ * absent or unmatched one gets server 1, never an error; a spool that predates it ignores the key.
  */
 @Serializable
 class TurnReq(
     val t: String,
     val q: Long,
+    val host: String? = null,
 )
 
 /**
  * Spool→client: a coturn REST credential. [user] is `"<exp>:<random>"`, [pass] is
  * `base64(HMAC-SHA1(secret, user))`, [exp] is Unix **seconds**, and [urls] are RFC 7065
- * `turn:`/`turns:` URIs. Terminal, and echoes [q] like [Ahas].
+ * `turn:`/`turns:` URIs. Terminal, and echoes [q] like [Ahas]. On a spool with several TURN servers,
+ * [urls] and the secret are the one server's that [TurnReq.host] selected (S-7.6-50).
  */
 @Serializable
 class TurnCred(

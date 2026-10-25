@@ -150,6 +150,14 @@ services:
       SPOOL_TURN_URLS:
       SPOOL_TURN_TTL_S:
       SPOOL_TURN_RATE:
+      # TURN servers 2 to 4, each a box of its own with its own secret; phones measure every one and
+      # ask for the nearest. Numbered with no gap. The overlay's coturn is always server 1.
+      SPOOL_TURN_2_SECRET:
+      SPOOL_TURN_2_URLS:
+      SPOOL_TURN_3_SECRET:
+      SPOOL_TURN_3_URLS:
+      SPOOL_TURN_4_SECRET:
+      SPOOL_TURN_4_URLS:
       # STUN URIs every client is told in hello, with no credential (experimental). Needs no secret;
       # the TURN overlay points it at its own coturn.
       SPOOL_STUN_URLS:

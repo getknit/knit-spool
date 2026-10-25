@@ -49,6 +49,11 @@ class ConfigDescribeTest {
         assertFalse(line.contains(TEST_TURN_SECRET), line)
         assertEquals("set", fields(line)["turnSecret"])
         assertEquals("2urls/3600s/4per10min", fields(line)["turn"])
+        // Several servers: a URL count and a secret's presence each, comma-joined, still one field.
+        val two = testConfig(turn = testTurn(more = listOf(testTurnServer2(urls = TEST_TURN_URLS_2.take(1))))).describe()
+        assertFalse(two.contains(TEST_TURN_SECRET) || two.contains(TEST_TURN_SECRET_2), two)
+        assertEquals("2urls,1urls/300s/60per10min", fields(two)["turn"])
+        assertEquals("set,set", fields(two)["turnSecret"])
     }
 
     /** SECURITY.md makes a token in this daemon's log a reportable vulnerability. */

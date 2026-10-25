@@ -83,11 +83,14 @@ class Metrics(
         budget: CommonsBudget,
     ): Long = commonsRateLimitedTotal[room to budget]?.sum() ?: 0L
 
-    /** TURN credentials issued (experimental). Refusals land in the `rate`/`not_subscribed` errs. */
-    val turnIssuedTotal = LongAdder()
+    /**
+     * TURN credentials issued (experimental), by server: which box phones chose, as the spool saw
+     * it. Refusals land in the `rate`/`not_subscribed` errs.
+     */
+    val turnIssuedTotal = ServerCounter()
 
     /** Of [turnIssuedTotal], those issued under an entitlement ticket: the paying callers. */
-    val turnIssuedTicketedTotal = LongAdder()
+    val turnIssuedTicketedTotal = ServerCounter()
 
     /** `ent` records accepted (experimental). */
     val ticketAcceptedTotal = LongAdder()
@@ -160,7 +163,7 @@ class Metrics(
         maxConns: Int = 0,
         commonsSubscribers: Map<Int, Int>? = null,
         storeFileBytes: Long? = null,
-        turn: Boolean = false,
+        turnServers: Int = 0,
         tickets: Boolean = false,
         casts: Boolean = false,
     ): String =
@@ -212,12 +215,13 @@ class Metrics(
                     }
                 }
             }
-            // Absent on a spool that issues no credentials, for the commons' reason.
-            if (turn) line("knit_spool_turn_issued_total", "counter", turnIssuedTotal.sum())
+            // Absent on a spool that issues no credentials, for the commons' reason, and one series
+            // per configured server, zeroes included, so a server's series never comes and goes.
+            if (turnServers > 0) serverLines("knit_spool_turn_issued_total", turnIssuedTotal, turnServers)
             // Absent on a spool with no ticket key, for the commons' reason.
             if (tickets) {
                 line("knit_spool_ticket_accepted_total", "counter", ticketAcceptedTotal.sum())
-                line("knit_spool_turn_issued_ticketed_total", "counter", turnIssuedTicketedTotal.sum())
+                if (turnServers > 0) serverLines("knit_spool_turn_issued_ticketed_total", turnIssuedTicketedTotal, turnServers)
                 line("knit_spool_ticket_attach_bytes_charged_total", "counter", ticketAttachBytesChargedTotal.sum())
                 line("knit_spool_ticket_attach_bytes_charged_am_total", "counter", ticketAttachBytesChargedAmTotal.sum())
                 append("# TYPE knit_spool_ticket_refused_total counter\n")
@@ -273,6 +277,23 @@ class Metrics(
         append("\"} ").append(value).append('\n')
     }
 
+    /** A counter's `# TYPE` line, then `name{server="n"} value` for servers 1 to [servers], zeroes included. */
+    private fun StringBuilder.serverLines(
+        name: String,
+        counter: ServerCounter,
+        servers: Int,
+    ) {
+        append("# TYPE ").append(name).append(" counter\n")
+        for (server in 1..servers) {
+            append(name)
+                .append("{server=\"")
+                .append(server)
+                .append("\"} ")
+                .append(counter.count(server))
+                .append('\n')
+        }
+    }
+
     private fun StringBuilder.line(
         name: String,
         type: String,
@@ -285,6 +306,18 @@ class Metrics(
             .append('\n')
         append(name).append(' ').append(value).append('\n')
     }
+}
+
+/**
+ * A counter split by TURN server, keyed by the server's number (1 for `SPOOL_TURN_*`, n for
+ * `SPOOL_TURN_<n>_*`) and never by its host, as the commons counters key a room by its number.
+ */
+class ServerCounter {
+    private val counts = ConcurrentHashMap<Int, LongAdder>()
+
+    fun increment(server: Int) = counts.computeIfAbsent(server) { LongAdder() }.increment()
+
+    fun count(server: Int): Long = counts[server]?.sum() ?: 0L
 }
 
 /**

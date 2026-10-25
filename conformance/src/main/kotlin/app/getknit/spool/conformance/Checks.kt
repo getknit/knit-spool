@@ -38,6 +38,7 @@ import app.getknit.spool.protocol.Ticket
 import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.protocol.TurnCred
 import app.getknit.spool.protocol.TurnReq
+import app.getknit.spool.protocol.TurnUris
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import kotlinx.coroutines.CancellationException
@@ -94,6 +95,12 @@ private const val TICKET_LIFETIME_S = 86_400L
 
 /** An audience no spool is named: `.invalid` is reserved for exactly this (RFC 2606). */
 private const val FOREIGN_AUDIENCE = "conformance.invalid"
+
+/** A `turnreq` host no spool can list: `.invalid` is reserved (RFC 2606), so it matches no entry. */
+private const val UNKNOWN_TURN_HOST = "turn-hosts-select.invalid:3478"
+
+/** The most TURN servers `turnHosts` may name (S-7.6-48). */
+private const val MAX_TURN_HOSTS = 4
 
 /** Upper bound on pushes blasted by the rate-limit probe. */
 private const val RATE_BLAST_MAX = 1_000
@@ -261,6 +268,7 @@ fun allChecks(): List<Check> =
         turnRequiresSub(),
         turnCredShape(),
         turnHmac(),
+        turnHostsSelect(),
         // Experimental (SPOOL_PROTOCOL.md §7.6): entitlement tickets and the STUN list.
         entAdvertised(),
         entForeignKey(),
@@ -361,10 +369,13 @@ private fun Ctx.requireTurn() {
 
 /**
  * Earns one credential the way this spool asks (a ticket where `hello` gates `turn`, a fresh
- * subscription otherwise), then asks for it — the shape every TURN check needs. Call once per
- * connection: a second call presents or subscribes again.
+ * subscription otherwise), then asks for it, naming [host] when given — the shape every TURN check
+ * needs. Call once per connection: a second call presents or subscribes again.
  */
-private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
+private suspend fun Session.fetchTurnCred(
+    ctx: Ctx,
+    host: String? = null,
+): TurnCred {
     if (ctx.gated(Tickets.FL_TURN)) {
         val ent = ctx.ent(nextQ())
         send(ent)
@@ -373,7 +384,7 @@ private suspend fun Session.fetchTurnCred(ctx: Ctx): TurnCred {
         ctx.subscribeFresh(this, ctx.randomScope())
     }
     val q = nextQ()
-    send(TurnReq(t = RecordType.TURNREQ, q = q))
+    send(TurnReq(t = RecordType.TURNREQ, q = q, host = host))
     val cred = expect<TurnCred>(RecordType.TURNCRED)
     ensure(cred.q == q) { "expected turncred q=$q echoed, got ${cred.q}" }
     return cred
@@ -443,6 +454,47 @@ private fun turnHmac(): Check =
             mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA1"))
             val expected = Base64.getEncoder().encodeToString(mac.doFinal(cred.user.toByteArray(Charsets.UTF_8)))
             ensure(cred.pass == expected) { "pass does not verify as base64(HMAC-SHA1(secret, user)) under the given secret" }
+        }
+    }
+
+/**
+ * S-7.6-48…50: a spool that names its TURN servers in `turnHosts` signs for the one `turnreq`'s `host`
+ * names, and answers an unknown `host` exactly as it answers none, with server 1, which is
+ * `turnHosts`' first entry. A credential's server is read from its UDP URL's entry, as a client reads it.
+ *
+ * Three credentials over two connections: the last entry and then an unknown host on one, no host on
+ * the other. That keeps each connection inside its burst of 2, and the address inside its 8 beside the
+ * three `turn-cred-shape` and `turn-hmac` take.
+ */
+private fun turnHostsSelect(): Check =
+    Check(name = "turn-hosts-select") { ctx ->
+        ctx.requireTurn()
+        val hosts = ctx.serverHello.turnHosts ?: throw SkipCheck("spool advertises no turnHosts (S-7.6-48)")
+        ensure(hosts.isNotEmpty()) { "hello carries turnHosts=[]; S-7.6-48 omits it rather than send it empty" }
+        ensure(hosts.size <= MAX_TURN_HOSTS && hosts.toSet().size == hosts.size) {
+            "turnHosts must hold 1 to $MAX_TURN_HOSTS distinct entries, got $hosts"
+        }
+        val last = hosts.last()
+        lateinit var unknown: TurnCred
+        ctx.client.connect {
+            hello()
+            val named = fetchTurnCred(ctx, host = last)
+            val entry = TurnUris.udpEntry(named.urls)
+            ensure(entry == last) { "turnreq named $last, but the credential's UDP URL has entry $entry (S-7.6-50)" }
+            val q = nextQ()
+            send(TurnReq(t = RecordType.TURNREQ, q = q, host = UNKNOWN_TURN_HOST))
+            unknown = expect<TurnCred>(RecordType.TURNCRED)
+            ensure(unknown.q == q) { "expected turncred q=$q echoed, got ${unknown.q}" }
+        }
+        ctx.client.connect {
+            hello()
+            val none = fetchTurnCred(ctx)
+            ensure(TurnUris.udpEntry(none.urls) == hosts.first()) {
+                "a turnreq with no host got ${none.urls}, not server 1's, whose entry is ${hosts.first()} (S-7.6-49)"
+            }
+            ensure(unknown.urls == none.urls) {
+                "an unknown host got ${unknown.urls}, but no host got ${none.urls}; both must be server 1's (S-7.6-49)"
+            }
         }
     }
 

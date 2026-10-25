@@ -38,6 +38,7 @@ import app.getknit.spool.protocol.Ticket
 import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.protocol.TurnCred
 import app.getknit.spool.protocol.TurnReq
+import app.getknit.spool.protocol.TurnUris
 import app.getknit.spool.shortHex
 import app.getknit.spool.store.AputResult
 import app.getknit.spool.store.DigestInfo
@@ -325,10 +326,16 @@ class SpoolServer(
                 // Comma-joined, first room first, so describe() keeps one field however many there are.
                 "commons" to (rooms.joinToString(",") { shortHex(it.scopeId) }.ifEmpty { "off" }),
                 "commonsRateTotal" to commonsRateTotal,
-                // Boot-only: the secret changes in lockstep with coturn's, and the per-connection
-                // and per-IP buckets are built from the rate when a client arrives.
-                "turn" to (turn?.let { "${it.urls.size}urls/${it.ttlS}s/${it.ratePer10Min}per10min" } ?: "off"),
-                "turnSecret" to secret(turn?.secret),
+                // Boot-only: each secret changes in lockstep with its TURN server's, and the
+                // per-connection and per-IP buckets are built from the rate when a client arrives.
+                // One URL count and one secret per server, comma-joined, so a reload that adds or
+                // drops a server is reported, and a one-server spool reads as it always has.
+                "turn" to
+                    (
+                        turn?.let { t -> "${t.servers.joinToString(",") { "${it.urls.size}urls" }}/${t.ttlS}s/${t.ratePer10Min}per10min" }
+                            ?: "off"
+                    ),
+                "turnSecret" to (turn?.servers?.joinToString(",") { secret(it.secret) } ?: secret(null)),
                 "source" to sourceUrl,
             )
 
@@ -412,15 +419,12 @@ class SpoolServer(
     }
 
     /**
-     * Where and how this spool issues TURN credentials ([TurnCredentials]). The spool never relays
-     * media: [secret] is shared with a separate TURN server, which verifies what this hands out.
-     *
-     * A plain class rather than a data class, so no `toString` can put [secret] in a log line.
+     * Where and how this spool issues TURN credentials ([TurnCredentials]): up to four servers, each
+     * signed for with its own secret, under one lifetime and one set of budgets (ADR 2026-10.u5f4).
      */
     class TurnConfig(
-        val secret: String,
-        /** RFC 7065 `turn:`/`turns:` URIs, sent to clients verbatim. */
-        val urls: List<String>,
+        /** Server 1 first, in number order; never empty. */
+        val servers: List<TurnServer>,
         /**
          * How long a credential can start a relay. coturn checks expiry only at a session's first
          * authentication, so a call outlives it; a short window is what keeps a leaked one cheap.
@@ -428,7 +432,37 @@ class SpoolServer(
         val ttlS: Long,
         /** Issues per connection per ten minutes; the per-IP budget is four times this. */
         val ratePer10Min: Int,
-    )
+    ) {
+        init {
+            require(servers.isNotEmpty()) { "a TURN config needs server 1" }
+        }
+
+        /** `hello`'s `turnHosts`: each server's entry, in server order, or null when none has one (S-7.6-48). */
+        val hosts: List<String>? = servers.mapNotNull { it.entry }.takeIf { it.isNotEmpty() }
+
+        /**
+         * The server [host] names, byte for byte, or server 1 for an absent or unmatched one (S-7.6-49).
+         * Server 1 is what every client that predates `host` already gets, so a miss costs it nothing.
+         */
+        fun select(host: String?): TurnServer = servers.firstOrNull { host != null && it.entry == host } ?: servers.first()
+    }
+
+    /**
+     * One TURN server this spool signs for. The spool never relays media: [secret] is shared with
+     * that server, which verifies what this hands out.
+     *
+     * A plain class rather than a data class, so no `toString` can put [secret] in a log line.
+     */
+    class TurnServer(
+        /** 1 for `SPOOL_TURN_*`, n for `SPOOL_TURN_<n>_*`: the metrics' `server` label. */
+        val number: Int,
+        val secret: String,
+        /** RFC 7065 `turn:`/`turns:` URIs, sent to clients verbatim, in their configured order. */
+        val urls: List<String>,
+    ) {
+        /** The `host:port` of its UDP URL ([TurnUris.entry]), or null when it has none. */
+        val entry: String? = TurnUris.udpEntry(urls)
+    }
 
     /** One ticket-verifying public key and its [Tickets.kid], computed once rather than on every `ent`. */
     class TicketKey(
@@ -820,7 +854,7 @@ class SpoolServer(
                                 config.maxConns,
                                 commonsSubscribers(),
                                 fileBytes,
-                                turn = config.turn != null,
+                                turnServers = config.turn?.servers?.size ?: 0,
                                 tickets = config.ticket != null,
                                 casts = config.rateCasts > 0,
                             ),
@@ -1404,6 +1438,10 @@ class SpoolServer(
      * the subscription gate, and the username's suffix comes from its pseudonym rather than from
      * fresh randomness (S-7.6-17): every credential one holder fetches then shares a suffix, which
      * is what makes coturn's `user-quota` count the holder instead of the credential.
+     *
+     * On a spool with several servers, `host` picks the one signed for (S-7.6-49/50), after every
+     * gate and budget: a request costs the same whichever server it names, and an unknown one gets
+     * server 1 rather than a refusal, because a call is waiting.
      */
     private suspend fun handleTurnReq(
         conn: Conn,
@@ -1445,20 +1483,22 @@ class SpoolServer(
                 return
             }
         }
+        // Chosen last: the gates and budgets above are the same whichever server is asked for.
+        val server = turn.select(req.host)
         val expS = clock() / MS_PER_S + turn.ttlS
         val suffix =
             ticket?.let { TurnCredentials.pseudonymSuffix(it.ps) } ?: ByteArray(TurnCredentials.SUFFIX_BYTES).also(turnRandom::nextBytes)
         val user = TurnCredentials.user(expS, suffix)
-        metrics.turnIssuedTotal.increment()
-        if (ticket != null) metrics.turnIssuedTicketedTotal.increment()
+        metrics.turnIssuedTotal.increment(server.number)
+        if (ticket != null) metrics.turnIssuedTicketedTotal.increment(server.number)
         out(
             conn,
             TurnCred(
                 t = RecordType.TURNCRED,
                 q = req.q,
-                urls = turn.urls,
+                urls = server.urls,
                 user = user,
-                pass = TurnCredentials.pass(turn.secret, user),
+                pass = TurnCredentials.pass(server.secret, user),
                 exp = expS,
             ),
         )
@@ -2209,6 +2249,9 @@ class SpoolServer(
             // Present only when this spool issues credentials, for moderation's reason: presence is
             // the signal, and a client that sees it absent never sends `turnreq` (C-7.6-3).
             turn = true.takeIf { config.turn != null },
+            // Only beside `turn`, and omitted rather than empty (S-7.6-48): a client names one of
+            // these in `turnreq`, and with none it asks as it always has.
+            turnHosts = config.turn?.hosts,
             // Present only with a key (S-7.6-13). The connection snapshots it, so what it was told
             // here is what its `turnreq` gate follows for its whole life.
             ent = true.takeIf { config.ticket != null },

@@ -226,8 +226,10 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_COMMONS_<n>_*` | unset | rooms 2 to 8: `_ID`, `_NAME`, `_MAX_FRAMES`, `_TTL_MS`, `_MAX_BLOB`, `_ATTACH`, `_RATE_PUSHES`, defaulting as above; each needs `SPOOL_COMMONS_ID` |
 | `SPOOL_TURN_SECRET` | unset | *experimental:* the TURN shared secret, ≥ 32 characters; **unset = no TURN**, and the three below must stay unset |
 | `SPOOL_TURN_URLS` | — | comma-separated `turn:`/`turns:` URIs clients are told to dial; required with the secret |
-| `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it |
-| `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×) |
+| `SPOOL_TURN_TTL_S` | `300` | how long a credential can *start* a relay, in seconds (60–3600). coturn checks it only at allocation, so a call outlives it. Every server's |
+| `SPOOL_TURN_RATE` | `4` | credentials per connection per 10 minutes (one address gets 4×), whichever server they are for |
+| `SPOOL_TURN_<n>_SECRET` | unset | *experimental:* TURN servers 2 to 4, each [a box of its own](#several-turn-boxes) with its own secret (≥ 32 characters). Numbered with no gap, and each needs `SPOOL_TURN_SECRET` before it |
+| `SPOOL_TURN_<n>_URLS` | — | that server's `turn:`/`turns:` URIs; required with its secret. With two or more servers, each server's URLs name one host, no two servers share one, and each has a `turn:` URL over UDP |
 | `SPOOL_STUN_URLS` | unset | *experimental:* up to 4 comma-separated `stun:`/`stuns:` URIs told to every client in `hello`, with no credential; needs no secret. Reloadable |
 | `SPOOL_TICKET_KEY` | unset | *experimental:* the ticket issuer's Ed25519 **public** key, unpadded base64url (`knit-spool ticket-keygen`). Set = `hello` carries `ent`, and what `SPOOL_TICKET_GATES` names needs a ticket. Reloadable |
 | `SPOOL_TICKET_KEY_NEXT` | unset | *experimental:* a second issuer public key, accepted beside the key during a rotation; a ticket's `kid` picks which one checks it. Must differ from the key, and needs it. Reloadable |
@@ -340,17 +342,20 @@ with the same secret. **The Spool never carries media**, and call setup is ordin
 in the conversation's own scope, so nothing else on the data path changes.
 
 ```
-{ t: "hello", …, turn: true }
-{ t: "turnreq", q: 7 }                                                         // client → Spool
+{ t: "hello", …, turn: true, turnHosts: ["us-west.turn.example:3478", "eu.turn.example:3478"] }
+{ t: "turnreq", q: 7, host: "eu.turn.example:3478" }                          // client → Spool
 { t: "turncred", q: 7, urls: [...], user: "<exp>:<random>", pass: "…", exp: … } // Spool → client
 ```
+
+`turnHosts` and `host` appear only with several TURN servers, or one with a UDP URL; `host` is
+optional, and without it, or with one the Spool does not list, the answer is server 1's.
 
 | | |
 |---|---|
 | **Names no conversation** | `turnreq` carries no scope, and the Spool does not ask. Holding *some* subscription is the whole gate, so the Spool never learns which conversation is calling. |
 | **coturn's own scheme** | `pass = base64(HMAC-SHA1(secret, user))` — coturn's `use-auth-secret`. The suffix after `<exp>:` is random per issue, so a credential links to nothing. |
 | **Budgeted, never struck** | `SPOOL_TURN_RATE` per connection, four times that per address; past it, `err rate` with `retryMs`. A refusal never counts toward the 4003 abuse close: redialling a dropped call is not abuse. |
-| **Boot-only** | The secret has to change in lockstep with coturn's, so a `SIGHUP` reports it as needing a restart. |
+| **Boot-only** | Each secret has to change in lockstep with its coturn's, so a `SIGHUP` reports every TURN setting as needing a restart. |
 | **Never logged** | Neither half of a credential, nor the secret, reaches this daemon's log. |
 
 Run it as the last overlay:
@@ -375,6 +380,20 @@ below), `TURN_TOTAL_QUOTA` (100), `TURN_MAX_BPS` (16000
 bytes/s per session) and `TURN_BPS_CAPACITY` (1600000 bytes/s, 12.8 Mbps, for the whole relay). A
 refreshed allocation lives on after its credential expires, so these caps are the real limit.
 Prefer TURN on a tokened Spool.
+
+### Several TURN boxes
+
+One coturn box relays as many allocations as its `TURN_TOTAL_QUOTA` allows. To grow past that,
+give the Spool up to three more boxes, `SPOOL_TURN_2_*` through `SPOOL_TURN_4_*`, each with its own secret and URLs (knit-next
+`docs/SPOOL_PROTOCOL.md` S-7.6-48 to S-7.6-50; ADR 2026-10.u5f4). `hello`'s `turnHosts` names each
+box by the `host:port` of its UDP URL, in server order. A phone measures every box from where it is
+with a STUN Binding request and names the nearest in `turnreq`'s `host`. The Spool signs for that
+box alone, with its secret, and answers with its URLs alone. A phone then allocates on one box per
+call, so a second box adds capacity instead of mirroring the first. Budgets are shared: a credential
+costs the same `SPOOL_TURN_RATE` whichever box it is for. `knit_spool_turn_issued_total{server="<n>"}`
+and its ticketed twin count credentials per box, by number. The conformance check `turn-hosts-select`
+asks for the last box and for one no Spool lists, and expects server 1's URLs for the second.
+[`HOSTING.md`](HOSTING.md#several-turn-boxes) covers running them.
 
 ### Tickets and STUN
 
@@ -662,7 +681,8 @@ this feature exists to avoid.
 limits, the sweeper and status line from their cadences, the commons rooms from their ids, the
 listener from the port: `SPOOL_PORT`, `SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`,
 `SPOOL_MAX_SCOPES`, `SPOOL_MAX_ATTACH_BYTES`, `SPOOL_MAX_A_CHUNK`, `SPOOL_SWEEP_MS`,
-`SPOOL_STATUS_MS`, `SPOOL_TRUST_PROXY`, `SPOOL_COMMONS_*`, `SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`.
+`SPOOL_STATUS_MS`, `SPOOL_TRUST_PROXY`, `SPOOL_COMMONS_*`, every `SPOOL_TURN_*` setting (server 1's
+and `SPOOL_TURN_<n>_*` alike), `SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`.
 
 Naming one of those in the file is not fatal — it is logged as ignored and everything else still
 applies, so a stale line cannot block a later change. A file that is missing, unreadable or invalid

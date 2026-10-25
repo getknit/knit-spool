@@ -338,7 +338,10 @@ class ConfigTest {
     @Test
     fun turnParsesWithItsDefaults() {
         val turn = assertNotNull(withTurn().turn)
-        assertEquals(listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"), turn.urls)
+        val server = turn.servers.single()
+        assertEquals(listOf("turn:spool.example:3478?transport=udp", "turns:spool.example:5349?transport=tcp"), server.urls)
+        assertEquals(1, server.number)
+        assertEquals(listOf("spool.example:3478"), turn.hosts)
         assertEquals(300L, turn.ttlS)
         assertEquals(4, turn.ratePer10Min)
         val tuned = assertNotNull(withTurn("SPOOL_TURN_TTL_S" to "3600", "SPOOL_TURN_RATE" to "10").turn)
@@ -374,6 +377,120 @@ class ConfigTest {
     fun turnUrlsMustBeTurnUris() {
         for (bad in listOf("stun:spool.example:3478", "https://spool.example", "turn:", "turn:a b")) {
             assertFailsWith<IllegalArgumentException>(bad) { withTurn("SPOOL_TURN_URLS" to bad) }
+        }
+    }
+
+    private val turnSecret2 = "fedcba9876543210fedcba9876543210"
+    private val turnUrls2 = "turn:two.example:3478?transport=udp,turns:two.example:5349?transport=tcp"
+
+    private fun withTwoTurnServers(vararg extra: Pair<String, String>) =
+        withTurn(*(arrayOf("SPOOL_TURN_2_SECRET" to turnSecret2, "SPOOL_TURN_2_URLS" to turnUrls2) + extra))
+
+    /**
+     * Servers 2 to 4 follow server 1 in number order, each with its own secret and URLs, under the
+     * one lifetime and rate (ADR 2026-10.u5f4). `turnHosts` is each one's UDP entry, in that order.
+     */
+    @Test
+    fun numberedTurnServersFollowTheFirstWithTheirOwnSecretAndUrls() {
+        val turn =
+            assertNotNull(
+                withTwoTurnServers(
+                    "SPOOL_TURN_3_SECRET" to "3".repeat(32),
+                    "SPOOL_TURN_3_URLS" to "turn:[2001:DB8::7]?transport=udp",
+                    "SPOOL_TURN_TTL_S" to "600",
+                ).turn,
+            )
+        assertEquals(listOf(1, 2, 3), turn.servers.map { it.number })
+        assertEquals(listOf(turnSecret, turnSecret2, "3".repeat(32)), turn.servers.map { it.secret })
+        assertEquals(listOf("turn:two.example:3478?transport=udp", "turns:two.example:5349?transport=tcp"), turn.servers[1].urls)
+        assertEquals(listOf("spool.example:3478", "two.example:3478", "[2001:db8::7]:3478"), turn.hosts)
+        assertEquals(600L, turn.ttlS)
+    }
+
+    /** Refusal 1: a numbered server needs the one before it, so `turnHosts` never skips a slot. */
+    @Test
+    fun aTurnServerWithAGapBeforeItIsRefused() {
+        val third = arrayOf("SPOOL_TURN_3_SECRET" to "3".repeat(32), "SPOOL_TURN_3_URLS" to "turn:three.example")
+        val e = assertFailsWith<IllegalArgumentException> { withTurn(*third) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_3_SECRET") && e.message!!.contains("SPOOL_TURN_2_SECRET"), e.message!!)
+        val alone = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_TURN_2_URLS" to turnUrls2)) }
+        assertTrue(alone.message!!.contains("SPOOL_TURN_2_URLS") && alone.message!!.contains("SPOOL_TURN_SECRET"), alone.message!!)
+        // Server 4 is the last a spool reads; a fifth is not a variable, so `check` warns about it as a typo.
+        assertTrue("SPOOL_TURN_4_SECRET" in KNOWN_VARS && "SPOOL_TURN_5_SECRET" !in KNOWN_VARS)
+        assertEquals(4, MAX_TURN_SERVERS)
+    }
+
+    /** Refusal 2: half a numbered server, either half, names both of its variables. */
+    @Test
+    fun aNumberedTurnServerNeedsBothItsSecretAndItsUrls() {
+        val noUrls = assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_2_SECRET" to turnSecret2) }
+        assertTrue(noUrls.message!!.contains("SPOOL_TURN_2_URLS"), noUrls.message!!)
+        assertFalse(noUrls.message!!.contains(turnSecret2), noUrls.message!!)
+        val noSecret = assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_2_URLS" to turnUrls2) }
+        assertTrue(noSecret.message!!.contains("SPOOL_TURN_2_SECRET"), noSecret.message!!)
+        // Empty is unset, so a blank `.env` line for server 2 is no server 2.
+        assertEquals(1, withTurn("SPOOL_TURN_2_SECRET" to "", "SPOOL_TURN_2_URLS" to "").turn!!.servers.size)
+    }
+
+    /** Refusals 3 and 4 hold for every server, and the refusal names the server's own variable. */
+    @Test
+    fun aNumberedTurnServersSecretAndUrlsAreCheckedLikeTheFirsts() {
+        val short = "tooshort-secret-for-two"
+        val e = assertFailsWith<IllegalArgumentException> { withTurn("SPOOL_TURN_2_SECRET" to short, "SPOOL_TURN_2_URLS" to turnUrls2) }
+        assertTrue(e.message!!.contains("SPOOL_TURN_2_SECRET"), e.message!!)
+        assertFalse(e.message!!.contains(short), e.message!!)
+        val notTurn = assertFailsWith<IllegalArgumentException> { withTwoTurnServers("SPOOL_TURN_2_URLS" to "stun:two.example:3478") }
+        assertTrue(notTurn.message!!.contains("SPOOL_TURN_2_URLS"), notTurn.message!!)
+    }
+
+    /** Refusal 5: with two servers, a server is known by its host, so its URLs may name only one. */
+    @Test
+    fun withSeveralTurnServersEachServersUrlsNameOneHost() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                withTwoTurnServers("SPOOL_TURN_2_URLS" to "turn:two.example:3478?transport=udp,turns:other.example:5349")
+            }
+        assertTrue(e.message!!.contains("SPOOL_TURN_2_URLS") && e.message!!.contains("2 hosts"), e.message!!)
+        // Hosts compare case-insensitively, and a URL with no host it can read is no identity at all.
+        assertEquals(2, withTwoTurnServers("SPOOL_TURN_2_URLS" to "turn:two.example,turns:TWO.example:5349").turn!!.servers.size)
+        val unreadable = assertFailsWith<IllegalArgumentException> { withTwoTurnServers("SPOOL_TURN_2_URLS" to "turn:?transport=udp") }
+        assertTrue(unreadable.message!!.contains("names no host"), unreadable.message!!)
+        for (secret in listOf(turnSecret, turnSecret2)) {
+            assertFalse(e.message!!.contains(secret) || unreadable.message!!.contains(secret))
+        }
+    }
+
+    /** Refusal 6: two servers on one host would be one identity for two secrets. Equal secrets are fine. */
+    @Test
+    fun withSeveralTurnServersNoTwoShareAHost() {
+        val e = assertFailsWith<IllegalArgumentException> { withTwoTurnServers("SPOOL_TURN_2_URLS" to "turn:Spool.Example:3479") }
+        assertTrue(e.message!!.contains("SPOOL_TURN_2_URLS") && e.message!!.contains("SPOOL_TURN_URLS"), e.message!!)
+        assertEquals(2, withTwoTurnServers("SPOOL_TURN_2_SECRET" to turnSecret).turn!!.servers.size)
+    }
+
+    /** Refusal 7: with two servers, each needs the UDP URL a client measures and names it by. */
+    @Test
+    fun withSeveralTurnServersEachNeedsAUdpUrl() {
+        for (urls in listOf("turns:two.example:5349", "turn:two.example:3478?transport=tcp")) {
+            val e = assertFailsWith<IllegalArgumentException>(urls) { withTwoTurnServers("SPOOL_TURN_2_URLS" to urls) }
+            assertTrue(e.message!!.contains("SPOOL_TURN_2_URLS") && e.message!!.contains("UDP"), e.message!!)
+        }
+        val first = assertFailsWith<IllegalArgumentException> { withTwoTurnServers("SPOOL_TURN_URLS" to "turns:spool.example:5349") }
+        assertTrue(first.message!!.contains("SPOOL_TURN_URLS"), first.message!!)
+    }
+
+    /**
+     * One server keeps every URL list it was accepted with before: several hosts, no UDP URL, a URL
+     * with no host to read. With no UDP entry there is nothing to advertise, so `turnHosts` is omitted.
+     */
+    @Test
+    fun oneTurnServerKeepsEveryUrlListItWasAcceptedWith() {
+        val spread = assertNotNull(withTurn("SPOOL_TURN_URLS" to "turn:a.example?transport=udp,turns:b.example:5349").turn)
+        assertEquals(listOf("a.example:3478"), spread.hosts)
+        for (urls in listOf("turns:spool.example:5349?transport=tcp", "turn:spool.example:3478?transport=tcp", "turn:?transport=udp")) {
+            val turn = assertNotNull(withTurn("SPOOL_TURN_URLS" to urls).turn, urls)
+            assertNull(turn.hosts, urls)
+            assertEquals(turn.servers.single(), turn.select("spool.example:3478"))
         }
     }
 

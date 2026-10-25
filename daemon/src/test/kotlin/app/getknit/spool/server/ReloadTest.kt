@@ -118,6 +118,22 @@ class ReloadTest {
     }
 
     /**
+     * Every TURN server is boot-only too, each with its own secret: a reload that adds one, drops one
+     * or changes how many URLs one has is reported as needing a restart, and `hello` keeps the boot list.
+     */
+    @Test
+    fun everyTurnServerIsBootOnly() {
+        withServer(testConfig(turn = testTurn())) {
+            val added = spool.reload(testConfig(turn = testTurn(more = listOf(testTurnServer2()))))
+            assertTrue(added.any { it.startsWith("turn=2urls,2urls/") }, added.toString())
+            assertTrue(added.any { it.startsWith("turnSecret=set,set") }, added.toString())
+            connect { assertEquals(listOf("spool.example:3478"), helloHandshake().turnHosts) }
+            val shrunk = spool.reload(testConfig(turn = testTurn(more = listOf(testTurnServer2(urls = TEST_TURN_URLS_2.take(1))))))
+            assertTrue(shrunk.any { it.startsWith("turn=2urls,1urls/") }, shrunk.toString())
+        }
+    }
+
+    /**
      * The STUN list is read when `hello` is built, so a reload reaches every client that connects
      * after it — and only those: an open connection keeps the hello it was given.
      */

@@ -4,6 +4,7 @@ package app.getknit.spool
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.protocol.TurnUris
 import app.getknit.spool.server.SpoolServer
 import app.getknit.spool.store.HardLimits
 import app.getknit.spool.store.InMemoryScopeStore
@@ -31,6 +32,9 @@ private val log = LoggerFactory.getLogger("app.getknit.spool.Main")
  * Above [KNOWN_VARS], which reads it: top-level properties initialize in file order.
  */
 private val COMMONS_ROOM_KEYS = listOf("ID", "NAME", "MAX_FRAMES", "TTL_MS", "MAX_BLOB", "ATTACH", "RATE_PUSHES")
+
+/** What each TURN server's variables are named after its `SPOOL_TURN_` or `SPOOL_TURN_<n>_` prefix; above [KNOWN_VARS] too. */
+private val TURN_SERVER_KEYS = listOf("SECRET", "URLS")
 
 internal val KNOWN_VARS =
     setOf(
@@ -85,7 +89,8 @@ internal val KNOWN_VARS =
         "SPOOL_MAX_CAST",
         "SPOOL_RATE_CASTS_TOTAL",
         "SPOOL_COMMONS_RATE_TOTAL",
-    ) + (2..MAX_COMMONS_ROOMS).flatMap { room -> COMMONS_ROOM_KEYS.map { "SPOOL_COMMONS_${room}_$it" } }
+    ) + (2..MAX_COMMONS_ROOMS).flatMap { room -> COMMONS_ROOM_KEYS.map { "SPOOL_COMMONS_${room}_$it" } } +
+        (2..MAX_TURN_SERVERS).flatMap { server -> TURN_SERVER_KEYS.map { "SPOOL_TURN_${server}_$it" } }
 
 /**
  * The most commons rooms one spool runs (spec §7.4): the unnumbered `SPOOL_COMMONS_*` room and
@@ -94,6 +99,13 @@ internal val KNOWN_VARS =
  * (ADR 2026-10.5cwn).
  */
 internal const val MAX_COMMONS_ROOMS = 8
+
+/**
+ * The most TURN servers one spool signs for (SPOOL_PROTOCOL.md S-7.6-48): the unnumbered
+ * `SPOOL_TURN_*` server and `SPOOL_TURN_2_*` through this. Fixed for [MAX_COMMONS_ROOMS]' reason, and
+ * small because a client measures every one of them on every network it joins.
+ */
+internal const val MAX_TURN_SERVERS = 4
 
 /**
  * `SPOOL_COMMONS_RATE_TOTAL`'s floor, the spec's suggested spool-wide budget (§12.2). The default is
@@ -572,33 +584,111 @@ internal fun stunFromEnv(env: (String) -> String?): List<String> {
  * unset — off by default, and a spool without it advertises nothing and answers `turnreq` with
  * `err malformed`.
  *
+ * Server 1 is the unnumbered `SPOOL_TURN_SECRET` and `SPOOL_TURN_URLS`, and further servers are
+ * `SPOOL_TURN_2_*` up to [MAX_TURN_SERVERS], numbered with no gap (S-7.6-48, ADR 2026-10.u5f4). Each
+ * has its own secret and URLs; the lifetime and the rates are shared. Server 1 is what a client that
+ * names no host gets, so every spool that ran with one server runs exactly as before.
+ *
+ * With two or more servers, a server is known by its host: its URLs must name one, no two servers may
+ * share it, and each needs a UDP URL, since that is what a client measures and names in `turnreq`.
+ * One server keeps every URL list it was accepted with before.
+ *
  * The URLs and lifetime without a secret are refused rather than ignored: they mean an operator
- * believes the spool is handing out credentials that it is not. Neither the secret nor any part of
- * it is ever echoed, here or anywhere.
+ * believes the spool is handing out credentials that it is not. Neither a secret nor any part of one
+ * is ever echoed, here or anywhere.
  */
 internal fun turnFromEnv(env: (String) -> String?): SpoolServer.TurnConfig? {
-    val secret = env("SPOOL_TURN_SECRET")?.takeIf { it.isNotEmpty() }
-    val rawUrls = env("SPOOL_TURN_URLS")?.takeIf { it.isNotEmpty() }
-    if (secret == null) {
-        require(rawUrls == null && env("SPOOL_TURN_TTL_S") == null && env("SPOOL_TURN_RATE") == null) {
+    // Each server's secret and URLs, server 1 first. Empty is unset, the SPOOL_TOKEN idiom: compose
+    // passes a blank `.env` line as "".
+    val raw =
+        (1..MAX_TURN_SERVERS).map { number ->
+            env(turnVar(number, "SECRET"))?.takeIf(String::isNotEmpty) to env(turnVar(number, "URLS"))?.takeIf(String::isNotEmpty)
+        }
+    for (number in 2..MAX_TURN_SERVERS) {
+        val (secret, urls) = raw[number - 1]
+        if (secret == null && urls == null) continue
+        val (before, beforeUrls) = raw[number - 2]
+        require(before != null || beforeUrls != null) {
+            "${turnVar(number, if (secret != null) "SECRET" else "URLS")} is set but neither ${turnVar(number - 1, "SECRET")} " +
+                "nor ${turnVar(number - 1, "URLS")} is: number TURN servers from 1 with no gap"
+        }
+    }
+    val (firstSecret, firstUrls) = raw.first()
+    if (firstSecret == null) {
+        require(firstUrls == null && env("SPOOL_TURN_TTL_S") == null && env("SPOOL_TURN_RATE") == null) {
             "SPOOL_TURN_URLS, SPOOL_TURN_TTL_S and SPOOL_TURN_RATE need SPOOL_TURN_SECRET; set it, or unset them"
         }
         return null
     }
-    require(secret.length >= MIN_TURN_SECRET) {
-        "SPOOL_TURN_SECRET must be at least $MIN_TURN_SECRET characters (openssl rand -base64 48)"
-    }
-    requireNotNull(rawUrls) { "SPOOL_TURN_SECRET is set but SPOOL_TURN_URLS is not: clients need somewhere to use it" }
-    val urls = rawUrls.split(',').map(String::trim)
-    urls.forEach { url ->
-        require(TURN_URL.matches(url)) { "SPOOL_TURN_URLS entries must be turn: or turns: URIs, got \"$url\"" }
-    }
+    val servers = raw.withIndex().mapNotNull { (index, keys) -> turnServer(index + 1, keys.first, keys.second) }
+    if (servers.size > 1) checkTurnHosts(servers)
     return SpoolServer.TurnConfig(
-        secret = secret,
-        urls = urls,
+        servers = servers,
         ttlS = longVar(env, "SPOOL_TURN_TTL_S", default = 300L, min = MIN_TURN_TTL_S, max = MAX_TURN_TTL_S),
         ratePer10Min = intVar(env, "SPOOL_TURN_RATE", default = 4, min = 1, max = MAX_TURN_RATE),
     )
+}
+
+/** `SPOOL_TURN_<key>` for server 1, `SPOOL_TURN_<number>_<key>` for the rest, as [roomVar] names rooms. */
+private fun turnVar(
+    number: Int,
+    key: String,
+): String = if (number == 1) "SPOOL_TURN_$key" else "SPOOL_TURN_${number}_$key"
+
+/** One server's secret and URLs, checked alone, or null when neither is set. */
+private fun turnServer(
+    number: Int,
+    secret: String?,
+    rawUrls: String?,
+): SpoolServer.TurnServer? {
+    val (secretVar, urlsVar) = turnVar(number, "SECRET") to turnVar(number, "URLS")
+    if (secret == null) {
+        require(rawUrls == null) { "$urlsVar needs $secretVar; set it, or unset the URLs" }
+        return null
+    }
+    require(secret.length >= MIN_TURN_SECRET) {
+        "$secretVar must be at least $MIN_TURN_SECRET characters (openssl rand -base64 48)"
+    }
+    requireNotNull(rawUrls) { "$secretVar is set but $urlsVar is not: clients need somewhere to use it" }
+    val urls = rawUrls.split(',').map(String::trim)
+    urls.forEach { url ->
+        require(TURN_URL.matches(url)) { "$urlsVar entries must be turn: or turns: URIs, got \"$url\"" }
+    }
+    return SpoolServer.TurnServer(number = number, secret = secret, urls = urls)
+}
+
+/**
+ * What two or more servers need on top of [turnServer]'s checks: one host each, none shared, and a UDP
+ * URL each. A client tells servers apart by host and measures each at its UDP URL's host and port, and
+ * a credential's server is read from its URLs, so a server spread over two hosts has no single identity.
+ */
+private fun checkTurnHosts(servers: List<SpoolServer.TurnServer>) {
+    val hosts =
+        servers.map { server ->
+            val urlsVar = turnVar(server.number, "URLS")
+            val named =
+                server.urls
+                    .map { url ->
+                        requireNotNull(TurnUris.host(url)) {
+                            "$urlsVar entry \"$url\" names no host; with several TURN servers, each is known by its host"
+                        }
+                    }.distinct()
+            require(named.size == 1) {
+                "$urlsVar names ${named.size} hosts (${named.joinToString(", ")}); " +
+                    "with several TURN servers, each server's URLs must name one host"
+            }
+            requireNotNull(server.entry) {
+                "$urlsVar has no turn: URL over UDP; with several TURN servers, clients measure each at its UDP URL"
+            }
+            named.single()
+        }
+    for ((index, host) in hosts.withIndex()) {
+        val clash = hosts.take(index).indexOf(host).takeIf { it >= 0 } ?: continue
+        throw IllegalArgumentException(
+            "${turnVar(servers[index].number, "URLS")} names $host, as ${turnVar(servers[clash].number, "URLS")} does; " +
+                "each TURN server must be on a host of its own",
+        )
+    }
 }
 
 /**

@@ -120,7 +120,8 @@ class ConformanceSelfTest {
         rooms = listOf(testCommons(attach = true), testCommons(maxFrames = 3, scopeId = commonsScope2(), number = 2)),
         hardLimits = suiteLimits(),
         ratePushes = RATE_PUSHES,
-        turn = testTurn(),
+        // Two servers, so turn-hosts-select runs and every other TURN check meets a multi-server spool.
+        turn = testTurn(more = listOf(testTurnServer2())),
         stunUrls = stunUrls,
         ticket = ticket,
         rateCasts = 4,
@@ -307,6 +308,7 @@ class ConformanceSelfTest {
                 "turn-requires-sub",
                 "turn-cred-shape",
                 "turn-hmac",
+                "turn-hosts-select",
                 // Casts are off by default.
                 "cast-advertised",
                 "cast-fanout",

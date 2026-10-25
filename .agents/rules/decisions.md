@@ -25,6 +25,7 @@ growing an explanation, that explanation belongs in the ADR.
 | scope creation on a ticketed spool, `create` in `SPOOL_TICKET_GATES`, `SPOOL_TICKET_KEY_NEXT` or per-pseudonym rate limits | [ADR 2026-10.x9gq](../memory/decisions/2026-10-x9gq-scope-creation-stays-open.md) |
 | `KNOWN_VARS`, `bootOnly()` / `reloadable()`, a config default, the version literal or `EnvContractTest` | [ADR 2026-10.8ymn](../memory/decisions/2026-10-8ymn-main-builds-carry-a-numbered.md) |
 | commons rooms: `SPOOL_COMMONS_*` or `SPOOL_COMMONS_<n>_*`, `roomsFromEnv`, `hello`'s `rooms` or `commons`, `commonsBudget`, `commons-invite` | [ADR 2026-10.5cwn](../memory/decisions/2026-10-5cwn-one-spool-runs-up-to.md) |
+| several TURN servers: `SPOOL_TURN_<n>_*`, `turnFromEnv`, `TurnConfig.select`, `TurnUris`, `hello`'s `turnHosts`, `turnreq`'s `host`, or `knit_spool_turn_issued_total`'s `server` label | [ADR 2026-10.u5f4](../memory/decisions/2026-10-u5f4-a-spool-signs-for-up.md) |
 
 ## Where they live
 

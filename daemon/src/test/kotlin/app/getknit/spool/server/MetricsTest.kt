@@ -21,12 +21,21 @@ class MetricsTest {
         assertTrue(rendered.contains("""knit_spool_build_info{version="1.2.3",commit="cd08e5f"} 1"""), rendered)
     }
 
-    /** Absent on a spool that issues no TURN credentials, rather than a flat zero. */
+    /**
+     * Absent on a spool that issues no TURN credentials, rather than a flat zero, and otherwise one
+     * series per configured server from zero, labelled by its number and never its host.
+     */
     @Test
-    fun turnIssuedIsEmittedOnlyWhenTurnIsOn() {
+    fun turnIssuedIsEmittedOnlyWhenTurnIsOnOnePerServer() {
         val metrics = Metrics()
-        metrics.turnIssuedTotal.increment()
-        assertTrue(metrics.render(scopesCurrent = 0, liveBytes = 0L, turn = true).contains("knit_spool_turn_issued_total 1\n"))
+        metrics.turnIssuedTotal.increment(2)
+        val rendered = metrics.render(scopesCurrent = 0, liveBytes = 0L, turnServers = 3)
+        assertTrue(rendered.contains("# TYPE knit_spool_turn_issued_total counter\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_turn_issued_total{server=\"1\"} 0\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_turn_issued_total{server=\"2\"} 1\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_turn_issued_total{server=\"3\"} 0\n"), rendered)
+        assertTrue(!rendered.contains("server=\"4\""), rendered)
+        assertTrue(!rendered.contains("ticketed"), "the ticketed twin needs a ticket key: $rendered")
         assertTrue(!metrics.render(scopesCurrent = 0, liveBytes = 0L).contains("turn"))
     }
 
@@ -41,7 +50,14 @@ class MetricsTest {
             assertTrue(rendered.contains("knit_spool_ticket_refused_total{reason=\"${reason.word}\"}"), reason.word)
         }
         assertTrue(rendered.contains("knit_spool_ticket_accepted_total 0\n"), rendered)
-        assertTrue(rendered.contains("knit_spool_turn_issued_ticketed_total 0\n"), rendered)
+        // A key without TURN has no ticketed credentials to count; with it, one series per server.
+        assertTrue(!rendered.contains("knit_spool_turn_issued_ticketed_total"), rendered)
+        metrics.turnIssuedTotal.increment(1)
+        metrics.turnIssuedTicketedTotal.increment(1)
+        val withTurn = metrics.render(scopesCurrent = 0, liveBytes = 0L, turnServers = 2, tickets = true)
+        assertTrue(withTurn.contains("knit_spool_turn_issued_ticketed_total{server=\"1\"} 1\n"), withTurn)
+        assertTrue(withTurn.contains("knit_spool_turn_issued_ticketed_total{server=\"2\"} 0\n"), withTurn)
+        assertTrue(withTurn.contains("knit_spool_turn_issued_total{server=\"1\"} 1\n"), withTurn)
     }
 
     /**
