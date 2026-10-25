@@ -5,7 +5,8 @@
 #   test     unit + spec-vector tests with Kover coverage, and the conformance suite against the
 #            freshly built daemon
 #   package  the container image (kaniko — see the note on it below) and the installDist tarballs
-#   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) — never block a merge
+#   verify   advisory scans (Trivy filesystem, Trivy image, markdownlint) that never block a merge,
+#            and two enforced checks: the ADR router, and the image's labels against its daemon
 #   release  tag-only; cuts a GitLab release pointing at the tagged image and dist tarballs
 #
 # The instance runners are untagged, so a job can land on either the small "service" VM or the
@@ -194,6 +195,12 @@ conformance-selftest:
 #
 # The image digest is published as a dotenv artifact so the scan job pins the exact image this
 # pipeline produced rather than re-resolving a mutable tag.
+#
+# The OCI labels are the set ci.yml and release.yml put on the GitHub images. Without them the
+# image inherits the Ubuntu base image's, and its `org.opencontainers.image.version` says 26.04:
+# that label is how a deployment tells which settings a build reads (ADR 2026-10.8ymn). `source`
+# is this project, not GitHub, because a branch built here may never reach GitHub.
+# verify:image-labels reads the labels back off the pushed digest.
 docker:
   stage: package
   image:
@@ -206,19 +213,40 @@ docker:
       AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
       printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
     - |
+      # One value for the daemon's stamp and the image's version label, so the two cannot disagree:
+      # the tag on a tag pipeline, otherwise the development literal in build.gradle.kts. Passed on
+      # every build, not only on tags, because a label cannot read what Gradle resolved. The pattern
+      # is TreeVersion's, so a reformat that keeps BuildInfoTest green keeps this working too.
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        SPOOL_VERSION="${CI_COMMIT_TAG#v}"
+      else
+        SPOOL_VERSION=$(sed -n 's/.*version = .*?: "\([^"][^"]*\)".*/\1/p' build.gradle.kts | head -n 1)
+      fi
+      if [ -z "$SPOOL_VERSION" ]; then
+        echo 'build.gradle.kts has no `version = … ?: "<version>"` fallback to stamp and label with' >&2
+        exit 1
+      fi
+      echo "version: $SPOOL_VERSION"
+    - |
       # Built as a positional-parameter list so each conditional destination is one readable line.
       # `if`, not `[ ] && ...`: under set -e a false test would abort the job.
       # The full sha, not $CI_COMMIT_SHORT_SHA, so the stamp matches what the GitHub release
       # workflow bakes in and `count by (commit) (knit_spool_build_info)` sees one deployment.
       set -- --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+        --build-arg "SPOOL_VERSION=$SPOOL_VERSION" \
         --build-arg "SPOOL_COMMIT=$CI_COMMIT_SHA" \
+        --label "org.opencontainers.image.title=knit-spool" \
+        --label "org.opencontainers.image.description=Scoped, blinded store-and-forward relay for Knit's Internet plane" \
+        --label "org.opencontainers.image.version=$SPOOL_VERSION" \
+        --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
+        --label "org.opencontainers.image.source=$CI_PROJECT_URL" \
+        --label "org.opencontainers.image.licenses=AGPL-3.0-or-later" \
         --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" \
         --digest-file /kaniko/digest \
         --custom-platform=linux/amd64 \
         --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
       if [ -n "$CI_COMMIT_TAG" ]; then
-        set -- "$@" --build-arg "SPOOL_VERSION=${CI_COMMIT_TAG#v}"
         set -- "$@" --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
       fi
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
@@ -330,6 +358,44 @@ verify:adr-index:
   script:
     - python3 scripts/adr.py index --check
 
+# The pushed image's labels against the stamp of the daemon inside it, the build-info.properties
+# that GET /source and knit_spool_build_info report, read the way ci.yml's `stamp` step reads it.
+# Enforced, unlike the scans: a deployment goes by the version label to know which settings an
+# image reads (ADR 2026-10.8ymn). It reads the digest rather than trusting the docker job's flags,
+# because a label kaniko dropped or a build arg the Dockerfile stopped forwarding shows up only in
+# the image. crane's debug image is busybox, so the JSON is picked apart with sed.
+verify:image-labels:
+  stage: verify
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [""]
+  needs: ["docker"]
+  script:
+    - printf '%s' "$CI_REGISTRY_PASSWORD" | crane auth login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - |
+      set -o pipefail
+      image="$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+      crane config "$image" > config.json
+      label() { sed -n "s/.*\"org\.opencontainers\.image\.$1\":\"\([^\"]*\)\".*/\1/p" config.json; }
+      mkdir -p fs
+      crane export "$image" - | tar -xf - -C fs app/lib
+      if ! stamp=$(unzip -p fs/app/lib/daemon-*.jar app/getknit/spool/build-info.properties); then
+        echo "no daemon jar with a build stamp under /app/lib — did the image layout change?" >&2
+        exit 1
+      fi
+      version=$(printf '%s\n' "$stamp" | sed -n 's/^version=//p')
+      commit=$(printf '%s\n' "$stamp" | sed -n 's/^commit=//p')
+      echo "label: version=$(label version) revision=$(label revision)"
+      echo "stamp: version=$version commit=$commit"
+      if [ -z "$(label version)" ] || [ "$(label version)" != "$version" ]; then
+        echo "version label '$(label version)' is not the daemon's version '$version'" >&2
+        exit 1
+      fi
+      if [ "$(label revision)" != "$CI_COMMIT_SHA" ] || [ "$commit" != "$CI_COMMIT_SHA" ]; then
+        echo "revision label '$(label revision)' or stamp '$commit' is not $CI_COMMIT_SHA" >&2
+        exit 1
+      fi
+
 # ---------------- release ----------------
 # Tag-only, and INTERNAL. The images an operator pulls come from .github/workflows/release.yml —
 # that one is multi-arch, attested, and pushed to GHCR and Docker Hub. This job only records the
@@ -341,7 +407,8 @@ release:
   # `light` sends this to the small `service` runner, which takes only tagged jobs.
   tags:
     - light
-  needs: ["docker", "dist"]
+  # A tag whose image misreports its version gets no release.
+  needs: ["docker", "dist", "verify:image-labels"]
   script:
     - echo "releasing $CI_COMMIT_TAG"
   release:
