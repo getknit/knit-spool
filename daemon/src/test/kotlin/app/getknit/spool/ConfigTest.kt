@@ -3,6 +3,8 @@ package app.getknit.spool
 
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Tickets
+import app.getknit.spool.server.SpoolServer
+import app.getknit.spool.server.withLogCapture
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -23,6 +25,13 @@ class ConfigTest {
     private fun config(vars: Map<String, String>) = configFromEnv { vars[it] }
 
     private fun withCommons(vararg extra: Pair<String, String>) = config(mapOf("SPOOL_COMMONS_ID" to commonsId) + extra.toMap())
+
+    /** The first room, which is all the single-room tests below are about. */
+    private val SpoolServer.Config.commons get() = rooms.firstOrNull()
+
+    private val secret2 = ByteArray(Commons.SECRET_BYTES) { (it + 101).toByte() }
+    private val commonsId2 = Commons.scopeId(secret2).toHexString()
+    private val commonsId3 = Commons.scopeId(ByteArray(Commons.SECRET_BYTES) { (it + 201).toByte() }).toHexString()
 
     /**
      * `KNOWN_VARS` drives the "unrecognized environment variable — typo?" warning, and drifts in two
@@ -204,6 +213,95 @@ class ConfigTest {
         val commons = assertNotNull(withCommons("SPOOL_COMMONS_NAME" to "lax", "SPOOL_COMMONS_ATTACH" to "true").commons)
         assertEquals("lax", commons.name)
         assertTrue(commons.attach)
+    }
+
+    @Test
+    fun numberedRoomsFollowTheFirstInNumberOrderWithTheirOwnSettings() {
+        val rooms =
+            withCommons(
+                "SPOOL_COMMONS_3_ID" to commonsId3,
+                "SPOOL_COMMONS_2_ID" to commonsId2,
+                "SPOOL_COMMONS_2_NAME" to "Den",
+                "SPOOL_COMMONS_2_MAX_FRAMES" to "100",
+                "SPOOL_COMMONS_2_ATTACH" to "true",
+                "SPOOL_COMMONS_2_RATE_PUSHES" to "5",
+            ).rooms
+        assertEquals(listOf(1, 2, 3), rooms.map { it.number })
+        assertEquals(listOf(commonsId, commonsId2, commonsId3), rooms.map { it.scopeId.toHexString() })
+        assertEquals("Den", rooms[1].name)
+        assertEquals(100, rooms[1].bounds.maxFrames)
+        assertTrue(rooms[1].attach)
+        assertEquals(5, rooms[1].ratePushes)
+        // The third room's settings are its own defaults, not the second's.
+        assertEquals(500, rooms[2].bounds.maxFrames)
+        assertFalse(rooms[2].attach)
+        assertNull(rooms[2].name)
+    }
+
+    @Test
+    fun aNumberedRoomNeedsTheFirstAndItsOwnId() {
+        // `commons` repeats the first room for clients that predate `rooms`; a spool whose only room
+        // was numbered would hand them nothing, or the wrong room.
+        val noFirst = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_COMMONS_2_ID" to commonsId2)) }
+        assertTrue(noFirst.message!!.contains("SPOOL_COMMONS_ID"), noFirst.message!!)
+        // A numbered room's settings without its id would otherwise do nothing, silently.
+        val noId = assertFailsWith<IllegalArgumentException> { withCommons("SPOOL_COMMONS_2_NAME" to "Den") }
+        assertTrue(noId.message!!.contains("SPOOL_COMMONS_2_ID"), noId.message!!)
+        // Room nine is past the cap: not a variable the daemon reads, so `check` and boot call it a typo.
+        assertTrue("SPOOL_COMMONS_${MAX_COMMONS_ROOMS}_ID" in KNOWN_VARS)
+        assertFalse("SPOOL_COMMONS_${MAX_COMMONS_ROOMS + 1}_ID" in KNOWN_VARS)
+    }
+
+    @Test
+    fun aNumberedRoomIsCheckedLikeTheFirstAndNamedInTheRefusal() {
+        val frames =
+            assertFailsWith<IllegalArgumentException> {
+                withCommons(
+                    "SPOOL_COMMONS_2_ID" to commonsId2,
+                    "SPOOL_COMMONS_2_MAX_FRAMES" to "1001",
+                )
+            }
+        assertTrue(frames.message!!.contains("SPOOL_COMMONS_2_MAX_FRAMES"), frames.message!!)
+        val id = assertFailsWith<IllegalArgumentException> { withCommons("SPOOL_COMMONS_2_ID" to "abc") }
+        assertTrue(id.message!!.contains("SPOOL_COMMONS_2_ID"), id.message!!)
+    }
+
+    @Test
+    fun twoRoomsMayNotShareAnId() {
+        val e = assertFailsWith<IllegalArgumentException> { withCommons("SPOOL_COMMONS_4_ID" to commonsId) }
+        assertTrue(e.message!!.contains("SPOOL_COMMONS_4_ID repeats SPOOL_COMMONS_ID"), e.message!!)
+    }
+
+    @Test
+    fun everyRoomTogetherMustFitUnderTheStorageWatermark() {
+        // One 500 x 64 KiB room is 32 MiB and fits 48 MiB; two of them, both pinned, do not.
+        val maxBytes = "SPOOL_MAX_BYTES" to (48L * 1_048_576).toString()
+        assertNotNull(withCommons(maxBytes).commons)
+        val e = assertFailsWith<IllegalArgumentException> { withCommons(maxBytes, "SPOOL_COMMONS_2_ID" to commonsId2) }
+        assertTrue(e.message!!.contains("2 commons rooms") && e.message!!.contains("SPOOL_MAX_BYTES"), e.message!!)
+    }
+
+    @Test
+    fun theSpoolWideBudgetDefaultsToFortyOrTheLargestRoomsOwn() {
+        assertEquals(40, withCommons().commonsRateTotal)
+        // Never below one room's own budget, so a one-room spool keeps what it allowed before rooms.
+        assertEquals(100, withCommons("SPOOL_COMMONS_RATE_PUSHES" to "100").commonsRateTotal)
+        assertEquals(7, withCommons("SPOOL_COMMONS_RATE_TOTAL" to "7").commonsRateTotal)
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_COMMONS_RATE_TOTAL" to "7")) }
+        assertTrue(e.message!!.contains("SPOOL_COMMONS_ID"), e.message!!)
+    }
+
+    @Test
+    fun aRoomWhoseTtlDiffersFromTheFirstsIsWarned() {
+        // A client that predates `rooms` compares a room's echoed ttlMs with `commons`', and would
+        // take this room for a rotated one.
+        val logged =
+            withLogCapture("app.getknit.spool.Main") {
+                withCommons("SPOOL_COMMONS_2_ID" to commonsId2, "SPOOL_COMMONS_2_TTL_MS" to "3600000")
+            }
+        assertTrue(logged.any { it.formattedMessage.contains("SPOOL_COMMONS_2_TTL_MS") }, logged.map { it.formattedMessage }.toString())
+        val quiet = withLogCapture("app.getknit.spool.Main") { withCommons("SPOOL_COMMONS_2_ID" to commonsId2) }
+        assertTrue(quiet.none { it.formattedMessage.contains("TTL_MS") })
     }
 
     /**

@@ -79,6 +79,12 @@ class ConfigDescribeTest {
         val line = testConfig(commons = commons).describe()
         assertFalse(line.contains(commons.scopeId.toHexString()), line)
         assertEquals(shortHex(commons.scopeId), fields(line)["commons"])
+
+        // Several rooms stay one field, first room first.
+        val second = testCommons(scopeId = commonsScope2(), number = 2)
+        val both = testConfig(rooms = listOf(commons, second)).describe()
+        assertFalse(both.contains(second.scopeId.toHexString()), both)
+        assertEquals("${shortHex(commons.scopeId)},${shortHex(second.scopeId)}", fields(both)["commons"])
     }
 
     @Test

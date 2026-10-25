@@ -65,24 +65,35 @@ a reportable vulnerability.
 
 ### The commons
 
-A Spool running a commons (`SPOOL_COMMONS_ID`) holds the same shape of secret it always did. The
-invite is a 32-byte secret that splits in two: the scope id, `SHA-256("knit/spool/v1/commons" ‖
-secret)`, which is what the operator configures, and the content key, which members derive and the
-Spool is never given. This repo implements the first derivation and deliberately not the second, so
+A Spool running a commons (`SPOOL_COMMONS_ID`, and up to seven more rooms as `SPOOL_COMMONS_<n>_ID`)
+holds the same shape of secret it always did, once per room. Each room's invite is a 32-byte secret
+that splits in two: the scope id, `SHA-256("knit/spool/v1/commons" ‖ secret)`, which is what the
+operator configures, and the content key, which members derive and the Spool is never given. This repo implements the first derivation and deliberately not the second, so
 "the Spool cannot read its own commons" is a property of the code rather than a promise about it.
 
-Two things a commons does move:
+`hello` names each room by a `tag`, the first eight bytes of a hash of its scope id rather than of
+the secret, so the Spool can compute it. It is one-way: it lets a member who derived the id find its
+room's entry, and gives nobody else anything to subscribe with.
 
-- **The operator can count the room.** `knit_spool_commons_subscribers` is how many connections are
-  subscribed — an aggregate on an endpoint that is token-gated on private Spools and 404'd by every
-  shipped proxy config, next to a connection count the operator already had. It is not a roster,
-  and no such count is ever offered to clients: who is in the room stays a delivery fact the Spool
-  does not deal in.
+What a commons does move:
+
+- **The operator can count each room.** `knit_spool_commons_subscribers` is how many connections are
+  subscribed to each room — an aggregate on an endpoint that is token-gated on private Spools and
+  404'd by every shipped proxy config, next to a connection count the operator already had. It is
+  not a roster, and no such count is ever offered to clients: who is in a room stays a delivery fact
+  the Spool does not deal in. With several rooms the operator also sees which room each connection
+  subscribes to, as it does for every scope; with one room that was only whether a connection was in
+  the room.
+- **`hello` is a directory of the rooms.** Whoever connects learns how many rooms there are, each
+  one's bounds and whether it takes attachments. Names are left out unless `SPOOL_TOKEN` is set,
+  because on an open Spool anyone can connect; the invite link carries a room's name instead. A
+  former member can tell whether an old room still runs by its tag, which the id they hold already
+  let them check.
 - **The scope id is a weaker secret than the invite.** A member can hand out the id without the
   secret, and the holder could then subscribe and collect ciphertext they cannot read. That is
   traffic analysis, not disclosure, and it is the same exposure every scope id already carries.
 
-Removing a member means rotating the room: mint a new invite, set the new `SPOOL_COMMONS_ID`, and
+Removing a member means rotating their room: mint a new invite, set the room's new id, and
 restart. The old scope is no longer pinned, so it ages out on its TTL or under the watermark. The
 operator cannot moderate individual messages — that would need the key they do not have. The one
 lever is `SPOOL_REQUIRE_MODERATION`, and it is the members' clients that pull it (below).
@@ -120,9 +131,9 @@ vulnerabilities** — they are documented and out of scope for reports:
   skip any sender-side check, and the Spool cannot tell — a report that one does is not a finding.
   Receive-side screening is unaffected and stays the recipient's own setting, which is the
   protection that survives a hostile sender.
-- **A commons is only as private as its invite, and every member shares one key.** Anyone the secret
-  reaches can read and write the room, and there is no per-member identity, ban list, or revocation
-  short of rotating the invite. Whether a member can forge another's display name is a property of
+- **A commons room is only as private as its invite, and every member shares one key.** Anyone the
+  secret reaches can read and write the room, and there is no per-member identity, ban list, or
+  revocation short of rotating the invite. Whether a member can forge another's display name is a property of
   the sealed frame, which this daemon never opens — it belongs to the client and the spec, not here.
 
 Novel issues **beyond** these documented trade-offs are in scope and welcome, in particular:

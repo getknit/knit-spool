@@ -415,22 +415,27 @@ abstract class ScopeStoreContractTest {
     }
 
     @Test
-    fun shedOldestScopeNeverPicksThePinnedScope() {
+    fun shedOldestScopeNeverPicksAPinnedScope() {
         createStore().use { store ->
             val pinned = ByteArray(32) { 2 }
+            val pinnedToo = ByteArray(32) { 4 }
             val ordinary = ByteArray(32) { 3 }
             store.subscribed(pinned, now = 0L)
+            store.subscribed(pinnedToo, now = 0L)
             store.subscribed(ordinary, now = 0L)
             val (id, data) = blob(1)
             store.push(pinned, id, data, now = 0L)
-            store.push(ordinary, id, data, now = 100L) // pinned is the least recently active
+            store.push(pinnedToo, id, data, now = 50L)
+            store.push(ordinary, id, data, now = 100L) // both pinned rooms are less recently active
 
-            val shed = store.shedOldestScope(pinned)!!
-            assertTrue(shed.scopeId.contentEquals(ordinary), "the pinned scope was shed")
+            val shed = store.shedOldestScope(listOf(pinned, pinnedToo))!!
+            assertTrue(shed.scopeId.contentEquals(ordinary), "a pinned scope was shed")
             assertTrue(store.isUnknownScope(ordinary))
-            // Nothing left that is allowed to go — the pinned scope survives an exhausted watermark.
-            assertNull(store.shedOldestScope(pinned))
-            assertEquals(40L, store.totalBytes())
+            // Nothing left that is allowed to go — every pinned room survives an exhausted watermark.
+            assertNull(store.shedOldestScope(listOf(pinned, pinnedToo)))
+            assertEquals(80L, store.totalBytes())
+            // Pinning only one leaves the other to the watermark like any scope.
+            assertTrue(assertNotNull(store.shedOldestScope(listOf(pinnedToo))).scopeId.contentEquals(pinned))
         }
     }
 

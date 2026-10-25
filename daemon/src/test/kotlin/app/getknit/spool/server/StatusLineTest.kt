@@ -131,15 +131,21 @@ class StatusLineTest {
         assertEquals("1.5GiB", StatusLine.bytes(1_610_612_736L))
     }
 
-    /** The room's occupancy is one field when there is a room and no field at all when there is not. */
+    /**
+     * The rooms' occupancy is one field when there is a room and no field at all when there is not.
+     * One room reads as it did before rooms existed; more are comma-joined in room order.
+     */
     @Test
     fun theCommonsSegmentAppearsOnlyWhenThereIsACommons() {
         val status = statusLine(Metrics())
         val without = fields(status.render(now = 60_000L, scopes = 1, liveBytes = 0L))
         assertFalse("commons" in without, "no commons, no field: $without")
 
-        val with = fields(status.render(now = 120_000L, scopes = 1, liveBytes = 0L, commonsSubscribers = 2, commonsFrames = 3))
+        val with = fields(status.render(now = 120_000L, scopes = 1, liveBytes = 0L, commons = listOf(RoomStatus(2, 3))))
         assertEquals("2sub/3f", with["commons"])
+
+        val two = fields(status.render(now = 180_000L, scopes = 2, liveBytes = 0L, commons = listOf(RoomStatus(2, 3), RoomStatus(0, 7))))
+        assertEquals("2sub/3f,0sub/7f", two["commons"])
     }
 
     /** The loop `start()` launches is what logs the line in production: nothing here calls the tick. */

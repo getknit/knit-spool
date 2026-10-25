@@ -80,10 +80,10 @@ services:
       # on-device content screen before sending and to refuse what it flags, with no "send
       # anyway". A request the Spool cannot check — it holds ciphertext — and off by default.
       SPOOL_REQUIRE_MODERATION:
-      # The commons (spec §7.4), one shared scope per Spool. No SPOOL_COMMONS_ID = no commons,
-      # and the rest are then never read. SPOOL_COMMONS_MAX_BLOB deliberately gets no default
-      # here: the daemon falls back to SPOOL_MAX_BLOB, and a literal would break that link and
-      # refuse to boot under the tiny overlay, which lowers SPOOL_MAX_BLOB to 32 KiB.
+      # The commons (spec §7.4): up to eight shared rooms per Spool. No SPOOL_COMMONS_ID = no
+      # commons, and the rest are then never read. SPOOL_COMMONS_MAX_BLOB deliberately gets no
+      # default here: the daemon falls back to SPOOL_MAX_BLOB, and a literal would break that link
+      # and refuse to boot under the tiny overlay, which lowers SPOOL_MAX_BLOB to 32 KiB.
       SPOOL_COMMONS_ID:
       SPOOL_COMMONS_NAME:
       SPOOL_COMMONS_MAX_FRAMES:
@@ -91,6 +91,58 @@ services:
       SPOOL_COMMONS_MAX_BLOB:
       SPOOL_COMMONS_ATTACH:
       SPOOL_COMMONS_RATE_PUSHES:
+      SPOOL_COMMONS_RATE_TOTAL:
+      # Rooms two to eight: the same seven settings each, numbered. A numbered room needs the
+      # first; unset, each of these is never read.
+      SPOOL_COMMONS_2_ID:
+      SPOOL_COMMONS_2_NAME:
+      SPOOL_COMMONS_2_MAX_FRAMES:
+      SPOOL_COMMONS_2_TTL_MS:
+      SPOOL_COMMONS_2_MAX_BLOB:
+      SPOOL_COMMONS_2_ATTACH:
+      SPOOL_COMMONS_2_RATE_PUSHES:
+      SPOOL_COMMONS_3_ID:
+      SPOOL_COMMONS_3_NAME:
+      SPOOL_COMMONS_3_MAX_FRAMES:
+      SPOOL_COMMONS_3_TTL_MS:
+      SPOOL_COMMONS_3_MAX_BLOB:
+      SPOOL_COMMONS_3_ATTACH:
+      SPOOL_COMMONS_3_RATE_PUSHES:
+      SPOOL_COMMONS_4_ID:
+      SPOOL_COMMONS_4_NAME:
+      SPOOL_COMMONS_4_MAX_FRAMES:
+      SPOOL_COMMONS_4_TTL_MS:
+      SPOOL_COMMONS_4_MAX_BLOB:
+      SPOOL_COMMONS_4_ATTACH:
+      SPOOL_COMMONS_4_RATE_PUSHES:
+      SPOOL_COMMONS_5_ID:
+      SPOOL_COMMONS_5_NAME:
+      SPOOL_COMMONS_5_MAX_FRAMES:
+      SPOOL_COMMONS_5_TTL_MS:
+      SPOOL_COMMONS_5_MAX_BLOB:
+      SPOOL_COMMONS_5_ATTACH:
+      SPOOL_COMMONS_5_RATE_PUSHES:
+      SPOOL_COMMONS_6_ID:
+      SPOOL_COMMONS_6_NAME:
+      SPOOL_COMMONS_6_MAX_FRAMES:
+      SPOOL_COMMONS_6_TTL_MS:
+      SPOOL_COMMONS_6_MAX_BLOB:
+      SPOOL_COMMONS_6_ATTACH:
+      SPOOL_COMMONS_6_RATE_PUSHES:
+      SPOOL_COMMONS_7_ID:
+      SPOOL_COMMONS_7_NAME:
+      SPOOL_COMMONS_7_MAX_FRAMES:
+      SPOOL_COMMONS_7_TTL_MS:
+      SPOOL_COMMONS_7_MAX_BLOB:
+      SPOOL_COMMONS_7_ATTACH:
+      SPOOL_COMMONS_7_RATE_PUSHES:
+      SPOOL_COMMONS_8_ID:
+      SPOOL_COMMONS_8_NAME:
+      SPOOL_COMMONS_8_MAX_FRAMES:
+      SPOOL_COMMONS_8_TTL_MS:
+      SPOOL_COMMONS_8_MAX_BLOB:
+      SPOOL_COMMONS_8_ATTACH:
+      SPOOL_COMMONS_8_RATE_PUSHES:
       # TURN credentials (experimental; SPOOL_PROTOCOL.md §7.6). No SPOOL_TURN_SECRET = no TURN, and
       # the rest must then be unset too. The Spool only issues credentials; the relay is coturn,
       # which docker-compose.turn.yml runs and wires these to — add it as the last -f.

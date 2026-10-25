@@ -58,14 +58,30 @@ class Metrics(
     val attachChunksStoredTotal = LongAdder()
 
     /**
-     * Commons traffic, split out from the spool-wide counters because a shared room and a private
-     * conversation fail differently: `commons_rate_limited_total` rising is the room at its
-     * spool-wide budget, which costs every member at once and is the cue to raise
-     * `SPOOL_COMMONS_RATE_PUSHES` — nothing in [rateLimitedTotal] distinguishes that from one noisy
-     * client being throttled on its own connection.
+     * Commons traffic per room, keyed by the room's number (1 for `SPOOL_COMMONS_*`, n for
+     * `SPOOL_COMMONS_<n>_*`) and never by its id or name. Split out from the spool-wide counters
+     * because a shared room and a private conversation fail differently: `commons_rate_limited_total`
+     * rising is a room at its budget, which costs every member at once and is the cue to raise
+     * `SPOOL_COMMONS_RATE_PUSHES` (`budget="room"`) or `SPOOL_COMMONS_RATE_TOTAL` (`budget="spool"`) —
+     * nothing in [rateLimitedTotal] distinguishes that from one noisy client being throttled on its
+     * own connection.
      */
-    val commonsPushesTotal = LongAdder()
-    val commonsRateLimitedTotal = LongAdder()
+    private val commonsPushesTotal = ConcurrentHashMap<Int, LongAdder>()
+    private val commonsRateLimitedTotal = ConcurrentHashMap<Pair<Int, CommonsBudget>, LongAdder>()
+
+    fun commonsPushed(room: Int) = commonsPushesTotal.computeIfAbsent(room) { LongAdder() }.increment()
+
+    fun commonsRateLimited(
+        room: Int,
+        budget: CommonsBudget,
+    ) = commonsRateLimitedTotal.computeIfAbsent(room to budget) { LongAdder() }.increment()
+
+    fun commonsPushCount(room: Int): Long = commonsPushesTotal[room]?.sum() ?: 0L
+
+    fun commonsRateLimitedCount(
+        room: Int,
+        budget: CommonsBudget,
+    ): Long = commonsRateLimitedTotal[room to budget]?.sum() ?: 0L
 
     /** TURN credentials issued (experimental). Refusals land in the `rate`/`not_subscribed` errs. */
     val turnIssuedTotal = LongAdder()
@@ -142,7 +158,7 @@ class Metrics(
         scopesCurrent: Int,
         liveBytes: Long,
         maxConns: Int = 0,
-        commonsSubscribers: Int? = null,
+        commonsSubscribers: Map<Int, Int>? = null,
         storeFileBytes: Long? = null,
         turn: Boolean = false,
         tickets: Boolean = false,
@@ -181,12 +197,20 @@ class Metrics(
             line("knit_spool_live_bytes", "gauge", liveBytes)
             // Absent on an in-memory spool: a 0 there would read as a file that costs nothing.
             if (storeFileBytes != null) line("knit_spool_store_file_bytes", "gauge", storeFileBytes)
-            // Absent entirely on a spool with no commons, rather than three flat zeroes that read
-            // as a room nobody is using.
-            if (commonsSubscribers != null) {
-                line("knit_spool_commons_subscribers", "gauge", commonsSubscribers.toLong())
-                line("knit_spool_commons_pushes_total", "counter", commonsPushesTotal.sum())
-                line("knit_spool_commons_rate_limited_total", "counter", commonsRateLimitedTotal.sum())
+            // Absent entirely on a spool with no commons, rather than flat zeroes that read as a
+            // room nobody is using. One series per configured room, zeroes included, so a room's
+            // series never appears and disappears with its traffic.
+            if (!commonsSubscribers.isNullOrEmpty()) {
+                append("# TYPE knit_spool_commons_subscribers gauge\n")
+                commonsSubscribers.forEach { (room, count) -> roomLine("knit_spool_commons_subscribers", room, count.toLong()) }
+                append("# TYPE knit_spool_commons_pushes_total counter\n")
+                commonsSubscribers.keys.forEach { roomLine("knit_spool_commons_pushes_total", it, commonsPushCount(it)) }
+                append("# TYPE knit_spool_commons_rate_limited_total counter\n")
+                commonsSubscribers.keys.forEach { room ->
+                    CommonsBudget.entries.forEach { budget ->
+                        roomLine("knit_spool_commons_rate_limited_total", room, commonsRateLimitedCount(room, budget), budget)
+                    }
+                }
             }
             // Absent on a spool that issues no credentials, for the commons' reason.
             if (turn) line("knit_spool_turn_issued_total", "counter", turnIssuedTotal.sum())
@@ -237,6 +261,18 @@ class Metrics(
      */
     private fun labelValue(raw: String): String = raw.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 
+    /** One commons series sample, `name{room="n"[,budget="…"]} value`; the `# TYPE` line is the caller's. */
+    private fun StringBuilder.roomLine(
+        name: String,
+        room: Int,
+        value: Long,
+        budget: CommonsBudget? = null,
+    ) {
+        append(name).append("{room=\"").append(room)
+        if (budget != null) append("\",budget=\"").append(budget.word)
+        append("\"} ").append(value).append('\n')
+    }
+
     private fun StringBuilder.line(
         name: String,
         type: String,
@@ -249,6 +285,17 @@ class Metrics(
             .append('\n')
         append(name).append(' ').append(value).append('\n')
     }
+}
+
+/**
+ * Which commons budget refused a push (spec S-7.4-4): the room's own, or the spool-wide one every
+ * room shares. A metrics label and nothing else: a refused member sees the same `err rate` either way.
+ */
+enum class CommonsBudget(
+    val word: String,
+) {
+    ROOM("room"),
+    SPOOL("spool"),
 }
 
 /**

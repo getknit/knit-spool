@@ -9,6 +9,12 @@ class HeapUse(
     val max: Long,
 )
 
+/** One commons room on the status line: its live subscribers and the frames it holds. */
+class RoomStatus(
+    val subscribers: Int,
+    val frames: Int,
+)
+
 /**
  * The periodic one-line status the daemon logs every `SPOOL_STATUS_MS` — what you get by running
  * `docker logs -f` and glancing at it, on a box with no Prometheus in front of `/metrics`.
@@ -41,8 +47,7 @@ class StatusLine(
         now: Long,
         scopes: Int,
         liveBytes: Long,
-        commonsSubscribers: Int? = null,
-        commonsFrames: Int = 0,
+        commons: List<RoomStatus> = emptyList(),
         draining: Boolean = false,
     ): String {
         val current = snapshot()
@@ -60,14 +65,15 @@ class StatusLine(
             if (connCeiling > 0) append('/').append(connCeiling)
             append(" accepted=+").append(delta.connections)
             append(" scopes=").append(scopes).append('/').append(maxScopes)
-            // Members in the room and frames it holds. Omitted when there is no commons; the frame
-            // ceiling is static and already in the startup line, so it is not repeated here.
-            if (commonsSubscribers != null) {
+            // Members in each room and frames it holds, first room first and comma-joined, so a
+            // one-room spool's field reads exactly as it did before rooms. Omitted when there is no
+            // commons; the frame ceilings are static and already in the startup lines.
+            if (commons.isNotEmpty()) {
                 append(" commons=")
-                    .append(commonsSubscribers)
-                    .append("sub/")
-                    .append(commonsFrames)
-                    .append('f')
+                commons.forEachIndexed { i, room ->
+                    if (i > 0) append(',')
+                    append(room.subscribers).append("sub/").append(room.frames).append('f')
+                }
             }
             append(" live=").append(bytes(liveBytes))
             // 0 is "unlimited" for the watermark, and "4.2MiB/0B" would read as a spool at its cap.

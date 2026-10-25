@@ -216,7 +216,7 @@ build on a machine with room and move the result over. The README covers how.
 ## What a commons costs
 
 A commons (`SPOOL_COMMONS_ID`, see the README) changes a Spool's load shape more than any other
-single setting, because it is the one scope everybody is subscribed to at once.
+single setting, because a room is one scope all its members are subscribed to at once.
 
 Fan-out is the whole story. An ordinary conversation scope has two to eight subscribers, so a push
 leaves as a handful of copies. A commons with *N* members sends *N − 1*. At 500 members that is 499
@@ -230,8 +230,14 @@ up. The default 20/s against 500 members is roughly 10,000 outbound frames/s at 
 box that can already hold 500 connections, and the knob to lower if your link cannot. Raising it
 raises peak egress by the same multiple.
 
-The two costs a commons does *not* add: it holds one scope's worth of bytes
-(`SPOOL_COMMONS_MAX_FRAMES × SPOOL_COMMONS_MAX_BLOB`, checked against `SPOOL_MAX_BYTES` at startup),
+Several rooms add up: peak egress is each room's rate times its members, summed.
+`SPOOL_COMMONS_RATE_TOTAL` caps the pushes of every room together (default 40/s, or the largest
+room's own rate if higher), however many rooms are busy at once. Size it against the link, and each
+room's `SPOOL_COMMONS_RATE_PUSHES` against how busy that room should be allowed to get.
+
+The two costs a commons does *not* add: each room holds one scope's worth of bytes
+(`SPOOL_COMMONS_MAX_FRAMES × SPOOL_COMMONS_MAX_BLOB`, every room's together checked against
+`SPOOL_MAX_BYTES` at startup, since none of them can be shed),
 and the fan-out itself is non-blocking sends on the pushing connection's coroutine — microseconds,
 not a stall. A member who never drains is disconnected as a slow consumer rather than being allowed
 to back everyone else up.

@@ -36,7 +36,7 @@ suspend fun runSuite(
             timeoutMs = options.timeoutMs,
             powLimit = options.powLimit,
             hasToken = options.hasToken,
-            commonsSecret = options.commonsSecret,
+            commonsSecrets = options.commonsSecrets,
             turnSecret = options.turnSecret,
             ticketSigningKey = options.ticketSigningKey,
             ticketAudience = options.ticketAudience,

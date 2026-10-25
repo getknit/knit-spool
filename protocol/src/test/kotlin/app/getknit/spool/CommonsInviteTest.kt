@@ -49,9 +49,21 @@ class CommonsInviteTest {
     }
 
     @Test
+    fun theTagIsEightBytesOfTheLabelledHashOfTheIdNotOfTheSecret() {
+        val scopeId = Commons.scopeId(secret)
+        val expected = MessageDigest.getInstance("SHA-256").digest("knit/spool/v1/commons-tag".toByteArray() + scopeId).copyOf(8)
+        assertContentEquals(expected, Commons.tag(scopeId))
+        // A spool holds only the id, so the tag must be computable from it alone — and must not be a
+        // prefix of the id it stands for, or `hello` would publish part of what lets anyone subscribe.
+        assertTrue(!Commons.tag(scopeId).contentEquals(scopeId.copyOf(8)))
+        assertTrue(!Commons.tag(scopeId).contentEquals(Commons.tag(Commons.scopeId(ByteArray(Commons.SECRET_BYTES)))))
+    }
+
+    @Test
     fun aSecretOfTheWrongLengthIsRefusedBeforeItBecomesAnything() {
         val short = ByteArray(Commons.SECRET_BYTES - 1)
         assertFailsWith<IllegalArgumentException> { Commons.scopeId(short) }
         assertFailsWith<IllegalArgumentException> { Commons.encodeInvite(short) }
+        assertFailsWith<IllegalArgumentException> { Commons.tag(short) }
     }
 }

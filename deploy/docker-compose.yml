@@ -21,7 +21,7 @@ services:
       # SPOOL_MAX_CONNS: "2000"       # total live connections; over it, 503 + Retry-After
       # SPOOL_RELOAD_FILE: "/data/reload.env"  # the file SIGHUP re-reads; no restart needed
       # SPOOL_SOURCE_URL: "https://example.com/your/fork"  # AGPL §13, if you run a modified build
-      # SPOOL_COMMONS_ID: "<64 hex>"  # one shared scope per Spool (§7.4); unset = no commons
+      # SPOOL_COMMONS_ID: "<64 hex>"  # the first shared room (§7.4); unset = no commons
       # SPOOL_REQUIRE_MODERATION: "true"  # ask clients to screen before sending (§7.5); a request, not a check
       # SPOOL_TURN_SECRET: "<openssl rand -base64 48>"  # issue TURN credentials (experimental); same value as coturn's static-auth-secret
       # SPOOL_TURN_URLS: "turn:spool.example.com:3478?transport=udp,turns:spool.example.com:5349?transport=tcp"

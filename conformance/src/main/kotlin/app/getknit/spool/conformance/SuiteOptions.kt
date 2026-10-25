@@ -13,8 +13,11 @@ class SuiteOptions(
     val timeoutMs: Long,
     val powLimit: Int,
     val destructive: Boolean,
-    /** The commons secret, when the operator supplied one; null leaves those checks skipped. */
-    val commonsSecret: ByteArray?,
+    /**
+     * One secret per commons room the operator supplied an invite for, in the order given; empty
+     * leaves the checks that need a room's id skipped.
+     */
+    val commonsSecrets: List<ByteArray> = emptyList(),
     /** The TURN shared secret (experimental), when supplied; null skips the HMAC check. */
     val turnSecret: String? = null,
     /**

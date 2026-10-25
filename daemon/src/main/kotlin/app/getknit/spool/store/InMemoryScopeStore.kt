@@ -238,11 +238,11 @@ class InMemoryScopeStore(
             scope.attachTombstones.isEmpty()
 
     @Synchronized
-    override fun shedOldestScope(pinned: ByteArray?): ShedScope? {
-        val pinnedHex = pinned?.let(::hex)
+    override fun shedOldestScope(pinned: List<ByteArray>): ShedScope? {
+        val pinnedHex = pinned.mapTo(HashSet(), ::hex)
         val (key, oldest) =
             scopes.entries
-                .filter { it.key != pinnedHex }
+                .filter { it.key !in pinnedHex }
                 .minByOrNull { it.value.lastActivity } ?: return null
         scopes.remove(key)
         val freed = oldest.liveBytes + oldest.attachBytes

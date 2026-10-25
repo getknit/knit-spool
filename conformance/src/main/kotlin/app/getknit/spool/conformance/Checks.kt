@@ -28,6 +28,7 @@ import app.getknit.spool.protocol.Pull
 import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.protocol.RoomInfo
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
@@ -125,8 +126,8 @@ class Ctx(
     val timeoutMs: Long,
     val powLimit: Int,
     val hasToken: Boolean,
-    /** The commons invite secret from `--commons-invite`, or null — the commons checks skip then. */
-    val commonsSecret: ByteArray? = null,
+    /** A secret per `--commons-invite`, one per room; empty — the checks that need a room's id skip then. */
+    val commonsSecrets: List<ByteArray> = emptyList(),
     /** The TURN secret from `--turn-secret-file`, or null — `turn-hmac` skips then. */
     val turnSecret: String? = null,
     /** The ticket signing key from `--ticket-key-file`, or null — the checks that need an accepted ticket skip. */
@@ -286,29 +287,59 @@ fun allChecks(): List<Check> =
     )
 
 /**
- * §7.4: whatever a spool says about its commons must be self-consistent and inside its own limits.
+ * §7.4: whatever a spool says about its commons rooms must be self-consistent and inside its own
+ * limits. `commons` alone is a one-room spool from before `rooms` (S-7.4-1); with `rooms`, it lists
+ * every room by a distinct eight-byte tag and `commons` repeats the first (S-7.4-15).
  *
  * Runs with or without an invite, because it needs no scope id — which is the point being checked.
- * A spool that leaked the id into `hello` would be advertising a room anybody who connects could
- * flood, and there is nothing in [CommonsInfo] for it to leak into.
+ * A spool that leaked an id into `hello` would be advertising a room anybody who connects could
+ * flood, and neither [CommonsInfo] nor [RoomInfo] has a field for it to leak into but the one-way tag.
+ *
+ * Names on a spool this run reached without a token are an advisory shortfall: S-7.4-19 is a SHOULD,
+ * and anyone who connects reads that `hello`.
  */
 private fun commonsAdvertisement(): Check =
     Check(name = "commons-advertisement", must = false) { ctx ->
-        val commons = ctx.serverHello.commons ?: throw SkipCheck("spool advertises no commons (§7.4)")
+        val rooms = ctx.serverHello.rooms
+        val commons = ctx.serverHello.commons
+        if (commons == null) {
+            ensure(rooms == null) { "hello carries `rooms` without `commons`, which repeats the first room (S-7.4-1)" }
+            throw SkipCheck("spool advertises no commons (§7.4)")
+        }
         val limits = ctx.limits()
-        ensure(commons.maxFrames in 1..limits.maxFramesCap) {
-            "commons maxFrames ${commons.maxFrames} outside the advertised 1..${limits.maxFramesCap}"
+        val entries =
+            listOf("commons" to Bounds(commons.maxFrames, commons.ttlMs, commons.maxBlob, commons.attach)) +
+                rooms.orEmpty().mapIndexed { i, room -> "rooms[$i]" to Bounds(room.maxFrames, room.ttlMs, room.maxBlob, room.attach) }
+        for ((label, room) in entries) {
+            ensure(
+                room.maxFrames in 1..limits.maxFramesCap,
+            ) { "$label maxFrames ${room.maxFrames} outside the advertised 1..${limits.maxFramesCap}" }
+            ensure(room.ttlMs in 1..limits.maxTtlMs) { "$label ttlMs ${room.ttlMs} outside the advertised 1..${limits.maxTtlMs}" }
+            ensure(room.maxBlob in 1..limits.maxBlob) { "$label maxBlob ${room.maxBlob} outside the advertised 1..${limits.maxBlob}" }
+            ensure(!room.attach || limits.attachments) { "$label advertises attachments on a spool that advertises no attachment limits" }
         }
-        ensure(commons.ttlMs in 1..limits.maxTtlMs) {
-            "commons ttlMs ${commons.ttlMs} outside the advertised 1..${limits.maxTtlMs}"
+        if (rooms != null) {
+            ensure(rooms.isNotEmpty()) { "`rooms` is empty; a spool with no rooms sends neither field (S-7.4-15)" }
+            ensure(rooms.all { it.tag.size == Commons.TAG_BYTES }) { "a room's tag is not ${Commons.TAG_BYTES} bytes (B-7.4-16)" }
+            ensure(rooms.map { it.tag.toHexString() }.toSet().size == rooms.size) { "two rooms share a tag (S-7.4-15)" }
+            val first = rooms.first()
+            ensure(
+                commons.name == first.name && entries[0].second == Bounds(first.maxFrames, first.ttlMs, first.maxBlob, first.attach),
+            ) { "`commons` is not `rooms[0]` without its tag (S-7.4-15)" }
         }
-        ensure(commons.maxBlob in 1..limits.maxBlob) {
-            "commons maxBlob ${commons.maxBlob} outside the advertised 1..${limits.maxBlob}"
-        }
-        ensure(!commons.attach || limits.attachments) {
-            "commons advertises attachments on a spool that advertises no attachment limits"
+        val named = listOfNotNull(commons.name) + rooms.orEmpty().mapNotNull { it.name }
+        if (!ctx.hasToken && named.isNotEmpty()) {
+            throw Advisory("room names in the hello of a spool reached without a token, which anyone can read (S-7.4-19)")
         }
     }
+
+/** What [commonsAdvertisement] checks of each room, `commons` and `rooms` alike. */
+private data class Bounds(
+    val maxFrames: Int,
+    val ttlMs: Long,
+    val maxBlob: Int,
+    val attach: Boolean,
+)
 
 /**
  * §7.5, S-7.5-1: a spool that requires send-side moderation says `moderation: true`, and one that
@@ -801,79 +832,108 @@ private fun castRate(): Check =
     }
 
 /**
- * §7.4: the commons applies the operator's bounds, not the subscriber's.
+ * §7.4: each commons room applies its own operator's bounds, not the subscriber's and not another
+ * room's (S-7.4-2).
  *
  * The load-bearing one. A spool that honored a member's declaration would let any member subscribe
  * with `maxFrames = 1` and evict the whole room's history on the way in.
  */
 private fun commonsBoundsPinned(): Check =
     Check(name = "commons-bounds-pinned", must = false) { ctx ->
-        val commons = ctx.commonsRoom()
-        ctx.client.connect {
-            hello()
-            send(
-                Sub(
-                    t = RecordType.SUB,
-                    q = nextQ(),
-                    // Deliberately hostile, and deliberately legal: every field is inside the
-                    // spool's caps, so a clamp would let it through.
-                    subs = listOf(ScopeSub(scope = commons.scope, bounds = ScopeBounds(1, 1L, 1), pow = null)),
-                ),
-            )
-            val digest = expectDigestFor(commons.scope)
-            ensure(digest.bounds.maxFrames == commons.info.maxFrames) {
-                "expected the advertised commons maxFrames ${commons.info.maxFrames}, got ${digest.bounds.maxFrames}"
-            }
-            ensure(digest.bounds.ttlMs == commons.info.ttlMs) {
-                "expected the advertised commons ttlMs ${commons.info.ttlMs}, got ${digest.bounds.ttlMs}"
+        for (room in ctx.commonsRooms()) {
+            ctx.client.connect {
+                hello()
+                send(
+                    Sub(
+                        t = RecordType.SUB,
+                        q = nextQ(),
+                        // Deliberately hostile, and deliberately legal: every field is inside the
+                        // spool's caps, so a clamp would let it through.
+                        subs = listOf(ScopeSub(scope = room.scope, bounds = ScopeBounds(1, 1L, 1), pow = null)),
+                    ),
+                )
+                val digest = expectDigestFor(room.scope)
+                ensure(digest.bounds.maxFrames == room.maxFrames) {
+                    "expected ${room.label}'s advertised maxFrames ${room.maxFrames}, got ${digest.bounds.maxFrames}"
+                }
+                ensure(digest.bounds.ttlMs == room.ttlMs) {
+                    "expected ${room.label}'s advertised ttlMs ${room.ttlMs}, got ${digest.bounds.ttlMs}"
+                }
             }
         }
     }
 
-/** §7.4: the commons relays like any other scope — one member's push reaches the others. */
+/** §7.4: each commons room relays like any other scope — one member's push reaches the others. */
 private fun commonsFanout(): Check =
     Check(name = "commons-fanout", must = false) { ctx ->
-        val commons = ctx.commonsRoom()
+        for (room in ctx.commonsRooms()) roomFanout(ctx, room.scope)
+    }
+
+private suspend fun roomFanout(
+    ctx: Ctx,
+    scope: ByteArray,
+) {
+    ctx.client.connect {
+        val a = this
+        a.hello()
+        a.subscribeCommons(scope)
         ctx.client.connect {
-            val a = this
-            a.hello()
-            a.subscribeCommons(commons.scope)
-            ctx.client.connect {
-                val b = this
-                b.hello()
-                b.subscribeCommons(commons.scope)
-                val (blobId, data) = ctx.randomBlob()
-                a.send(Push(t = RecordType.PUSH, q = a.nextQ(), scope = commons.scope, blobId = blobId, data = data))
-                while (true) {
-                    when (val t = RecordCodec.peekType(a.receiveBytes())) {
-                        RecordType.OK -> break
-                        RecordType.EVENT, RecordType.DIGEST -> Unit
-                        else -> throw CheckFailure("expected ok after a commons push, got '$t'")
-                    }
+            val b = this
+            b.hello()
+            b.subscribeCommons(scope)
+            val (blobId, data) = ctx.randomBlob()
+            a.send(Push(t = RecordType.PUSH, q = a.nextQ(), scope = scope, blobId = blobId, data = data))
+            while (true) {
+                when (val t = RecordCodec.peekType(a.receiveBytes())) {
+                    RecordType.OK -> break
+                    RecordType.EVENT, RecordType.DIGEST -> Unit
+                    else -> throw CheckFailure("expected ok after a commons push, got '$t'")
                 }
-                // The room may be busy with other members, so match on the blob rather than
-                // assuming the next event is ours.
-                var seen = false
-                while (!seen) {
-                    val bytes = b.receiveBytes()
-                    if (RecordCodec.peekType(bytes) != RecordType.EVENT) continue
-                    val event = RecordCodec.decode<Event>(bytes) ?: continue
-                    seen = event.scope.contentEquals(commons.scope) && event.blobId.contentEquals(blobId)
-                }
+            }
+            // The room may be busy with other members, so match on the blob rather than
+            // assuming the next event is ours.
+            var seen = false
+            while (!seen) {
+                val bytes = b.receiveBytes()
+                if (RecordCodec.peekType(bytes) != RecordType.EVENT) continue
+                val event = RecordCodec.decode<Event>(bytes) ?: continue
+                seen = event.scope.contentEquals(scope) && event.blobId.contentEquals(blobId)
             }
         }
     }
+}
 
-/** The commons as a check sees it: what `hello` advertised, plus the id derived from the invite. */
+/** A commons room as a check sees it: the bounds `hello` advertised for it, and the id derived from its invite. */
 private class CommonsRoom(
-    val info: CommonsInfo,
+    val label: String,
     val scope: ByteArray,
+    val maxFrames: Int,
+    val ttlMs: Long,
 )
 
-private fun Ctx.commonsRoom(): CommonsRoom {
-    val info = serverHello.commons ?: throw SkipCheck("spool advertises no commons (§7.4)")
-    val secret = commonsSecret ?: throw SkipCheck("no --commons-invite; the scope id cannot be derived")
-    return CommonsRoom(info, Commons.scopeId(secret))
+/**
+ * The rooms this run holds invites for, each matched to what `hello` says of it (C-7.4-17): by tag
+ * when the spool sends `rooms`, and as `commons` from a one-room spool that sends `commons` alone.
+ *
+ * An invite the spool advertises no room for fails rather than skips. The operator handed it to the
+ * run as one of this spool's rooms, and a member holding it would be told the room is not run there.
+ */
+private fun Ctx.commonsRooms(): List<CommonsRoom> {
+    val commons = serverHello.commons ?: throw SkipCheck("spool advertises no commons (§7.4)")
+    if (commonsSecrets.isEmpty()) throw SkipCheck("no --commons-invite; no room's scope id can be derived")
+    val rooms = serverHello.rooms
+    return commonsSecrets.mapIndexed { i, secret ->
+        val scope = Commons.scopeId(secret)
+        val label = "invite ${i + 1}'s room"
+        if (rooms == null) {
+            ensure(i == 0) { "${commonsSecrets.size} invites, but the spool sends `commons` alone, which describes one room" }
+            CommonsRoom(label, scope, commons.maxFrames, commons.ttlMs)
+        } else {
+            val tag = Commons.tag(scope)
+            val room = rooms.firstOrNull { it.tag.contentEquals(tag) } ?: throw CheckFailure("no room in hello carries $label's tag")
+            CommonsRoom(label, scope, room.maxFrames, room.ttlMs)
+        }
+    }
 }
 
 /** No stamp: the commons exists from boot, so it is never an unknown scope and never gated (§6.4). */

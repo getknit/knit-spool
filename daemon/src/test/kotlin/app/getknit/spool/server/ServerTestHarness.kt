@@ -70,6 +70,8 @@ fun testConfig(
     requireModeration: Boolean = false,
     sourceUrl: String = BuildInfo.UPSTREAM_SOURCE_URL,
     commons: SpoolServer.CommonsConfig? = null,
+    rooms: List<SpoolServer.CommonsConfig> = listOfNotNull(commons),
+    commonsRateTotal: Int = 10_000,
     turn: SpoolServer.TurnConfig? = null,
     stunUrls: List<String> = emptyList(),
     ticket: SpoolServer.TicketConfig? = null,
@@ -99,7 +101,8 @@ fun testConfig(
         rateNewScopesPerMin = rateNewScopesPerMin,
         requireModeration = requireModeration,
         sourceUrl = sourceUrl,
-        commons = commons,
+        rooms = rooms,
+        commonsRateTotal = commonsRateTotal,
         turn = turn,
         stunUrls = stunUrls,
         ticket = ticket,
@@ -117,6 +120,11 @@ val TEST_COMMONS_SECRET = ByteArray(Commons.SECRET_BYTES) { (it + 1).toByte() }
 
 fun commonsScope(): ByteArray = Commons.scopeId(TEST_COMMONS_SECRET)
 
+/** A second room's invite, for the tests that run two. */
+val TEST_COMMONS_SECRET_2 = ByteArray(Commons.SECRET_BYTES) { (it + 101).toByte() }
+
+fun commonsScope2(): ByteArray = Commons.scopeId(TEST_COMMONS_SECRET_2)
+
 fun testCommons(
     name: String? = "test commons",
     maxFrames: Int = 5,
@@ -124,13 +132,16 @@ fun testCommons(
     maxBlob: Int = 1_024,
     attach: Boolean = false,
     ratePushes: Int = 1_000,
+    scopeId: ByteArray = commonsScope(),
+    number: Int = 1,
 ): SpoolServer.CommonsConfig =
     SpoolServer.CommonsConfig(
-        scopeId = commonsScope(),
+        scopeId = scopeId,
         name = name,
         bounds = ScopeBounds(maxFrames = maxFrames, ttlMs = ttlMs, maxBlob = maxBlob),
         attach = attach,
         ratePushes = ratePushes,
+        number = number,
     )
 
 /** A TURN secret long enough for the parser, and distinctive enough to grep a log for. */

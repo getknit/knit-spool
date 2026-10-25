@@ -9,6 +9,7 @@ import app.getknit.spool.protocol.Aput
 import app.getknit.spool.protocol.Blob
 import app.getknit.spool.protocol.Cast
 import app.getknit.spool.protocol.CastInfo
+import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.CommonsInfo
 import app.getknit.spool.protocol.Digest
 import app.getknit.spool.protocol.Ent
@@ -25,6 +26,7 @@ import app.getknit.spool.protocol.Push
 import app.getknit.spool.protocol.RECORD_VERSION
 import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
+import app.getknit.spool.protocol.RoomInfo
 import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
@@ -42,8 +44,9 @@ import kotlin.test.assertTrue
 
 /**
  * Conformance against SPOOL_PROTOCOL.md §13 (the Knit repo's spec): every record vector, the
- * digest vectors, the PoW vector and the §7.6 ticket vectors, byte-exact. These constants are the spec's appendix verbatim
- * — if this file and the spec ever disagree, the spec wins and this implementation is wrong.
+ * digest vectors, the PoW vector, the §7.4 commons derivations and the §7.6 ticket vectors,
+ * byte-exact. These constants are the spec's appendix verbatim — if this file and the spec ever
+ * disagree, the spec wins and this implementation is wrong.
  */
 class SpecVectorTest {
     private fun fixture(
@@ -194,6 +197,33 @@ class SpecVectorTest {
                             t = RecordType.HELLO,
                             v = RECORD_VERSION,
                             commons = CommonsInfo(maxFrames = 500, ttlMs = 86_400_000L, maxBlob = 65_536, attach = true),
+                        ),
+                    ),
+                // §7.4 rooms: two rooms, the first repeated as `commons` without its tag, each `rooms`
+                // entry led by its one-way tag. Copied from knit-next 9451527 (docs/SPOOL_PROTOCOL.md §13).
+                "helloSpoolRooms" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            commons = CommonsInfo(name = "Home", maxFrames = 500, ttlMs = 86_400_000L, maxBlob = 65_536),
+                            rooms =
+                                listOf(
+                                    RoomInfo(
+                                        tag = Commons.tag(Commons.scopeId(fixture(32, 10))),
+                                        name = "Home",
+                                        maxFrames = 500,
+                                        ttlMs = 86_400_000L,
+                                        maxBlob = 65_536,
+                                    ),
+                                    RoomInfo(
+                                        tag = Commons.tag(Commons.scopeId(fixture(32, 11))),
+                                        maxFrames = 200,
+                                        ttlMs = 86_400_000L,
+                                        maxBlob = 65_536,
+                                        attach = true,
+                                    ),
+                                ),
                         ),
                     ),
                 // §7.5: the send-side moderation request, present only when the operator set it.
@@ -375,6 +405,24 @@ class SpecVectorTest {
         assertNull(RecordCodec.peekType(ByteArray(0)))
     }
 
+    /**
+     * §13's commons derivation rows: the invite's text form, the scope id the spool is given, and the
+     * tag `hello` names a room by, for the room every older row uses and the second room the rooms
+     * block adds. The content keys are the members' half and deliberately absent ([Commons]).
+     */
+    @Test
+    fun commonsVectorsMatchTheSpec() {
+        val secret = fixture(32, 10)
+        assertEquals(EXPECTED.getValue("commonsSecret"), secret.toHex())
+        assertEquals(EXPECTED.getValue("commonsInvite"), Commons.encodeInvite(secret))
+        assertEquals(EXPECTED.getValue("commonsScopeId"), Commons.scopeId(secret).toHex())
+        assertEquals(EXPECTED.getValue("commonsTag"), Commons.tag(Commons.scopeId(secret)).toHex())
+        val secret2 = fixture(32, 11)
+        assertEquals(EXPECTED.getValue("commonsSecret2"), secret2.toHex())
+        assertEquals(EXPECTED.getValue("commonsScopeId2"), Commons.scopeId(secret2).toHex())
+        assertEquals(EXPECTED.getValue("commonsTag2"), Commons.tag(Commons.scopeId(secret2)).toHex())
+    }
+
     @Test
     fun digestVectorsMatchTheSpec() {
         assertEquals(0L, ScopeDigest.fold(emptyList()))
@@ -480,6 +528,12 @@ class SpecVectorTest {
                 "helloSpoolCommonsAttach" to
                     "a361746568656c6c6f61760167636f6d6d6f6e73a4696d61784672616d65731901f4" +
                     "6574746c4d731a05265c00676d6178426c6f621a0001000066617474616368f5",
+                "helloSpoolRooms" to
+                    "a461746568656c6c6f61760167636f6d6d6f6e73a4646e616d6564486f6d65696d61784672616d65731901" +
+                    "f46574746c4d731a05265c00676d6178426c6f621a0001000065726f6f6d7382a56374616748b15333db" +
+                    "903e9745646e616d6564486f6d65696d61784672616d65731901f46574746c4d731a05265c00676d6178" +
+                    "426c6f621a00010000a56374616748a2f73b72abeabcb1696d61784672616d657318c86574746c4d731a" +
+                    "05265c00676d6178426c6f621a0001000066617474616368f5",
                 "helloSpoolModeration" to
                     "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a" +
                     "00010000696d61785265636f72641a00020000696d617853636f7065731840676d61" +
@@ -576,6 +630,14 @@ class SpecVectorTest {
                 "sigFilesAm" to
                     "6ca646d923b0d93996c771aed64d590d8fc515214eb04ec01cbc7ad838863e45" +
                     "c60d831eaa035258542758592712cd7a33e23f7969884f6ae9585053275bc000",
+                // §7.4's derivation rows, and the rooms block appended 2026-10-24 (knit-next 9451527).
+                "commonsSecret" to "0a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3",
+                "commonsInvite" to "knit-commons:v1:ChEYHyYtNDtCSVBXXmVsc3qBiI-WnaSrsrnAx87V3OM",
+                "commonsScopeId" to "a081eddb259895d4b9e26b3142e5ce0d88e08721aed57f9ead6e6eb99b10edd6",
+                "commonsTag" to "b15333db903e9745",
+                "commonsSecret2" to "0b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4",
+                "commonsScopeId2" to "ae34feaf814400c10160a8351729da34ee3c4b48ab69ecfca5eb9d168bf2c29e",
+                "commonsTag2" to "a2f73b72abeabcb1",
             )
     }
 }

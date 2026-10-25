@@ -61,10 +61,11 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. 0.6.0-dev.1 is the reset after
-         * the 0.5.0 release, so the fingerprint is 0.5.0's, unchanged since 0.5.0-dev.2.
+         * The development version and the contract's fingerprint at it. 0.6.0-dev.2 added the commons
+         * rooms: `SPOOL_COMMONS_RATE_TOTAL`, `SPOOL_COMMONS_2_*` through `SPOOL_COMMONS_8_*`, and the
+         * boot-only `commonsRateTotal`.
          */
-        val PINNED = "0.6.0-dev.1" to "b62a743417092bd0"
+        val PINNED = "0.6.0-dev.2" to "90f18ac4315867a5"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

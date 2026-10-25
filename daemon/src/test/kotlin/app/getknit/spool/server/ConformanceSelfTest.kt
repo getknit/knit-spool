@@ -47,7 +47,7 @@ class ConformanceSelfTest {
                     stunUrls = listOf("stun:spool.example:3478"),
                 ),
                 token = TOKEN,
-                commonsSecret = TEST_COMMONS_SECRET,
+                commonsSecrets = listOf(TEST_COMMONS_SECRET, TEST_COMMONS_SECRET_2),
                 turnSecret = TEST_TURN_SECRET,
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
@@ -66,7 +66,7 @@ class ConformanceSelfTest {
             runSuiteAgainst(
                 everyFeature(ticket = testTicketConfig(), stunUrls = listOf("stun:spool.example:3478")),
                 token = TOKEN,
-                commonsSecret = TEST_COMMONS_SECRET,
+                commonsSecrets = listOf(TEST_COMMONS_SECRET, TEST_COMMONS_SECRET_2),
                 turnSecret = TEST_TURN_SECRET,
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
@@ -84,7 +84,7 @@ class ConformanceSelfTest {
             runSuiteAgainst(
                 everyFeature(ticket = testTicketConfig(gates = Tickets.FL_FILES), stunUrls = listOf("stun:spool.example:3478")),
                 token = TOKEN,
-                commonsSecret = TEST_COMMONS_SECRET,
+                commonsSecrets = listOf(TEST_COMMONS_SECRET, TEST_COMMONS_SECRET_2),
                 turnSecret = TEST_TURN_SECRET,
                 ticketSigningKey = TEST_TICKET_SIGNING_KEY,
                 ticketAudience = TEST_TICKET_AUD,
@@ -102,7 +102,7 @@ class ConformanceSelfTest {
             runSuiteAgainst(
                 everyFeature(ticket = null, stunUrls = emptyList()),
                 token = TOKEN,
-                commonsSecret = TEST_COMMONS_SECRET,
+                commonsSecrets = listOf(TEST_COMMONS_SECRET, TEST_COMMONS_SECRET_2),
                 turnSecret = TEST_TURN_SECRET,
             )
         run.assertClean(expectedSkips = TICKET_AND_STUN_CHECKS)
@@ -115,7 +115,9 @@ class ConformanceSelfTest {
         token = TOKEN,
         powBits = POW_BITS,
         requireModeration = true,
-        commons = testCommons(attach = true),
+        // Two rooms with different bounds and switches, so a spool that answered one room with the
+        // other's would fail commons-bounds-pinned.
+        rooms = listOf(testCommons(attach = true), testCommons(maxFrames = 3, scopeId = commonsScope2(), number = 2)),
         hardLimits = suiteLimits(),
         ratePushes = RATE_PUSHES,
         turn = testTurn(),
@@ -202,7 +204,7 @@ class ConformanceSelfTest {
         config: SpoolServer.Config,
         store: ScopeStore = InMemoryScopeStore(config.hardLimits),
         token: String? = null,
-        commonsSecret: ByteArray? = null,
+        commonsSecrets: List<ByteArray> = emptyList(),
         turnSecret: String? = null,
         ticketSigningKey: ByteArray? = null,
         ticketAudience: String? = null,
@@ -224,7 +226,7 @@ class ConformanceSelfTest {
                     timeoutMs = 10_000L,
                     powLimit = 24,
                     destructive = destructive,
-                    commonsSecret = commonsSecret,
+                    commonsSecrets = commonsSecrets,
                     turnSecret = turnSecret,
                     ticketSigningKey = ticketSigningKey,
                     ticketAudience = ticketAudience,

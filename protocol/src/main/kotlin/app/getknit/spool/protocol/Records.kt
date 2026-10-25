@@ -145,9 +145,10 @@ class ScopeSub(
 )
 
 /**
- * The commons advertisement (spec §7.4): this spool runs one shared, operator-declared scope that
- * any invite holder can join. Present iff the spool has a commons — the same present-or-absent
- * capability signal as the attachment triad in [Limits].
+ * The commons advertisement (spec §7.4): this spool runs a shared, operator-declared scope that
+ * any invite holder can join. Present iff the spool runs at least one — the same present-or-absent
+ * capability signal as the attachment triad in [Limits] — and then it describes the first room,
+ * `rooms[0]` without its tag, which is all a client that predates [RoomInfo] can read.
  *
  * Deliberately carries no scope id. The id is `SHA-256("knit/spool/v1/commons" ‖ secret)` and comes
  * from the invite, out of band; a spool that published it would turn a room only invite holders can
@@ -156,6 +157,23 @@ class ScopeSub(
  */
 @Serializable
 class CommonsInfo(
+    val name: String? = null,
+    val maxFrames: Int,
+    val ttlMs: Long,
+    val maxBlob: Int,
+    val attach: Boolean = false,
+)
+
+/**
+ * One entry of `hello`'s `rooms` (spec §7.4, S-7.4-1): a room this spool runs, led by its [tag].
+ *
+ * The tag is `Commons.tag(scopeId)`, a truncated hash of the id rather than the id: a member that
+ * derived the id from its invite computes the same tag and reads its room's bounds here, while a
+ * client with no invite learns that the room exists and nothing it could subscribe with.
+ */
+@Serializable
+class RoomInfo(
+    val tag: ByteArray,
     val name: String? = null,
     val maxFrames: Int,
     val ttlMs: Long,
@@ -182,6 +200,10 @@ class CommonsInfo(
  * lets a phone with no TURN of its own be reached through someone else's relay. Both experimental
  * (SPOOL_PROTOCOL.md §7.6), and both omitted when off: `false` and an empty list are never sent.
  *
+ * [rooms] lists every commons room the spool runs, each led by its tag (§7.4, S-7.4-1), beside
+ * [commons], which repeats the first. Last in the class so it encodes after [commons], as §13's
+ * `helloSpoolRooms` orders them, without moving any older field.
+ *
  * [cast] says the spool fans out [Cast]s, and within what (experimental, SPOOL_PROTOCOL.md §7.7). Omitted
  * when casts are off. Where [ticketGates] has [Tickets.FL_CAST], a cast is admitted only on a scope a
  * cast ticket has unlocked.
@@ -200,6 +222,7 @@ class Hello(
     val stun: List<String>? = null,
     val cast: CastInfo? = null,
     val entGates: Long? = null,
+    val rooms: List<RoomInfo>? = null,
 ) {
     /**
      * The [Ticket.fl] bits this spool requires a ticket for (S-7.6-13): none without [ent], and

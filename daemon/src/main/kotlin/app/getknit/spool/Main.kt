@@ -26,6 +26,12 @@ import kotlin.system.exitProcess
  */
 private val log = LoggerFactory.getLogger("app.getknit.spool.Main")
 
+/**
+ * What each room's variables are named after its `SPOOL_COMMONS_` or `SPOOL_COMMONS_<n>_` prefix.
+ * Above [KNOWN_VARS], which reads it: top-level properties initialize in file order.
+ */
+private val COMMONS_ROOM_KEYS = listOf("ID", "NAME", "MAX_FRAMES", "TTL_MS", "MAX_BLOB", "ATTACH", "RATE_PUSHES")
+
 internal val KNOWN_VARS =
     setOf(
         "SPOOL_PORT",
@@ -78,7 +84,23 @@ internal val KNOWN_VARS =
         "SPOOL_RATE_CASTS",
         "SPOOL_MAX_CAST",
         "SPOOL_RATE_CASTS_TOTAL",
-    )
+        "SPOOL_COMMONS_RATE_TOTAL",
+    ) + (2..MAX_COMMONS_ROOMS).flatMap { room -> COMMONS_ROOM_KEYS.map { "SPOOL_COMMONS_${room}_$it" } }
+
+/**
+ * The most commons rooms one spool runs (spec §7.4): the unnumbered `SPOOL_COMMONS_*` room and
+ * `SPOOL_COMMONS_2_*` through this. A fixed cap keeps [KNOWN_VARS] a finite list, so a typo in a
+ * room's variable is still caught and a tool that renders a spool's environment can know every name
+ * (ADR 2026-10.5cwn).
+ */
+internal const val MAX_COMMONS_ROOMS = 8
+
+/**
+ * `SPOOL_COMMONS_RATE_TOTAL`'s floor, the spec's suggested spool-wide budget (§12.2). The default is
+ * this or the largest room's own budget, whichever is higher, so a one-room spool keeps every push
+ * its `SPOOL_COMMONS_RATE_PUSHES` allowed before rooms existed.
+ */
+private const val COMMONS_RATE_TOTAL_FLOOR = 40
 
 /**
  * A `list` reply carries every live id and every tombstone in one record, so a scope's frame cap
@@ -150,7 +172,8 @@ fun main(args: Array<String>) {
         }
 
         "commons-invite" -> {
-            printCommonsInvite()
+            val secret = ByteArray(Commons.SECRET_BYTES).also(SecureRandom()::nextBytes)
+            exitProcess(commonsInvite(args.drop(1), secret, ::println, System.err::println))
         }
 
         "check" -> {
@@ -170,20 +193,6 @@ fun main(args: Array<String>) {
             exitProcess(2)
         }
     }
-}
-
-/**
- * Mints a commons invite and prints both halves: the secret for members, and the hash of it for
- * `SPOOL_COMMONS_ID`.
- *
- * Written to stdout and nowhere else — never logged, never persisted. The daemon that later serves
- * this commons is given only the hash, so it never holds the key to the room it relays.
- */
-private fun printCommonsInvite() {
-    val secret = ByteArray(Commons.SECRET_BYTES)
-    SecureRandom().nextBytes(secret)
-    println("invite (give this to members):  ${Commons.encodeInvite(secret)}")
-    println("spool config (put in env):      SPOOL_COMMONS_ID=${hex(Commons.scopeId(secret))}")
 }
 
 /** `SPOOL_*` names nothing reads — almost always a typo, and silence about them is worse. */
@@ -409,6 +418,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     }
     val turn = turnFromEnv(env)
     val ticket = ticketFromEnv(env)
+    val rooms = roomsFromEnv(env, hardLimits, maxRecord, maxBytes)
     // A holder's TURN budget on a spool that issues no TURN would be a limit on nothing.
     require(turn != null || env("SPOOL_TICKET_TURN_RATE") == null) {
         "SPOOL_TICKET_TURN_RATE needs SPOOL_TURN_SECRET; set it, or unset the rate"
@@ -436,7 +446,8 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
         // it holds ciphertext and has nothing to screen.
         requireModeration = boolVar(env, "SPOOL_REQUIRE_MODERATION", default = false),
         sourceUrl = sourceUrlFromEnv(env),
-        commons = commonsFromEnv(env, hardLimits, maxRecord, maxBytes),
+        rooms = rooms,
+        commonsRateTotal = commonsRateTotalFromEnv(env, rooms),
         turn = turn,
         stunUrls = stunFromEnv(env),
         ticket = ticket,
@@ -605,74 +616,153 @@ internal fun sourceUrlFromEnv(env: (String) -> String?): String {
 }
 
 /**
- * The commons (spec §7.4), or null when `SPOOL_COMMONS_ID` is unset — the whole feature is off by
- * default, and a spool without one behaves exactly as before.
+ * The commons rooms (spec §7.4), first to last, or none when `SPOOL_COMMONS_ID` is unset — the whole
+ * feature is off by default, and a spool without one behaves exactly as before.
  *
- * The id is `SHA-256("knit/spool/v1/commons" ‖ secret)`, minted by `knit-spool commons-invite`.
- * Only the hash is configured here: the secret goes to members, so the spool holds a room it cannot
- * read. Rotating the room means minting a new invite and restarting — the old scope is no longer
- * pinned and ages out on its own TTL or under the watermark.
+ * The first room is the unnumbered `SPOOL_COMMONS_*`, and further ones are `SPOOL_COMMONS_2_*` up to
+ * [MAX_COMMONS_ROOMS], in number order, gaps allowed. The first is the one `hello`'s `commons` repeats
+ * for clients that predate `rooms`, which is why a numbered room needs it: a spool advertising its
+ * second room as its only `commons` would hand old clients the wrong room's bounds.
+ *
+ * Checked as a set as well as one by one: every room is pinned against the watermark, so their
+ * footprints together must fit `SPOOL_MAX_BYTES`, and no two may share an id or a tag (S-7.4-15).
+ * Rooms whose `ttlMs` differs from the first's are legal and warned: a client that predates `rooms`
+ * compares a room's echoed `ttlMs` with `commons`' and would take such a room for a rotated one.
  */
-internal fun commonsFromEnv(
+internal fun roomsFromEnv(
     env: (String) -> String?,
     hardLimits: HardLimits,
     maxRecord: Int,
     maxBytes: Long,
+): List<SpoolServer.CommonsConfig> {
+    val first = roomFromEnv(env, 1, hardLimits, maxRecord)
+    val numbered =
+        (2..MAX_COMMONS_ROOMS).mapNotNull { number ->
+            roomFromEnv(env, number, hardLimits, maxRecord)?.also {
+                requireNotNull(first) { "${roomVar(number, "ID")} needs SPOOL_COMMONS_ID: the first room is the one older clients see" }
+            }
+        }
+    val rooms = listOfNotNull(first) + numbered
+    for ((index, room) in rooms.withIndex()) {
+        val clash = rooms.take(index).firstOrNull { it.tag.contentEquals(room.tag) } ?: continue
+        val (mine, theirs) = roomVar(room.number, "ID") to roomVar(clash.number, "ID")
+        throw IllegalArgumentException(
+            if (clash.scopeId.contentEquals(room.scopeId)) {
+                "$mine repeats $theirs"
+            } else {
+                "$mine and $theirs share a tag; mint a new invite for one of them"
+            },
+        )
+    }
+    // Every room is pinned against the watermark, so together they must leave it something to shed.
+    if (maxBytes > 0 && rooms.isNotEmpty()) {
+        val footprint = rooms.sumOf { it.footprint(hardLimits) }
+        require(footprint <= maxBytes) {
+            val what = if (rooms.size == 1) "the commons can hold" else "the ${rooms.size} commons rooms can hold"
+            "$what $footprint bytes (${rooms.joinToString(" + ") { it.footprintTerms(hardLimits) }}), over SPOOL_MAX_BYTES " +
+                "($maxBytes); every room is pinned against the watermark, so they must fit"
+        }
+    }
+    val firstTtl = rooms.firstOrNull()?.bounds?.ttlMs
+    rooms.filter { it.bounds.ttlMs != firstTtl }.forEach {
+        log.warn(
+            "{} ({}) differs from SPOOL_COMMONS_TTL_MS ({}): a client that predates `rooms` will take that room for a rotated one",
+            roomVar(it.number, "TTL_MS"),
+            it.bounds.ttlMs,
+            firstTtl,
+        )
+    }
+    return rooms
+}
+
+/** `SPOOL_COMMONS_<key>` for the first room, `SPOOL_COMMONS_<number>_<key>` for the rest. */
+private fun roomVar(
+    number: Int,
+    key: String,
+): String = if (number == 1) "SPOOL_COMMONS_$key" else "SPOOL_COMMONS_${number}_$key"
+
+/**
+ * One room's variables, or null when its id is unset.
+ *
+ * The id is `SHA-256("knit/spool/v1/commons" ‖ secret)`, minted by `knit-spool commons-invite`.
+ * Only the hash is configured here: the secret goes to members, so the spool holds a room it cannot
+ * read. Rotating a room means minting a new invite and restarting — the old scope is no longer
+ * pinned and ages out on its own TTL or under the watermark.
+ *
+ * A numbered room's other variables without its id are refused, for the ticket settings' reason; the
+ * first room's are ignored as they always were, so no configuration that booted before rooms stops.
+ */
+private fun roomFromEnv(
+    env: (String) -> String?,
+    number: Int,
+    hardLimits: HardLimits,
+    maxRecord: Int,
 ): SpoolServer.CommonsConfig? {
-    val raw = env("SPOOL_COMMONS_ID")?.takeIf { it.isNotEmpty() } ?: return null
+    fun name(key: String) = roomVar(number, key)
+    val raw = env(name("ID"))?.takeIf { it.isNotEmpty() }
+    if (raw == null) {
+        if (number > 1) {
+            // Empty is unset, the SPOOL_TOKEN idiom: compose passes a blank `.env` line as "".
+            COMMONS_ROOM_KEYS.drop(1).firstOrNull { !env(name(it)).isNullOrEmpty() }?.let {
+                throw IllegalArgumentException("${name(it)} needs ${name("ID")}; set it, or unset the room's other settings")
+            }
+        }
+        return null
+    }
     // Never echoed in full: Main.serve logs this message at ERROR, and one mistyped character in
     // a real id would put a near-real scope id in the log the rest of this daemon keeps out.
     require(HEX_64.matches(raw)) {
-        "SPOOL_COMMONS_ID must be 64 hex characters (a 32-byte scope id), got ${raw.length} " +
+        "${name("ID")} must be 64 hex characters (a 32-byte scope id), got ${raw.length} " +
             "characters starting \"${raw.take(ECHOED_ID_CHARS)}\""
     }
-    val maxFrames = intVar(env, "SPOOL_COMMONS_MAX_FRAMES", default = 500, min = 1)
-    val ttlMs = longVar(env, "SPOOL_COMMONS_TTL_MS", default = 86_400_000L, min = 1L)
-    val commonsMaxBlob = intVar(env, "SPOOL_COMMONS_MAX_BLOB", default = hardLimits.maxBlob, min = 1)
-    val attach = boolVar(env, "SPOOL_COMMONS_ATTACH", default = false)
+    val maxFrames = intVar(env, name("MAX_FRAMES"), default = 500, min = 1)
+    val ttlMs = longVar(env, name("TTL_MS"), default = 86_400_000L, min = 1L)
+    val roomMaxBlob = intVar(env, name("MAX_BLOB"), default = hardLimits.maxBlob, min = 1)
 
     // Inside the hard caps, so the store's subscribe-time clamp is a no-op and the bounds a client
     // is told about in `digest` are the bounds the operator configured.
     require(maxFrames <= hardLimits.maxFramesCap) {
-        "SPOOL_COMMONS_MAX_FRAMES ($maxFrames) must not exceed SPOOL_MAX_FRAMES (${hardLimits.maxFramesCap})"
+        "${name("MAX_FRAMES")} ($maxFrames) must not exceed SPOOL_MAX_FRAMES (${hardLimits.maxFramesCap})"
     }
     require(ttlMs <= hardLimits.maxTtlMs) {
-        "SPOOL_COMMONS_TTL_MS ($ttlMs) must not exceed SPOOL_MAX_TTL_MS (${hardLimits.maxTtlMs})"
+        "${name("TTL_MS")} ($ttlMs) must not exceed SPOOL_MAX_TTL_MS (${hardLimits.maxTtlMs})"
     }
-    require(commonsMaxBlob <= hardLimits.maxBlob) {
-        "SPOOL_COMMONS_MAX_BLOB ($commonsMaxBlob) must not exceed SPOOL_MAX_BLOB (${hardLimits.maxBlob})"
+    require(roomMaxBlob <= hardLimits.maxBlob) {
+        "${name("MAX_BLOB")} ($roomMaxBlob) must not exceed SPOOL_MAX_BLOB (${hardLimits.maxBlob})"
     }
 
-    // A `list` for the commons must fit one record, or the transport kills it (1009) and the room
+    // A `list` for the room must fit one record, or the transport kills it (1009) and the room
     // can never be caught up on. Tombstones ride the same reply, bounded by ScopeStore.tombstoneCap.
     val listBytes = (maxFrames.toLong() + maxOf(2L * maxFrames, 1024L)) * ID_RECORD_BYTES + RECORD_ENVELOPE
     require(listBytes <= maxRecord) {
-        "SPOOL_COMMONS_MAX_FRAMES ($maxFrames) needs a $listBytes-byte list reply, over " +
+        "${name("MAX_FRAMES")} ($maxFrames) needs a $listBytes-byte list reply, over " +
             "SPOOL_MAX_RECORD ($maxRecord); lower it or raise SPOOL_MAX_RECORD"
-    }
-
-    // The commons is pinned against the watermark, so a commons that alone exceeds SPOOL_MAX_BYTES
-    // would leave the watermark with nothing it is allowed to shed. Caught here, not at 3am.
-    if (maxBytes > 0) {
-        val footprint =
-            maxFrames.toLong() * commonsMaxBlob + if (attach) hardLimits.maxAttachBytes.toLong() else 0L
-        require(footprint <= maxBytes) {
-            "the commons can hold $footprint bytes ($maxFrames frames x $commonsMaxBlob" +
-                (if (attach) " plus ${hardLimits.maxAttachBytes} of attachments" else "") +
-                "), over SPOOL_MAX_BYTES ($maxBytes); it is pinned against the watermark, so it must fit"
-        }
     }
 
     return SpoolServer.CommonsConfig(
         scopeId = unhex(raw),
-        name = env("SPOOL_COMMONS_NAME")?.takeIf { it.isNotEmpty() },
-        bounds = ScopeBounds(maxFrames = maxFrames, ttlMs = ttlMs, maxBlob = commonsMaxBlob),
-        attach = attach,
-        ratePushes = intVar(env, "SPOOL_COMMONS_RATE_PUSHES", default = 20, min = 1),
+        name = env(name("NAME"))?.takeIf { it.isNotEmpty() },
+        bounds = ScopeBounds(maxFrames = maxFrames, ttlMs = ttlMs, maxBlob = roomMaxBlob),
+        attach = boolVar(env, name("ATTACH"), default = false),
+        ratePushes = intVar(env, name("RATE_PUSHES"), default = 20, min = 1),
+        number = number,
     )
 }
 
-private fun hex(bytes: ByteArray): String = bytes.toHexString()
+/**
+ * `SPOOL_COMMONS_RATE_TOTAL`: pushes per second into every room together (S-7.4-4), beside each
+ * room's own budget. Refused without a room, like any setting for a feature that is off.
+ */
+private fun commonsRateTotalFromEnv(
+    env: (String) -> String?,
+    rooms: List<SpoolServer.CommonsConfig>,
+): Int {
+    val default = maxOf(COMMONS_RATE_TOTAL_FLOOR, rooms.maxOfOrNull { it.ratePushes } ?: 0)
+    require(rooms.isNotEmpty() || env("SPOOL_COMMONS_RATE_TOTAL") == null) {
+        "SPOOL_COMMONS_RATE_TOTAL needs SPOOL_COMMONS_ID; set it, or unset the rate"
+    }
+    return intVar(env, "SPOOL_COMMONS_RATE_TOTAL", default = default, min = 1)
+}
 
 private fun unhex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(radix = 16).toByte() }
 

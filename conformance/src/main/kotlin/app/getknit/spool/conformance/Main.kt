@@ -16,7 +16,7 @@ import kotlin.system.exitProcess
 private const val USAGE =
     "usage: knit-spool-conformance <ws(s)://host[:port]/spool/v1> " +
         "[--token T | --token-file PATH] [--timeout-ms 10000] [--pow-limit 24] [--destructive] " +
-        "[--commons-invite knit-commons:v1:...] [--turn-secret-file PATH] " +
+        "[--commons-invite knit-commons:v1:... (once per room)] [--turn-secret-file PATH] " +
         "[--ticket-key-file PATH --ticket-audience HOST [--ticket-audience-alias HOST]]"
 
 /**
@@ -51,7 +51,7 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
     var timeoutMs = 10_000L
     var powLimit = 24
     var destructive = false
-    var commonsInvite: String? = null
+    val commonsInvites = mutableListOf<String>()
     var turnSecretFile: String? = null
     var ticketKeyFile: String? = null
     var ticketAudience: String? = null
@@ -79,8 +79,9 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
                 destructive = true
             }
 
+            // Repeatable: one per commons room, so a spool running several is checked room by room.
             "--commons-invite" -> {
-                commonsInvite = args.getOrNull(++i) ?: usageExit()
+                commonsInvites += args.getOrNull(++i) ?: usageExit()
             }
 
             // A file only, never a flag value: this is an HMAC key that mints relay credentials,
@@ -130,8 +131,8 @@ private fun parseArgs(args: Array<String>): SuiteOptions {
         destructive = destructive,
         // A malformed invite is an argument error, not a failed spool: without the secret the
         // commons checks would silently skip and the run would look clean.
-        commonsSecret =
-            commonsInvite?.let {
+        commonsSecrets =
+            commonsInvites.map {
                 Commons.decodeInvite(it) ?: run {
                     System.err.println("--commons-invite must be a knit-commons:v1: invite")
                     exitProcess(2)

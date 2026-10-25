@@ -27,15 +27,38 @@ class TokenBucket(
 
     @Synchronized
     fun take(): Long {
-        val now = clock()
-        tokens = min(burst, tokens + (now - lastRefillMs) / MS_PER_SECOND * ratePerSec)
-        lastRefillMs = now
+        refill()
         if (tokens >= 1.0) {
             tokens -= 1.0
             return 0L
         }
-        return ceil((1.0 - tokens) / ratePerSec * MS_PER_SECOND).toLong()
+        return retryMs()
     }
+
+    /** What [take] would return, without taking: 0 when a token is there, else the wait for one. */
+    @Synchronized
+    fun peek(): Long {
+        refill()
+        return if (tokens >= 1.0) 0L else retryMs()
+    }
+
+    /**
+     * Gives back a token [take] granted, for a caller that charged this bucket and then found a
+     * second one refusing the same record — what it was refused for must not cost it here as well.
+     */
+    @Synchronized
+    fun refund() {
+        refill()
+        tokens = min(burst, tokens + 1.0)
+    }
+
+    private fun refill() {
+        val now = clock()
+        tokens = min(burst, tokens + (now - lastRefillMs) / MS_PER_SECOND * ratePerSec)
+        lastRefillMs = now
+    }
+
+    private fun retryMs(): Long = ceil((1.0 - tokens) / ratePerSec * MS_PER_SECOND).toLong()
 }
 
 /**

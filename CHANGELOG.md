@@ -20,6 +20,34 @@ document:
 
 ## Unreleased
 
+### Added
+
+- **Up to eight commons rooms per Spool** (spec §7.4 as amended 2026-10-24, knit-next
+  `feat/multi-commons`). The first room is `SPOOL_COMMONS_*` as before; rooms two to eight are
+  `SPOOL_COMMONS_2_*` through `SPOOL_COMMONS_8_*`, each with its own invite, pinned bounds,
+  attachment switch and push budget. `hello` gains `rooms`, one entry per room led by a `tag`, the
+  first eight bytes of `SHA-256("knit/spool/v1/commons-tag" ‖ scopeId)`, so a member finds its
+  room without the Spool publishing an id; `commons` stays and repeats the first room for clients
+  that predate rooms. `SPOOL_COMMONS_RATE_TOTAL` bounds every room's pushes together (default 40/s,
+  or the largest room's own budget if higher); a push one budget refuses is not charged to the
+  other. Boot refuses rooms that together exceed `SPOOL_MAX_BYTES`, share an id, or are numbered
+  without a first room, and warns when a room's `TTL_MS` differs from the first room's, which older
+  clients would read as a rotated room. Rooms stay boot-only. The commons metrics gain a
+  `room="<n>"` label, the throttle count a `budget="room|spool"` one, and the status line's
+  `commons=` field lists each room, comma-joined. The conformance CLI's `--commons-invite` repeats,
+  once per room. The environment contract moves, so the development version is `0.6.0-dev.2`.
+- **`knit-spool commons-invite --url … --name …` prints the relay invite link**,
+  `https://getknit.app/r#…`, which joins the Spool and the room in one tap (knit-next
+  `docs/RELAY_INVITE.md`). A private Spool's token goes into the link from `--token-file`, never
+  from the command line. `--room <n>` prints the variable names for room *n*.
+
+### Changed
+
+- **A Spool with no `SPOOL_TOKEN` leaves room names out of `hello`** (spec S-7.4-19). Anyone who
+  connects reads `hello`, so a room's name there was public; it now reaches members through the
+  invite link. `SPOOL_COMMONS_NAME` still applies behind a token, and the boot log says which.
+  Members who already joined keep the name their client stored.
+
 ### Fixed
 
 - **The sweeper no longer pauses delivery once a period.** Expiry ran as one pass over every

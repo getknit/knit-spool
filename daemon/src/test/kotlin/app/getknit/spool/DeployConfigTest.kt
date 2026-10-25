@@ -45,9 +45,9 @@ class DeployConfigTest {
     private val tls = repoRoot.resolve("deploy/docker-compose.tls.yml")
 
     /** An `${X:-}` default, which resolves to the empty string rather than to an absent variable. */
-    private val emptyDefault = Regex("""\$\{[A-Z_]+:-}""")
+    private val emptyDefault = Regex("""\$\{[A-Z0-9_]+:-}""")
 
-    private val entry = Regex("""^ {6}(SPOOL_[A-Z_]+):(.*)$""")
+    private val entry = Regex("""^ {6}(SPOOL_[A-Z0-9_]+):(.*)$""")
 
     /**
      * The `SPOOL_*` keys under the `spool` service's `environment:`, mapped to their raw value.
