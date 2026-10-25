@@ -324,7 +324,7 @@ class SpecVectorTest {
                 "turnreq" to RecordCodec.encode(TurnReq(t = RecordType.TURNREQ, q = 7L)),
                 // §7.6 several TURN servers (S-7.6-48/49): helloSpoolTurn's map with `turnHosts` as its
                 // seventh key, and a turnreq naming the second entry. This repo produced them (ADR
-                // 2026-10.u5f4); the spec carries them since knit-next d7a7e1da7 (docs/SPOOL_PROTOCOL.md §13).
+                // 2026-10.u5f4); the spec carries them since knit-next 78d5fe633 (docs/SPOOL_PROTOCOL.md §13).
                 "helloSpoolTurnHosts" to
                     RecordCodec.encode(
                         Hello(
@@ -602,7 +602,7 @@ class SpecVectorTest {
                     "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
                     "0c840067706f774269747314647475726ef5",
                 "turnreq" to "a26174677475726e726571617107",
-                // knit-next d7a7e1da7, §13, line for line.
+                // knit-next 78d5fe633, §13, line for line.
                 "helloSpoolTurnHosts" to
                     "a761746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a00010000696d" +
                     "61785265636f72641a00020000696d617853636f7065731840676d617850756c6c18406c6d617846" +

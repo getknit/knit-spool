@@ -22,7 +22,7 @@ import kotlin.test.assertNull
  * CBOR encoder in Python from the spec's inputs: `helloSpoolTurn`'s map with `turnHosts =
  * ["spool.example:3478", "[2001:db8::7]:3478"]` as its seventh key, and `{t: "turnreq", q: 7, host:
  * "[2001:db8::7]:3478"}` in that key order. The same script reproduced §13's `helloSpoolTurn` and
- * `turnreq` byte for byte first. The spec's §13 carries both since knit-next d7a7e1da7, and
+ * `turnreq` byte for byte first. The spec's §13 carries both since knit-next 78d5fe633, and
  * [SpecVectorTest] pins its text; [theSpecCarriesWhatThisRepoMade] holds the two copies together.
  */
 class TurnRecordVectorTest {

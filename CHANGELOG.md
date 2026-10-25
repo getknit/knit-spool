@@ -41,7 +41,7 @@ document:
   `docs/RELAY_INVITE.md`). A private Spool's token goes into the link from `--token-file`, never
   from the command line. `--room <n>` prints the variable names for room *n*.
 - **Up to four TURN servers per Spool, and a phone picks the nearest** (spec S-7.6-48 to
-  S-7.6-50, knit-next `58c0bded9`; ADR 2026-10.u5f4). Server 1 is `SPOOL_TURN_SECRET` and
+  S-7.6-50, knit-next `a2c197c5a`; ADR 2026-10.u5f4). Server 1 is `SPOOL_TURN_SECRET` and
   `SPOOL_TURN_URLS` as before; servers 2 to 4 are `SPOOL_TURN_2_SECRET` and `SPOOL_TURN_2_URLS`
   through `_4_`, each with its own secret, numbered with no gap, and boot-only like every TURN
   setting. `hello` gains `turnHosts`, the `host:port` of each server's UDP URL in server order,

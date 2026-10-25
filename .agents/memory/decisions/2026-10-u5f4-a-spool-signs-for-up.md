@@ -8,9 +8,9 @@ topics: [turn, config, hello]
 
 # ADR 2026-10.u5f4 — a spool signs for up to four TURN servers, one per host
 
-Status: Accepted (2026-10-25). The spec text is knit-next `58c0bded9`
+Status: Accepted (2026-10-25). The spec text is knit-next `a2c197c5a`
 (`docs/SPOOL_PROTOCOL.md` §7.6, "Several TURN servers": S-7.6-48 to S-7.6-50 for the spool, C-7.6-51 to
-C-7.6-54 for the client).
+C-7.6-54 for the client). The client half is knit-next ADR 2026-10.pfzn.
 
 **Context:** a spool signed for one TURN server: `SPOOL_TURN_SECRET` and `SPOOL_TURN_URLS`. One
 coturn box relays as many allocations as its quota allows, and an operator whose callers outgrow it
@@ -118,7 +118,7 @@ environment must gate them on this version rather than set them and hope.
   - `ReloadTest.everyTurnServerIsBootOnly` and `ConfigDescribeTest`;
   - `TurnRecordVectorTest`: `helloSpoolTurnHosts` and `turnreqHost`, made by a hand-rolled CBOR encoder
     rather than kotlinx, and `SpecVectorTest`, which pins them as §13 carries them since knit-next
-    `d7a7e1da7`;
+    `78d5fe633`;
   - the conformance check `turn-hosts-select`, run in process by `ConformanceSelfTest` against two
     servers;
   - `EnvContractTest` at `0.6.0-dev.3`, and `DeployConfigTest` for the compose lines.
