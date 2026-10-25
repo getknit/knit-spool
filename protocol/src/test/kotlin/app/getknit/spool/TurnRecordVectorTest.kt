@@ -19,7 +19,7 @@ import kotlin.test.assertNull
  * ADR 2026-10.u5f4).
  *
  * [HELLO_SPOOL_TURN_HOSTS] and [TURNREQ_HOST] were made independently of kotlinx, by a hand-rolled
- * CBOR encoder in Python from the contract's inputs: `helloSpoolTurn`'s map with `turnHosts =
+ * CBOR encoder in Python from the spec's inputs: `helloSpoolTurn`'s map with `turnHosts =
  * ["spool.example:3478", "[2001:db8::7]:3478"]` as its seventh key, and `{t: "turnreq", q: 7, host:
  * "[2001:db8::7]:3478"}` in that key order. The same script reproduced §13's `helloSpoolTurn` and
  * `turnreq` byte for byte first. The spec's §13 carries both since knit-next d7a7e1da7, and

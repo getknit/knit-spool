@@ -8,14 +8,13 @@ topics: [turn, config, hello]
 
 # ADR 2026-10.u5f4 — a spool signs for up to four TURN servers, one per host
 
-Status: Accepted (2026-10-25). Builds the knit-spool brief of knit-spool-coordinator ADR 2026-10.w7hc,
-as refined by the `nearest-turn` contract. The spec text is knit-next `58c0bded9`
+Status: Accepted (2026-10-25). The spec text is knit-next `58c0bded9`
 (`docs/SPOOL_PROTOCOL.md` §7.6, "Several TURN servers": S-7.6-48 to S-7.6-50 for the spool, C-7.6-51 to
 C-7.6-54 for the client).
 
-**Context:** a spool signed for one TURN server: `SPOOL_TURN_SECRET` and `SPOOL_TURN_URLS`. The
-coordinator's review of the production TURN settings on 2026-10-24 found one box serving every fleet
-location, and growing past one box's quota needs a second. `SPOOL_TURN_URLS` already accepts URLs on
+**Context:** a spool signed for one TURN server: `SPOOL_TURN_SECRET` and `SPOOL_TURN_URLS`. One
+coturn box relays as many allocations as its quota allows, and an operator whose callers outgrow it
+needs a second box. `SPOOL_TURN_URLS` already accepts URLs on
 several hosts, which looks like the way to add one. It is not: libwebrtc allocates on every TURN URL
 it is handed, so each box would hold an allocation for every relaying phone, and the second box would
 mirror the first instead of adding to it. The client also ranks relay candidates by type and
@@ -30,7 +29,7 @@ names the one it wants.
 - **Numbered variables.** Server 1 stays `SPOOL_TURN_SECRET` and `SPOOL_TURN_URLS`, so every spool
   that exists runs as it did. Servers 2 to 4 are `SPOOL_TURN_2_SECRET` and `SPOOL_TURN_2_URLS` through
   `_4_`, named after `SPOOL_COMMONS_<n>_*` (ADR 2026-10.5cwn). `MAX_TURN_SERVERS` keeps `KNOWN_VARS`
-  finite, so the coordinator can pin every name.
+  finite, so a tool that renders a spool's environment can know every name (ADR 2026-10.8ymn).
 - **Shared settings.** `SPOOL_TURN_TTL_S`, `SPOOL_TURN_RATE` and `SPOOL_TICKET_TURN_RATE` apply to
   every server, and still need server 1.
 - **Boot-only**, like today's TURN keys. `bootOnly()` reports one URL count and one secret's presence
@@ -68,8 +67,8 @@ derives the entry of a credential's URLs exactly as a client does, and `:conform
   environment does not have, and puts secrets inside a value whose refusals would have to echo it.
   5cwn rejected the same shape for rooms.
 - **The spool picks the server**, by its own location or the client's address. Where a spool is says
-  nothing about where its phones are, and GeoIP is poor for carriers behind carrier-grade NAT.
-  w7hc's alternatives cover this.
+  nothing about where its phones are, and GeoIP is poor for carriers behind carrier-grade NAT. The
+  spec's "Why the phone measures" note covers this.
 - **An error for an unknown `host`.** A call is waiting, and a credential for server 1 beats a
   refusal. A `host` naming a server the spool has since dropped then costs nothing.
 - **Probing the boxes from the spool**, to steer away from a full one. The spool never relays and
@@ -86,14 +85,14 @@ ticketed twin is no longer rendered on a spool with a ticket key and no TURN.
 
 `0.6.0-dev.3` is the first build that reads the six variables. They move the environment contract,
 so ADR 2026-10.8ymn's bump applies without a by-hand exception. An older daemon handed them logs
-`unrecognized environment variable` and boots with server 1 alone, so the coordinator renders them
-only to spools whose every image meets this version.
+`unrecognized environment variable` and boots with server 1 alone, so whatever renders a spool's
+environment must gate them on this version rather than set them and hope.
 
 **Consequences / limits:**
 
 - **Server 1 is the fallback, not the nearest.** Old clients, a client with no ranking yet, and an
-  unknown host all get it. Moving a location to another box is still the coordinator's
-  `TURN_REGION_OF`, not an order in this list.
+  unknown host all get it. Whoever orders the list puts first the box meant for the spool's own
+  callers.
 - **The spool is load-blind.** The nearest box may be full, and the spool cannot tell. The client
   falls back once per call (C-7.6-54), inside the per-connection burst of 2.
 - **Rotating one box's secret restarts the spool**, and every member reconnects. That was already
@@ -107,7 +106,7 @@ only to spools whose every image meets this version.
 - **Guards:**
   - `ConfigTest`: numbering, each of the seven refusals, empty-is-unset, and one server keeping every
     URL list it had;
-  - `TurnUrisTest`: the UDP URL, host and entry, the contract's two examples among them;
+  - `TurnUrisTest`: the UDP URL, host and entry, the spec's two examples among them;
   - `TurnTest`: `turnHosts`' shape, order and absence, selection by `host`, server 1 for an absent,
     unknown or near-miss one, a server 2 credential that does not verify under server 1's secret, the
     shared budget, a non-text `host` as malformed, and per-server metrics;

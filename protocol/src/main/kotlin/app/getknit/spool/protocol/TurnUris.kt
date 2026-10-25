@@ -44,8 +44,8 @@ object TurnUris {
 
     /**
      * [uri]'s entry, `host:port`: the [host], then the port as written or [DEFAULT_PORT]. Null when
-     * it names no host. `turn:US-West.turn.getknit.app?transport=udp` gives
-     * `us-west.turn.getknit.app:3478`, and `turn:[2001:DB8::7]:3479` gives `[2001:db8::7]:3479`.
+     * it names no host. `turn:US-West.turn.example?transport=udp` gives
+     * `us-west.turn.example:3478`, and `turn:[2001:DB8::7]:3479` gives `[2001:db8::7]:3479`.
      */
     fun entry(uri: String): String? = authority(uri)?.let { (host, port) -> "$host:${port ?: DEFAULT_PORT}" }
 

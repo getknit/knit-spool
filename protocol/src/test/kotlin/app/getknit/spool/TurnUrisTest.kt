@@ -29,10 +29,10 @@ class TurnUrisTest {
         assertNull(TurnUris.udpUrl(listOf("turns:a.example:5349", "turn:a.example?transport=tcp")))
     }
 
-    /** The contract's two examples, then the edges of the form. */
+    /** The spec's two examples, then the edges of the form. */
     @Test
     fun anEntryIsTheLowercasedHostAndThePortAsWrittenOrTheDefault() {
-        assertEquals("us-west.turn.getknit.app:3478", TurnUris.entry("turn:US-West.turn.getknit.app?transport=udp"))
+        assertEquals("us-west.turn.example:3478", TurnUris.entry("turn:US-West.turn.example?transport=udp"))
         assertEquals("[2001:db8::7]:3479", TurnUris.entry("turn:[2001:DB8::7]:3479"))
         assertEquals("[2001:db8::7]:3478", TurnUris.entry("turn:[2001:db8::7]?transport=udp"))
         assertEquals("203.0.113.5:03478", TurnUris.entry("turn:203.0.113.5:03478"), "the port as written, not as a number")
