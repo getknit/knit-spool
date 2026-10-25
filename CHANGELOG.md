@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-23T02:59:11Z
+  updated: 2026-10-25T22:40:15Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -18,14 +18,26 @@ document:
 
 # Knit Spool changelog
 
-## Unreleased
+## [0.6.0](https://github.com/getknit/knit-spool/releases/tag/v0.6.0) — 2026-10-25T22:40:15Z
+
+> The scale-out release. One Spool can run up to eight commons rooms, each with its own invite,
+> bounds and push budget under a spool-wide one, and `knit-spool commons-invite` prints the link
+> that joins a room in one tap. It can sign for up to four TURN servers, one per host, and a phone
+> asks for the one nearest it. The sweeper and new-scope admission no longer walk every scope, so
+> a Spool with hundreds of thousands of scopes stops pausing delivery once a period. Pre-1.0, so
+> every interface below is still subject to change. The wire is additive only — `hello` gains
+> `rooms` and `turnHosts`, `turnreq` an optional `host` — and every new setting is off by default,
+> so a 0.5.0 client and a 0.5.0 Spool's environment both carry over unchanged. Two things an
+> operator sees move: **a Spool with no `SPOOL_TOKEN` no longer puts room names in `hello`**, and
+> the TURN issuance counters gain a `server` label, so a dashboard on the unlabelled name needs a
+> `sum`. Both are under *Changed*.
 
 ### Added
 
 - **Up to eight commons rooms per Spool** (spec §7.4 as amended 2026-10-24, knit-next
-  `feat/multi-commons`). The first room is `SPOOL_COMMONS_*` as before; rooms two to eight are
-  `SPOOL_COMMONS_2_*` through `SPOOL_COMMONS_8_*`, each with its own invite, pinned bounds,
-  attachment switch and push budget. `hello` gains `rooms`, one entry per room led by a `tag`, the
+  `da6a4355e` and `058d10e02`; ADR 2026-10.5cwn). The first room is `SPOOL_COMMONS_*` as before;
+  rooms two to eight are `SPOOL_COMMONS_2_*` through `SPOOL_COMMONS_8_*`, each with its own
+  invite, pinned bounds, attachment switch and push budget. `hello` gains `rooms`, one entry per room led by a `tag`, the
   first eight bytes of `SHA-256("knit/spool/v1/commons-tag" ‖ scopeId)`, so a member finds its
   room without the Spool publishing an id; `commons` stays and repeats the first room for clients
   that predate rooms. `SPOOL_COMMONS_RATE_TOTAL` bounds every room's pushes together (default 40/s,
@@ -35,7 +47,7 @@ document:
   clients would read as a rotated room. Rooms stay boot-only. The commons metrics gain a
   `room="<n>"` label, the throttle count a `budget="room|spool"` one, and the status line's
   `commons=` field lists each room, comma-joined. The conformance CLI's `--commons-invite` repeats,
-  once per room. The environment contract moves, so the development version is `0.6.0-dev.2`.
+  once per room. `0.6.0-dev.2` was the first development build to read the numbered rooms.
 - **`knit-spool commons-invite --url … --name …` prints the relay invite link**,
   `https://getknit.app/r#…`, which joins the Spool and the room in one tap (knit-next
   `docs/RELAY_INVITE.md`). A private Spool's token goes into the link from `--token-file`, never
@@ -50,8 +62,8 @@ document:
   today's server. The lifetime and every TURN budget stay shared, whichever server is asked for.
   With two or more servers, boot refuses a server whose URLs name more than one host, two servers
   on one host, and a server with no `turn:` URL over UDP; one server keeps every URL list it was
-  accepted with. The conformance suite gains `turn-hosts-select`. The environment contract moves,
-  so the development version is `0.6.0-dev.3`.
+  accepted with. The conformance suite gains `turn-hosts-select`. `0.6.0-dev.3` was the first
+  development build to read servers 2 to 4.
 
 ### Changed
 

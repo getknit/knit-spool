@@ -61,11 +61,10 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. 0.6.0-dev.3 added TURN servers
-         * 2 to 4: `SPOOL_TURN_2_SECRET` and `SPOOL_TURN_2_URLS` through `_4_`, all boot-only (ADR
-         * 2026-10.u5f4). 0.6.0-dev.2 added the commons rooms.
+         * The development version and the contract's fingerprint at it. 0.7.0-dev.1 is the reset after
+         * the 0.6.0 release, so the fingerprint is 0.6.0's, unchanged since 0.6.0-dev.3.
          */
-        val PINNED = "0.6.0-dev.3" to "fcbddbe7d2386019"
+        val PINNED = "0.7.0-dev.1" to "fcbddbe7d2386019"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

@@ -11,10 +11,10 @@ topics: [commons, config, hello]
 Status: Accepted (2026-10-24)
 
 **Context:** knit-next amended spec §7.4 from one commons per spool to several rooms
-(its ADR 2026-10.wqu2, branch `feat/multi-commons`, commits 9451527 and bd3c8cee7). A
-household or team wants a second room without a second relay, and running one daemon per
-room costs a JVM, a store and a TLS name per room, plus one WebSocket per room on every
-member's phone. The daemon assumed one room everywhere:
+(its ADR 2026-10.wqu2, commits da6a4355e and 058d10e02 on its `main`). A household or
+team wants a second room without a second relay, and running one daemon per room costs a
+JVM, a store and a TLS name per room, plus one WebSocket per room on every member's phone.
+The daemon assumed one room everywhere:
 
 - `isCommons` compared against one id, and one spool-wide bucket bounded its pushes;
 - `shedOldestScope` took one pinned scope;
