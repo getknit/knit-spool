@@ -114,7 +114,8 @@ only to spools whose every image meets this version.
   - `TicketTest.aPseudonymsSuffixIsTheSameOnEveryServer`;
   - `ReloadTest.everyTurnServerIsBootOnly` and `ConfigDescribeTest`;
   - `TurnRecordVectorTest`: `helloSpoolTurnHosts` and `turnreqHost`, made by a hand-rolled CBOR encoder
-    rather than kotlinx;
+    rather than kotlinx, and `SpecVectorTest`, which pins them as §13 carries them since knit-next
+    `d7a7e1da7`;
   - the conformance check `turn-hosts-select`, run in process by `ConformanceSelfTest` against two
     servers;
   - `EnvContractTest` at `0.6.0-dev.3`, and `DeployConfigTest` for the compose lines.

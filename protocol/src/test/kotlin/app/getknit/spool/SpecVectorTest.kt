@@ -322,6 +322,30 @@ class SpecVectorTest {
                         ),
                     ),
                 "turnreq" to RecordCodec.encode(TurnReq(t = RecordType.TURNREQ, q = 7L)),
+                // §7.6 several TURN servers (S-7.6-48/49): helloSpoolTurn's map with `turnHosts` as its
+                // seventh key, and a turnreq naming the second entry. This repo produced them (ADR
+                // 2026-10.u5f4); the spec carries them since knit-next d7a7e1da7 (docs/SPOOL_PROTOCOL.md §13).
+                "helloSpoolTurnHosts" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                ),
+                            powBits = 20,
+                            turn = true,
+                            turnHosts = listOf("spool.example:3478", "[2001:db8::7]:3478"),
+                        ),
+                    ),
+                "turnreqHost" to RecordCodec.encode(TurnReq(t = RecordType.TURNREQ, q = 7L, host = "[2001:db8::7]:3478")),
                 "turncred" to
                     RecordCodec.encode(
                         TurnCred(
@@ -578,6 +602,14 @@ class SpecVectorTest {
                     "7850756c6c18406c6d61784672616d65734361701903e8686d617854746c4d731a24" +
                     "0c840067706f774269747314647475726ef5",
                 "turnreq" to "a26174677475726e726571617107",
+                // knit-next d7a7e1da7, §13, line for line.
+                "helloSpoolTurnHosts" to
+                    "a761746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a00010000696d" +
+                    "61785265636f72641a00020000696d617853636f7065731840676d617850756c6c18406c6d617846" +
+                    "72616d65734361701903e8686d617854746c4d731a240c840067706f774269747314647475726ef5" +
+                    "697475726e486f737473827273706f6f6c2e6578616d706c653a33343738725b323030313a646238" +
+                    "3a3a375d3a33343738",
+                "turnreqHost" to "a36174677475726e72657161710764686f7374725b323030313a6462383a3a375d3a33343738",
                 "turncred" to
                     "a66174687475726e637265646171076475726c738278257475726e3a73706f6f6c2e" +
                     "6578616d706c653a333437383f7472616e73706f72743d75647078267475726e733a" +

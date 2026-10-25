@@ -22,7 +22,8 @@ import kotlin.test.assertNull
  * CBOR encoder in Python from the contract's inputs: `helloSpoolTurn`'s map with `turnHosts =
  * ["spool.example:3478", "[2001:db8::7]:3478"]` as its seventh key, and `{t: "turnreq", q: 7, host:
  * "[2001:db8::7]:3478"}` in that key order. The same script reproduced §13's `helloSpoolTurn` and
- * `turnreq` byte for byte first.
+ * `turnreq` byte for byte first. The spec's §13 carries both since knit-next d7a7e1da7, and
+ * [SpecVectorTest] pins its text; [theSpecCarriesWhatThisRepoMade] holds the two copies together.
  */
 class TurnRecordVectorTest {
     @Test
@@ -73,6 +74,13 @@ class TurnRecordVectorTest {
     fun turnreqHostMatchesTheEncoder() {
         val encoded = RecordCodec.encode(TurnReq(t = RecordType.TURNREQ, q = 7L, host = "[2001:db8::7]:3478"))
         assertEquals(TURNREQ_HOST, encoded.toHexString(), "turnreqHost diverges")
+    }
+
+    /** §13's copies are this repo's production, unchanged: the spec copied them, nobody re-encoded them. */
+    @Test
+    fun theSpecCarriesWhatThisRepoMade() {
+        assertEquals(HELLO_SPOOL_TURN_HOSTS, SpecVectorTest.EXPECTED.getValue("helloSpoolTurnHosts"))
+        assertEquals(TURNREQ_HOST, SpecVectorTest.EXPECTED.getValue("turnreqHost"))
     }
 
     /** What a spool reads from each: the list in order, and the host a client named. */
