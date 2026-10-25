@@ -94,7 +94,11 @@ environment must gate them on this version rather than set them and hope.
   unknown host all get it. Whoever orders the list puts first the box meant for the spool's own
   callers.
 - **The spool is load-blind.** The nearest box may be full, and the spool cannot tell. The client
-  falls back once per call (C-7.6-54), inside the per-connection burst of 2.
+  falls back once per call (C-7.6-54), and that second `turnreq` draws on the same per-connection
+  burst of 2 as every other. It fits only on a connection that has not asked recently. The lab trial
+  of 2026-10-25 found a connection that had already asked twice, so its fallback `turnreq` was refused
+  `rate` and the first try failed. At the default `SPOOL_TURN_RATE` of 4 per ten minutes, a spent
+  token comes back in 150 s.
 - **Rotating one box's secret restarts the spool**, and every member reconnects. That was already
   true of the one secret.
 - **A host is compared as a string.** `[2001:db8::7]` and `[2001:0db8::7]` are two hosts to this
