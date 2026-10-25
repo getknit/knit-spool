@@ -18,6 +18,22 @@ document:
 
 # Knit Spool changelog
 
+## Unreleased
+
+### Fixed
+
+- **A connection reset no longer ends a conformance run.** ktor reports a write to a socket the
+  spool has reset as a cancellation, and the runner rethrows cancellation, so one reset stopped
+  the whole run instead of failing one check. It is now a transport error on that check, outside
+  the tally. The reverse holds too: a timeout or cancellation from outside a receive is no longer
+  reported as that receive's own timeout.
+- **`rate-limit` no longer loses its `err rate` to a 4003.** A spool may strike the blast out and
+  reset the connection before the `err rate` is read, and the reset takes the unread record with
+  it. A blast that dies with none read is now repeated once on a fresh connection, with at most
+  four pushes unanswered. That is too few strikes for this repo's daemon to close on. The first
+  blast stays unbounded, so a distant spool with a generous budget still trips. Found when the
+  0.6.0 release build's self-test lost its run to such a reset.
+
 ## [0.6.0](https://github.com/getknit/knit-spool/releases/tag/v0.6.0) — 2026-10-25T22:40:15Z
 
 > The scale-out release. One Spool can run up to eight commons rooms, each with its own invite,

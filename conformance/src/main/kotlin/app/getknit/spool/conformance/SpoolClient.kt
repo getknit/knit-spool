@@ -14,9 +14,13 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeoutException
@@ -37,9 +41,11 @@ class SpoolClient(
             try {
                 withTimeout(timeoutMs) { httpClient.webSocketSession(url) }
             } catch (_: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
                 throw TransportFailure("could not open a WebSocket within $timeoutMs ms")
             } catch (e: Exception) {
                 // The endpoint went away mid-run. That is not the spool failing the spec.
+                currentCoroutineContext().ensureActive()
                 throw TransportFailure("could not open a WebSocket: ${describeFailure(e)}")
             }
         try {
@@ -51,6 +57,24 @@ class SpoolClient(
             ws.cancel()
         }
     }
+}
+
+/**
+ * The [TransportFailure] for a connection that died under a send or a receive, unless [e] is this
+ * coroutine's own cancellation, which it rethrows.
+ *
+ * A `CancellationException` is not always one. ktor cancels a session's channels when its socket
+ * dies: a failed write cancels `outgoing` with "Failed to send frame", so the next send throws a
+ * cancellation whose cause is the I/O error. Every catch in the suite rethrows cancellation, so
+ * one let through ends the whole run instead of the one check. A spool that resets a client still
+ * writing, as a 4003 mid-blast does, is the everyday case.
+ */
+private suspend fun transportDied(
+    doing: String,
+    e: CancellationException,
+): TransportFailure {
+    currentCoroutineContext().ensureActive()
+    return TransportFailure("connection died while $doing: ${describeFailure(e)}")
 }
 
 /**
@@ -76,7 +100,18 @@ class Session(
     }
 
     suspend fun sendRaw(bytes: ByteArray) {
-        ws.send(Frame.Binary(true, bytes))
+        sendFrame(Frame.Binary(true, bytes))
+    }
+
+    /** Sends [frame] as it is, for the checks that send what is not a record. */
+    suspend fun sendFrame(frame: Frame) {
+        try {
+            ws.send(frame)
+        } catch (e: CancellationException) {
+            throw transportDied("sending a record", e)
+        } catch (_: ClosedSendChannelException) {
+            throw TransportFailure("connection closed while sending a record")
+        }
     }
 
     /** The next binary frame's bytes, or [TimeoutException] after the run's timeout. */
@@ -84,6 +119,8 @@ class Session(
         try {
             withTimeout(timeoutMs) { nextBinary() }
         } catch (_: TimeoutCancellationException) {
+            // An outer timeout is the caller's, not this receive's: it must reach the caller as one.
+            currentCoroutineContext().ensureActive()
             throw TimeoutException("timed out after $timeoutMs ms waiting for a record")
         }
 
@@ -144,6 +181,7 @@ class Session(
                     ws.closeReason.await()
                 }
             } catch (_: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
                 throw CheckFailure("expected close $code, got no close within $timeoutMs ms")
             }
         if (reason == null) throw CheckFailure("expected close $code, got connection end without a close frame")
@@ -200,6 +238,10 @@ class Session(
                     throw CheckFailure(
                         "connection closed while awaiting a record (close ${reason.code} ${reason.message})",
                     )
+                } catch (e: CancellationException) {
+                    // receiveBytes' own timeout lands here too; transportDied rethrows it as the
+                    // cancellation it is.
+                    throw transportDied("awaiting a record", e)
                 }
             if (frame is Frame.Binary) return frame.readBytes()
         }

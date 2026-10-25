@@ -105,6 +105,15 @@ private const val MAX_TURN_HOSTS = 4
 /** Upper bound on pushes blasted by the rate-limit probe. */
 private const val RATE_BLAST_MAX = 1_000
 
+/**
+ * Pushes the rate-limit probe's second blast leaves unanswered at once. Each push past the budget
+ * is a strike, and a spool closes 4003 after a few (this repo's daemon: 8 in 10 s,
+ * `RATE_STRIKE_LIMIT`), so this many cost too few strikes for a close. It is also this many per
+ * round trip, which is why the first blast is unbounded: a far spool with a generous budget refills
+ * faster than four pushes a round trip can drain it.
+ */
+private const val RATE_BLAST_WINDOW = 4
+
 /** Final drain window for the rate-limit probe after the blast. */
 private const val RATE_DRAIN_MS = 2_000L
 
@@ -1878,7 +1887,7 @@ private fun textFrameMalformed(): Check =
     Check(name = "text-frame-malformed", must = false) { ctx ->
         ctx.client.connect {
             hello()
-            ws.send(Frame.Text("not a record"))
+            sendFrame(Frame.Text("not a record"))
             val bytes =
                 try {
                     receiveBytes()
@@ -2003,59 +2012,101 @@ private fun quotaScopes(): Check =
         }
     }
 
-/** §6.4 (advisory): rapid pushes eventually answer err rate with a positive retryMs. */
+/**
+ * §6.4 (advisory): rapid pushes eventually answer err rate with a positive retryMs.
+ *
+ * The first blast is unbounded, and a spool may strike it out with a 4003 before its `err rate` is
+ * read. The reset that close can bring takes the unread record with it, so a blast that died with
+ * none read is repeated on a fresh connection with [RATE_BLAST_WINDOW] pushes unanswered at most,
+ * which stops short of a close. Every push is answered with its `q`, `ok` or `err`.
+ */
 private fun rateLimit(): Check =
     Check(name = "rate-limit", must = false, destructive = true) { ctx ->
-        ctx.client.connect {
-            hello()
-            val scope = ctx.randomScope()
-            ctx.subscribeFresh(this, scope)
+        val scope = ctx.randomScope()
+        var blast = ctx.client.connect { rateBlast(ctx, scope, window = null) }
+        if (blast.rateErr == null && blast.died) {
+            blast = ctx.client.connect { rateBlast(ctx, scope, window = RATE_BLAST_WINDOW) }
+        }
+        val err = blast.rateErr ?: throw CheckFailure("no err rate observed within ${blast.sent} rapid pushes")
+        val retryMs = err.retryMs
+        ensure(retryMs != null && retryMs > 0) { "expected err rate with retryMs > 0, got retryMs=$retryMs" }
+    }
 
-            fun rateErrOrNull(bytes: ByteArray): Err? {
-                if (RecordCodec.peekType(bytes) != RecordType.ERR) return null
-                return RecordCodec.decode<Err>(bytes)?.takeIf { it.code == ErrCode.RATE }
+/**
+ * Pushes into [scope] until the first `err rate`, [RATE_BLAST_MAX] pushes, or the connection's end,
+ * with at most [window] unanswered (none: as fast as the socket takes them).
+ */
+private suspend fun Session.rateBlast(
+    ctx: Ctx,
+    scope: ByteArray,
+    window: Int?,
+): RateBlast {
+    hello()
+    ctx.subscribeFresh(this, scope)
+    val blast = RateBlast()
+    try {
+        while (blast.sent < RATE_BLAST_MAX && blast.rateErr == null) {
+            if (window != null && blast.unanswered >= window) {
+                blast.account(receiveBytesOrNull(timeoutMs) ?: break)
+                continue
             }
+            val (blobId, data) = ctx.randomBlob(16)
+            send(Push(t = RecordType.PUSH, q = nextQ(), scope = scope, blobId = blobId, data = data))
+            blast.sent++
+            blast.unanswered++
+            blast.takeArrived(this)
+        }
+        val deadline = System.currentTimeMillis() + RATE_DRAIN_MS
+        while (blast.rateErr == null) {
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) break
+            blast.account(receiveBytesOrNull(remaining) ?: break)
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        // The spool may close 4003 mid-blast; judge on whatever arrived before that.
+        blast.died = true
+    }
+    return blast
+}
 
-            var rateErr: Err? = null
-            var sent = 0
-            try {
-                while (sent < RATE_BLAST_MAX && rateErr == null) {
-                    val (blobId, data) = ctx.randomBlob(16)
-                    send(
-                        Push(
-                            t = RecordType.PUSH,
-                            q = nextQ(),
-                            scope = scope,
-                            blobId = blobId,
-                            data = data,
-                        ),
-                    )
-                    sent++
-                    while (rateErr == null) {
-                        val frame = ws.incoming.tryReceive().getOrNull() ?: break
-                        val bytes = (frame as? Frame.Binary)?.readBytes() ?: continue
-                        rateErr = rateErrOrNull(bytes)
-                    }
-                }
-                if (rateErr == null) {
-                    val deadline = System.currentTimeMillis() + RATE_DRAIN_MS
-                    while (rateErr == null) {
-                        val remaining = deadline - System.currentTimeMillis()
-                        if (remaining <= 0) break
-                        val bytes = receiveBytesOrNull(remaining) ?: break
-                        rateErr = rateErrOrNull(bytes)
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // The spool may close 4003 mid-blast; judge on whatever arrived before that.
-            }
-            val err = rateErr ?: throw CheckFailure("no err rate observed within $sent rapid pushes")
-            val retryMs = err.retryMs
-            ensure(retryMs != null && retryMs > 0) { "expected err rate with retryMs > 0, got retryMs=$retryMs" }
+/** One rate-limit blast: what it sent, its replies still owed, and the first `err rate` among them. */
+private class RateBlast {
+    var sent = 0
+    var unanswered = 0
+    var rateErr: Err? = null
+    var died = false
+
+    /** Accounts every record already received, without waiting, until the first `err rate`. */
+    fun takeArrived(session: Session) {
+        while (rateErr == null) {
+            val frame =
+                session.ws.incoming
+                    .tryReceive()
+                    .getOrNull() ?: return
+            if (frame is Frame.Binary) account(frame.readBytes())
         }
     }
+
+    fun account(bytes: ByteArray) {
+        when (RecordCodec.peekType(bytes)) {
+            RecordType.OK -> {
+                unanswered--
+            }
+
+            RecordType.ERR -> {
+                val err = RecordCodec.decode<Err>(bytes)
+                if (err?.q != null) unanswered--
+                if (err?.code == ErrCode.RATE && rateErr == null) rateErr = err
+            }
+
+            else -> {
+                Unit // digest, event: unsolicited fan-out
+            }
+        }
+    }
+}
 
 /**
  * A minimal definite-length CBOR writer (§2 profile subset) for the unknown-field check — enough
