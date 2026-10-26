@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-26T01:37:23Z
+  updated: 2026-10-26T07:43:54Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -18,7 +18,15 @@ document:
 
 # Knit Spool changelog
 
-## Unreleased
+## [0.7.0](https://github.com/getknit/knit-spool/releases/tag/v0.7.0) — 2026-10-26T07:43:54Z
+
+> The rotation release. Rotating a commons room, which is how an operator removes a member, is now
+> a `SIGHUP` instead of a restart: only that room's members reconnect, and every other room and
+> private conversation stays connected. Boot and `knit-spool check` now read `SPOOL_RELOAD_FILE`
+> too, so a restart keeps what the last reload installed instead of reverting it. Pre-1.0, so every
+> interface below is still subject to change. No record changes on the wire. One thing an operator
+> sees move: **an existing reload file is now applied at boot, and one that cannot be read stops the
+> boot**, under *Changed*. A 0.6 Spool with no reload file, or a current one, upgrades in place.
 
 ### Added
 
@@ -31,7 +39,7 @@ document:
   them the old values. A rename or a new push budget closes nobody. `SPOOL_COMMONS_RATE_TOTAL`
   reloads with the rooms. If the store has no slot for a new room (`SPOOL_MAX_SCOPES` full, nothing
   bare to reclaim), every room stays as it was and the rest of the reload still applies. Follows
-  knit-next spec S-7.4-21 (ADR 2026-10.hs75).
+  knit-next spec S-7.4-21 (knit-next `0f8049cb8`; ADR 2026-10.hs75).
 
 ### Changed
 
