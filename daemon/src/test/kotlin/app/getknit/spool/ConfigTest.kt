@@ -305,6 +305,57 @@ class ConfigTest {
     }
 
     /**
+     * A reload builds its rooms against the limits the running store was built from (ADR 2026-10.hs75).
+     * A reload file that also raises a boot-only limit has that line ignored, so building the rooms
+     * against it would install a room the spool cannot hold to its word.
+     */
+    @Test
+    fun aReloadBuildsItsRoomsAgainstTheRunningLimits() {
+        val running = configFromEnv { null }.hardLimits
+        val raised = mapOf("SPOOL_COMMONS_ID" to commonsId, "SPOOL_MAX_BLOB" to "100000", "SPOOL_MAX_RECORD" to "131072")
+        // The room's MAX_BLOB defaults to the spool's: the running one, not the one the file asks for.
+        assertEquals(
+            65_536,
+            configFromEnv(running) { raised[it] }
+                .rooms
+                .single()
+                .bounds.maxBlob,
+        )
+        assertEquals(
+            100_000,
+            configFromEnv { raised[it] }
+                .rooms
+                .single()
+                .bounds.maxBlob,
+        )
+        // And a room that only fits the raised cap is refused, naming the cap it does not fit.
+        val frames = raised + ("SPOOL_MAX_FRAMES" to "2000") + ("SPOOL_COMMONS_MAX_FRAMES" to "1500") + ("SPOOL_MAX_RECORD" to "262144")
+        val refused = assertFailsWith<IllegalArgumentException> { configFromEnv(running) { frames[it] } }
+        assertTrue(refused.message!!.contains("SPOOL_MAX_FRAMES (1000)"), refused.message!!)
+    }
+
+    /**
+     * A reload file is layered over the environment, so a room the environment set is removed by blank
+     * lines: its id and every other variable set for it. A blank id alone is refused, as a room's other
+     * settings without its id always were, rather than silently keeping half a room.
+     */
+    @Test
+    fun aRoomTheEnvironmentSetIsRemovedByBlankingItsVariables() {
+        val environment = mapOf("SPOOL_COMMONS_ID" to commonsId, "SPOOL_COMMONS_2_ID" to commonsId2, "SPOOL_COMMONS_2_NAME" to "Den")
+        val removed = environment + mapOf("SPOOL_COMMONS_2_ID" to "", "SPOOL_COMMONS_2_NAME" to "")
+        assertEquals(1, config(removed).rooms.size)
+        val idOnly = environment + ("SPOOL_COMMONS_2_ID" to "")
+        val refused = assertFailsWith<IllegalArgumentException> { config(idOnly) }
+        assertTrue(refused.message!!.contains("SPOOL_COMMONS_2_NAME needs SPOOL_COMMONS_2_ID"), refused.message!!)
+        // Every room gone takes the environment's total budget with it, blanked like the rest.
+        val withTotal = environment + ("SPOOL_COMMONS_RATE_TOTAL" to "80")
+        val none =
+            withTotal +
+                mapOf("SPOOL_COMMONS_ID" to "", "SPOOL_COMMONS_2_ID" to "", "SPOOL_COMMONS_2_NAME" to "", "SPOOL_COMMONS_RATE_TOTAL" to "")
+        assertTrue(config(none).rooms.isEmpty())
+    }
+
+    /**
      * Spec §7.5. Off is the default because the flag changes what every conforming client on the
      * spool will let its user send, which is not a decision to make for an operator who never set it.
      */

@@ -8,7 +8,7 @@ topics: [commons, config, hello]
 
 # ADR 2026-10.5cwn — one spool runs up to eight commons rooms, configured as numbered variables
 
-Status: Accepted (2026-10-24)
+Status: Accepted (2026-10-24). "Rooms stay boot-only" superseded by ADR 2026-10.hs75 (2026-10-25); the rest stands.
 
 **Context:** knit-next amended spec §7.4 from one commons per spool to several rooms
 (its ADR 2026-10.wqu2, commits da6a4355e and 058d10e02 on its `main`). A household or

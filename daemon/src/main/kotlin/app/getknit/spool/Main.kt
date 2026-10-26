@@ -12,7 +12,9 @@ import app.getknit.spool.store.SqliteScopeStore
 import org.slf4j.LoggerFactory
 import sun.misc.Signal
 import sun.misc.SignalHandler
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.security.GeneralSecurityException
 import java.security.SecureRandom
@@ -226,15 +228,23 @@ private fun unknownVars(environment: Map<String, String>): List<String> =
  * without filtering the other.
  */
 internal fun checkConfig(environment: Map<String, String>): Int {
-    unknownVars(environment).forEach { System.err.println("warning: unrecognized environment variable $it — typo?") }
+    // What boot will run, `SPOOL_RELOAD_FILE` included; reading the file leaves nothing behind.
+    val configured =
+        try {
+            bootEnvironment(environment) { System.err.println("warning: $it") }
+        } catch (e: IOException) {
+            System.err.println("invalid configuration: cannot read SPOOL_RELOAD_FILE (${environment["SPOOL_RELOAD_FILE"]}): ${e.message}")
+            return 1
+        }
+    unknownVars(configured).forEach { System.err.println("warning: unrecognized environment variable $it — typo?") }
     val config =
         try {
-            configFromEnv(environment::get)
+            configFromEnv(configured::get)
         } catch (e: IllegalArgumentException) {
             System.err.println("invalid configuration: ${e.message}")
             return 1
         }
-    val dataDir = environment["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
+    val dataDir = configured["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
     val store =
         if (dataDir == null) {
             "memory"
@@ -285,6 +295,11 @@ private fun installDrainSignal(server: SpoolServer) {
  * A file that is missing, unreadable or invalid leaves the running configuration exactly as it is
  * and logs why. A reload is an operation that can be retried; a spool that dropped its quotas
  * because a config write was half-flushed is not.
+ *
+ * Boot reads the same file over the same environment ([bootEnvironment]), so a restart comes back
+ * with what the last reload installed rather than undoing it (ADR 2026-10.hnqs). The commons rooms
+ * are built against the limits the running store was built from, never against a boot-only limit
+ * the file names and the reload ignores.
  */
 private fun installReloadSignal(
     server: SpoolServer,
@@ -309,13 +324,24 @@ private fun installReloadSignal(
                 }
             val candidate =
                 try {
-                    configFromEnv { name -> overrides[name] ?: environment[name] }
+                    configFromEnv(roomLimits = server.hardLimits) { name -> overrides[name] ?: environment[name] }
                 } catch (e: IllegalArgumentException) {
                     log.error("SIGHUP: invalid configuration: {} — configuration unchanged", e.message)
                     return@SignalHandler
                 }
-            server.reload(candidate).forEach { name -> log.warn("SIGHUP: {} needs a restart — ignored", name) }
-            log.info("reloaded configuration from {}: {}", path, candidate.reloadable().entries.joinToString(" ") { (k, v) -> "$k=$v" })
+
+            // A reload that races shutdown meets a closed store. Nothing is installed before the
+            // store hop that would throw, so the running configuration still stands.
+            @Suppress("TooGenericExceptionCaught")
+            val ignored =
+                try {
+                    server.reload(candidate)
+                } catch (e: Exception) {
+                    log.error("SIGHUP: reload failed: {} — configuration unchanged", e.message)
+                    return@SignalHandler
+                }
+            ignored.forEach { line -> log.warn("SIGHUP: {} — ignored", line) }
+            log.info("reloaded configuration from {}: {}", path, server.reloadable.entries.joinToString(" ") { (k, v) -> "$k=$v" })
         }
     runCatching { Signal.handle(Signal("HUP"), handler) }
         .onFailure { log.warn("SIGHUP unavailable — configuration cannot be reloaded: {}", it.message) }
@@ -339,17 +365,54 @@ internal fun readEnvFile(path: Path): Map<String, String> =
             if (eq <= 0) null else line.substring(0, eq).trim() to line.substring(eq + 1)
         }.toMap()
 
+/**
+ * The environment with `SPOOL_RELOAD_FILE` layered over it, the overlay a `SIGHUP` installs: what
+ * boot and `check` configure from (ADR 2026-10.hnqs). Without it a restart undid every reload. The
+ * file's lines fell back to the environment, so a room rotated through the file came back as the old
+ * room, with the removed member's invite working again.
+ *
+ * A file that does not exist yet means no overrides, which is how a spool runs before its first
+ * reload. Any other failure to read it throws, so boot refuses to start: running on the environment
+ * alone would quietly undo whatever the file holds. The file's own path comes from the environment
+ * only, as the `SIGHUP` handler's does, so a `SPOOL_RELOAD_FILE` line inside it is dropped with a
+ * [warn].
+ */
+internal fun bootEnvironment(
+    environment: Map<String, String>,
+    warn: (String) -> Unit,
+): Map<String, String> {
+    val path = environment["SPOOL_RELOAD_FILE"]?.takeIf { it.isNotEmpty() } ?: return environment
+    val overrides =
+        try {
+            readEnvFile(Path.of(path))
+        } catch (_: NoSuchFileException) {
+            return environment
+        }
+    if ("SPOOL_RELOAD_FILE" in overrides) warn("SPOOL_RELOAD_FILE inside $path is ignored: the file's path comes from the environment")
+    return environment + (overrides - "SPOOL_RELOAD_FILE")
+}
+
 private fun serve() {
     val environment = System.getenv()
-    unknownVars(environment).forEach { log.warn("unrecognized environment variable {} — typo?", it) }
+    val configured =
+        try {
+            bootEnvironment(environment) { log.warn(it) }
+        } catch (e: IOException) {
+            log.error("cannot read SPOOL_RELOAD_FILE ({}): {}", environment["SPOOL_RELOAD_FILE"], e.message)
+            exitProcess(1)
+        }
+    // Names only: a value here may be a token, and SECURITY.md makes a token in this log a vulnerability.
+    val fromFile = configured.filter { (name, value) -> environment[name] != value }.keys.sorted()
+    if (fromFile.isNotEmpty()) log.info("SPOOL_RELOAD_FILE sets {} over the environment", fromFile.joinToString(" "))
+    unknownVars(configured).forEach { log.warn("unrecognized environment variable {} — typo?", it) }
     val config =
         try {
-            configFromEnv(environment::get)
+            configFromEnv(configured::get)
         } catch (e: IllegalArgumentException) {
             log.error("invalid configuration: {}", e.message)
             exitProcess(1)
         }
-    val dataDir = environment["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
+    val dataDir = configured["SPOOL_DATA_DIR"]?.takeIf { it.isNotEmpty() }
 
     // Process boundary: nothing the store can throw at open is recoverable here.
     @Suppress("TooGenericExceptionCaught")
@@ -379,7 +442,19 @@ private fun serve() {
     }
 }
 
-internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
+/** The configuration [env] describes, or an [IllegalArgumentException] naming what is wrong with it. */
+internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config = configFromEnv(roomLimits = null, env)
+
+/**
+ * [configFromEnv] for a reload: [roomLimits] is the running spool's hard limits, and its rooms are built
+ * and their footprints checked against those, the limits the store was built from. Without them, a
+ * reload file that also names a boot-only limit would build the rooms against a value the reload then
+ * ignores.
+ */
+internal fun configFromEnv(
+    roomLimits: HardLimits?,
+    env: (String) -> String?,
+): SpoolServer.Config {
     val maxBlob = intVar(env, "SPOOL_MAX_BLOB", default = 65_536, min = 1)
     val maxRecord = intVar(env, "SPOOL_MAX_RECORD", default = 131_072, min = 1)
     require(maxBlob + RECORD_ENVELOPE <= maxRecord) {
@@ -430,7 +505,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
     }
     val turn = turnFromEnv(env)
     val ticket = ticketFromEnv(env)
-    val rooms = roomsFromEnv(env, hardLimits, maxRecord, maxBytes)
+    val rooms = roomsFromEnv(env, roomLimits ?: hardLimits, maxRecord, maxBytes)
     // A holder's TURN budget on a spool that issues no TURN would be a limit on nothing.
     require(turn != null || env("SPOOL_TICKET_TURN_RATE") == null) {
         "SPOOL_TICKET_TURN_RATE needs SPOOL_TURN_SECRET; set it, or unset the rate"
@@ -776,7 +851,8 @@ private fun roomVar(
  *
  * The id is `SHA-256("knit/spool/v1/commons" ‖ secret)`, minted by `knit-spool commons-invite`.
  * Only the hash is configured here: the secret goes to members, so the spool holds a room it cannot
- * read. Rotating a room means minting a new invite and restarting — the old scope is no longer
+ * read. Rotating a room means minting a new invite and putting its id in `SPOOL_RELOAD_FILE` before a
+ * `SIGHUP`, which closes only that room's members (ADR 2026-10.hs75). The old scope is no longer
  * pinned and ages out on its own TTL or under the watermark.
  *
  * A numbered room's other variables without its id are refused, for the ticket settings' reason; the
@@ -842,16 +918,20 @@ private fun roomFromEnv(
 /**
  * `SPOOL_COMMONS_RATE_TOTAL`: pushes per second into every room together (S-7.4-4), beside each
  * room's own budget. Refused without a room, like any setting for a feature that is off.
+ *
+ * Empty is unset, as a room's id is: a reload file removes the last room the environment set with
+ * blank lines, and the environment's rate has to go with it.
  */
 private fun commonsRateTotalFromEnv(
     env: (String) -> String?,
     rooms: List<SpoolServer.CommonsConfig>,
 ): Int {
     val default = maxOf(COMMONS_RATE_TOTAL_FLOOR, rooms.maxOfOrNull { it.ratePushes } ?: 0)
-    require(rooms.isNotEmpty() || env("SPOOL_COMMONS_RATE_TOTAL") == null) {
+    val set: (String) -> String? = { name -> env(name)?.takeIf { it.isNotEmpty() } }
+    require(rooms.isNotEmpty() || set("SPOOL_COMMONS_RATE_TOTAL") == null) {
         "SPOOL_COMMONS_RATE_TOTAL needs SPOOL_COMMONS_ID; set it, or unset the rate"
     }
-    return intVar(env, "SPOOL_COMMONS_RATE_TOTAL", default = default, min = 1)
+    return intVar(set, "SPOOL_COMMONS_RATE_TOTAL", default = default, min = 1)
 }
 
 private fun unhex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(radix = 16).toByte() }

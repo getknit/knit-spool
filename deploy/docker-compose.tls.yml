@@ -56,8 +56,9 @@ services:
       # clients connect. Unset serves the upstream URL — the wrong offer for a fork, and the
       # reason this has to be reachable from .env rather than baked in.
       SPOOL_SOURCE_URL:
-      # The KEY=value file SIGHUP re-reads, so a quota or a credential can change without the
-      # restart that drops every live connection. Put it on the volume: /data/reload.env.
+      # The KEY=value file SIGHUP re-reads, so a quota, a credential or a commons room can change
+      # without the restart that drops every live connection. Boot reads it too, so a restart keeps
+      # what a reload installed. Put it on the volume: /data/reload.env.
       SPOOL_RELOAD_FILE:
       # Limits. Unset = the daemon's own default, documented in the README's config table.
       SPOOL_MAX_BLOB:

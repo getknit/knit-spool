@@ -202,7 +202,8 @@ class Metrics(
             if (storeFileBytes != null) line("knit_spool_store_file_bytes", "gauge", storeFileBytes)
             // Absent entirely on a spool with no commons, rather than flat zeroes that read as a
             // room nobody is using. One series per configured room, zeroes included, so a room's
-            // series never appears and disappears with its traffic.
+            // series never appears and disappears with its traffic; only a reload that adds or removes
+            // the room moves it (ADR 2026-10.hs75).
             if (!commonsSubscribers.isNullOrEmpty()) {
                 append("# TYPE knit_spool_commons_subscribers gauge\n")
                 commonsSubscribers.forEach { (room, count) -> roomLine("knit_spool_commons_subscribers", room, count.toLong()) }

@@ -74,6 +74,7 @@ import io.ktor.websocket.readBytes
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -81,6 +82,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.security.PublicKey
@@ -114,6 +116,9 @@ private const val RATE_STRIKE_LIMIT = 8
 
 /** A cast bucket's burst as a multiple of its rate: the four used everywhere, and what `hello`'s `rate` implies. */
 private const val CAST_BURST_FACTOR = 4.0
+
+/** A commons budget's burst as a multiple of its rate, per room and spool-wide alike (S-7.4-4, §12.2). */
+private const val COMMONS_BURST_FACTOR = 4.0
 private const val RATE_STRIKE_WINDOW_MS = 10_000L
 
 /** Idle per-IP limiter state older than this is pruned by the sweeper. */
@@ -195,13 +200,19 @@ class SpoolServer(
      * take a local snapshot first for the same reason; the ones here that matter — the watermark's
      * ceiling and low-water mark — already do.
      *
-     * What a reload can and cannot change is [Config.RELOADABLE]. The rest is captured at boot by
+     * What a reload can and cannot change is [Config.reloadable]. The rest is captured at boot by
      * something that cannot be rebuilt underneath a live connection: the store is constructed from
-     * `hardLimits`, the sweeper and status line are scheduled from their cadences, the commons
-     * rooms are created before the first client, and the port is bound.
+     * `hardLimits`, the sweeper and status line are scheduled from their cadences, and the port is
+     * bound. The commons rooms reload, but through [roomTable], which carries their budgets.
      */
     @Volatile
     private var config: Config = config
+
+    /**
+     * The limits the store was built from, which no reload moves. A reload's rooms are checked
+     * against these, not against a boot-only limit its file names and the reload ignores.
+     */
+    internal val hardLimits: HardLimits = config.hardLimits
 
     class Config(
         val port: Int,
@@ -306,8 +317,8 @@ class SpoolServer(
 
         /**
          * The half a restart is required to change, because something is already built from it: the
-         * store from `hardLimits`, the sweeper and status line from their cadences, the commons
-         * rooms and their budgets from their ids and rates, the listener from the port.
+         * store from `hardLimits`, the sweeper and status line from their cadences, the listener from
+         * the port.
          *
          * A reload that names any of these keeps the boot value and says so.
          */
@@ -323,9 +334,6 @@ class SpoolServer(
                 "sweepMs" to sweepMs,
                 "statusMs" to statusMs,
                 "trustProxy" to trustProxy,
-                // Comma-joined, first room first, so describe() keeps one field however many there are.
-                "commons" to (rooms.joinToString(",") { shortHex(it.scopeId) }.ifEmpty { "off" }),
-                "commonsRateTotal" to commonsRateTotal,
                 // Boot-only: each secret changes in lockstep with its TURN server's, and the
                 // per-connection and per-IP buckets are built from the rate when a client arrives.
                 // One URL count and one secret per server, comma-joined, so a reload that adds or
@@ -376,14 +384,27 @@ class SpoolServer(
                 "rateCasts" to rateCasts,
                 "maxCast" to maxCast,
                 "rateCastsTotal" to rateCastsTotal,
+                // Comma-joined, first room first, so describe() keeps one field however many there are.
+                // Reloadable as a set with the total budget (ADR 2026-10.hs75); a reload logs each room it
+                // changes on its own line, since an id alone does not show a bounds change.
+                "commons" to (rooms.joinToString(",") { shortHex(it.scopeId) }.ifEmpty { "off" }),
+                "commonsRateTotal" to commonsRateTotal,
             )
 
         /**
          * This config's boot half with [candidate]'s reloadable half — what a `SIGHUP` actually
          * installs. Built by naming every field rather than by copying, so adding one to [Config]
          * without deciding which half it belongs to fails to compile here.
+         *
+         * [rooms] and [commonsRateTotal] are passed apart because they install as one unit or not at
+         * all: a room the store cannot create keeps the running set and its total budget (see
+         * [SpoolServer.reload]), while the rest of [candidate] still applies.
          */
-        internal fun withRuntimeOf(candidate: Config): Config =
+        internal fun withRuntimeOf(
+            candidate: Config,
+            rooms: List<CommonsConfig> = candidate.rooms,
+            commonsRateTotal: Int = candidate.commonsRateTotal,
+        ): Config =
             Config(
                 port = port,
                 hardLimits = hardLimits,
@@ -573,6 +594,23 @@ class SpoolServer(
         /** [footprint]'s arithmetic in words, for the refusal that quotes it. */
         fun footprintTerms(hardLimits: HardLimits): String =
             "${bounds.maxFrames} frames x ${bounds.maxBlob}" + if (attach) " plus ${hardLimits.maxAttachBytes} of attachments" else ""
+
+        /**
+         * Whether [other] is this room as a member's `hello` describes it: the same scope, bounds and
+         * `attach`, which a member reads and keeps to (C-7.4-17). A connection told one shape is closed
+         * when the room takes another (S-7.4-21). The name is left out: it changes nothing a member
+         * sends. Field by field because neither this class nor [ScopeBounds] has value equality.
+         */
+        internal fun sameShape(other: CommonsConfig): Boolean =
+            scopeId.contentEquals(other.scopeId) &&
+                bounds.maxFrames == other.bounds.maxFrames &&
+                bounds.ttlMs == other.bounds.ttlMs &&
+                bounds.maxBlob == other.bounds.maxBlob &&
+                attach == other.attach
+
+        /** [sameShape], and the same name, budget and number too: a reload with nothing to install. */
+        internal fun sameAs(other: CommonsConfig): Boolean =
+            sameShape(other) && name == other.name && ratePushes == other.ratePushes && number == other.number
     }
 
     private val log = LoggerFactory.getLogger(SpoolServer::class.java)
@@ -641,7 +679,7 @@ class SpoolServer(
 
     /**
      * A commons room as the server holds it: its config, its key into [subscribers], and its own push
-     * budget. Built once, since rooms are boot-only.
+     * budget.
      *
      * A room is a shared write surface, which the per-connection push bucket does not bound: 200
      * members at 10/s each is 2,000 pushes/s into one scope, churning a 500-frame room four times a
@@ -654,17 +692,47 @@ class SpoolServer(
         val bucket: TokenBucket,
     )
 
-    private val rooms: List<Room> =
-        config.rooms.map { Room(it, hex(it.scopeId), TokenBucket(it.ratePushes.toDouble(), 4.0 * it.ratePushes, clock)) }
+    /**
+     * Every room this spool runs and the budget they share, swapped whole by [reload] (ADR 2026-10.hs75)
+     * and never changed in place, so a handler that reads [roomTable] once sees one generation of
+     * rooms. Reading it twice could see a room in the first read and not in the second.
+     *
+     * A connection keeps the table its `hello` was built from ([Conn.rooms]): that is how a reload
+     * finds the connections whose `hello` it has made untrue.
+     */
+    private class RoomTable(
+        val rooms: List<Room>,
+        /**
+         * Every room's pushes together (S-7.4-4, `SPOOL_COMMONS_RATE_TOTAL`): what bounds the spool's
+         * commons egress, which is each room's rate times its members, summed.
+         */
+        val totalBucket: TokenBucket,
+        val totalRate: Int,
+    ) {
+        /** What the watermark may never shed (S-7.4-3): every room's scope. */
+        val pinned: List<ByteArray> = rooms.map { it.config.scopeId }
 
-    /** What the watermark may never shed (S-7.4-3): every room's scope. */
-    private val pinnedScopes: List<ByteArray> = config.rooms.map { it.scopeId }
+        /** The room [scope] is, or null for any other scope. At most eight 32-byte compares, cheaper than hex. */
+        fun roomOf(scope: ByteArray): Room? = rooms.firstOrNull { it.config.scopeId.contentEquals(scope) }
+    }
 
     /**
-     * Every room's pushes together (S-7.4-4, `SPOOL_COMMONS_RATE_TOTAL`): what bounds the spool's
-     * commons egress, which is each room's rate times its members, summed.
+     * The rooms running now. Replaced, never mutated, and only under [roomLock] once the server is
+     * up; read without it everywhere except the two places that decide whom a change closes.
      */
-    private val commonsTotalBucket = TokenBucket(config.commonsRateTotal.toDouble(), 4.0 * config.commonsRateTotal, clock)
+    @Volatile
+    private var roomTable: RoomTable = roomTableFor(config.rooms, config.commonsRateTotal, previous = null)
+
+    /**
+     * Held across a reload's table swap and the scan for connections it makes stale, and across a
+     * `sub`'s staleness check once its subscriber entry exists. Whichever runs second sees the
+     * other's write, so a `sub` racing a rotation is closed by one of the two (S-7.4-21). Nothing
+     * inside it does I/O.
+     */
+    private val roomLock = Any()
+
+    /** One reload at a time: the JDK runs each signal on a thread of its own, and two would diff against one table. */
+    private val reloadLock = Any()
 
     /**
      * The spool-wide cast budget ([Config.rateCastsTotal]). Rebuilt by [reload] when the rate moves,
@@ -743,6 +811,12 @@ class SpoolServer(
          * uploads on a connection that was told they were open.
          */
         val gates: Long,
+        /**
+         * The rooms its `hello` described, fixed for its life like [entAdvertised]. A reload that stops
+         * running one of them, or changes its bounds or `attach`, closes this connection if it is in
+         * that room, so it reads the room again from a new `hello` (S-7.4-21).
+         */
+        val rooms: RoomTable,
     ) {
         val out: SendChannel<Frame> get() = session.outgoing
 
@@ -891,29 +965,190 @@ class SpoolServer(
      *  - The ticket gates are announced in `hello` as `entGates` and snapshotted per connection, so
      *    a reload that gates `files` leaves connections opened before it uploading freely. The
      *    attach budget is read on every gated `aput`, and the budgets already spent survive.
+     *  - The commons rooms and `commonsRateTotal` install as one unit ([reloadRooms]). They are the
+     *    one change that closes connections: the members of a room the reload stops running, or whose
+     *    bounds or `attach` it changes, so that each reads the room again from a new `hello`
+     *    (S-7.4-21). A room it adds is in the `hello` of connections opened after it.
      *
-     * Returns the boot-only fields [candidate] tried to change, which the caller logs. They are
-     * ignored rather than fatal: refusing the whole reload over one would mean a stale `SPOOL_PORT`
-     * in an overrides file could block every later change to a rate limit.
+     * Returns what [candidate] asked for that was not installed, one line each, which the caller logs:
+     * the boot-only fields it tried to change, and the rooms when the store could not create one.
+     * Neither is fatal: refusing the whole reload over one would mean a stale `SPOOL_PORT` in an
+     * overrides file, or a full store, could block every later change to a rate limit or a token.
      */
-    fun reload(candidate: Config): List<String> {
-        val current = config
-        val ignored =
-            current.bootOnly().mapNotNull { (key, value) ->
-                val proposed = candidate.bootOnly()[key]
-                if (proposed != value) "$key=$proposed (still $value)" else null
+    fun reload(candidate: Config): List<String> =
+        synchronized(reloadLock) {
+            val current = config
+            val ignored =
+                current.bootOnly().mapNotNull { (key, value) ->
+                    val proposed = candidate.bootOnly()[key]
+                    if (proposed != value) "$key=$proposed (still $value) needs a restart" else null
+                }
+            val refused = reloadRooms(candidate)
+            val roomsFrom = if (refused == null) candidate else current
+            config = current.withRuntimeOf(candidate, rooms = roomsFrom.rooms, commonsRateTotal = roomsFrom.commonsRateTotal)
+            if (candidate.rateCastsTotal != current.rateCastsTotal) castTotalBucket = castBucketFor(candidate.rateCastsTotal)
+
+            fun anyNamed(of: Config) = of.rooms.any { it.name != null }
+            if ((candidate.token == null) != (current.token == null) || anyNamed(config) != anyNamed(current)) logWithheldNames(config)
+            ignored + listOfNotNull(refused)
+        }
+
+    /**
+     * Installs [candidate]'s rooms and their total budget as one unit, or none of it, and returns why
+     * not (S-7.4-21, ADR 2026-10.hs75).
+     *
+     * Every store write and the swap happen in one hop to the store thread, so no `sub`, sweep or shed
+     * sees the rooms half-installed. A room the store does not hold is created first, since only a
+     * creation can be refused (`SPOOL_MAX_SCOPES`, with nothing bare to reclaim). A refusal stops there
+     * and keeps the running unit. A scope it already created stays as an ordinary bare scope, which
+     * the reclaim gives back, rather than earning a delete path of its own (ADR 2026-10.ywkw). A room
+     * whose bounds moved is re-applied only after every creation, because re-applying a lower `ttlMs`
+     * deletes frames at once.
+     *
+     * Then, under [roomLock], the members of each room the new table no longer runs, or runs in another
+     * shape, are found and closed `1001`. Nobody else is touched: a room's members are the connections
+     * subscribed to its scope, since nobody else holds the id.
+     */
+    private fun reloadRooms(candidate: Config): String? {
+        val table = roomTable
+        val wanted = candidate.rooms
+        val unchanged =
+            table.totalRate == candidate.commonsRateTotal &&
+                table.rooms.size == wanted.size &&
+                table.rooms.zip(wanted).all { (room, next) -> room.config.sameAs(next) }
+        if (unchanged) return null
+        val now = clock()
+        val next = roomTableFor(wanted, candidate.commonsRateTotal, table)
+        // New to the table, or in a new shape: what the store has to be told about.
+        val touched = wanted.filter { room -> table.roomOf(room.scopeId)?.config?.sameShape(room) != true }
+        // Retired, or reshaped: the rooms whose members were told something the new table makes untrue.
+        val changed = table.rooms.filter { next.roomOf(it.config.scopeId)?.config?.sameShape(it.config) != true }
+        val outcome =
+            runBlocking {
+                withStore {
+                    // What holds a scope once the swap is done: the new rooms and every subscriber. A
+                    // retiring room is not in it, so its scope, if bare, may make way for a new one.
+                    val held = { scope: ByteArray -> wanted.any { it.scopeId.contentEquals(scope) } || isSubscribed(scope) }
+                    val (create, reapply) = touched.partition { store.isUnknownScope(it.scopeId) }
+                    for (room in create) {
+                        val result = store.subscribe(room.scopeId, room.bounds, now, held)
+                        if (result !is SubscribeResult.Subscribed) {
+                            return@withStore RoomReload.Refused(
+                                "commons room ${room.number} cannot be created: the store already holds SPOOL_MAX_SCOPES " +
+                                    "(${hardLimits.maxScopes}) scopes, none of them empty; the running rooms and " +
+                                    "SPOOL_COMMONS_RATE_TOTAL stay as they were",
+                            )
+                        }
+                        noteReclaimed(result.reclaimed)
+                    }
+                    reapply.forEach { store.subscribe(it.scopeId, it.bounds, now, held) }
+                    synchronized(roomLock) {
+                        roomTable = next
+                        RoomReload.Installed(
+                            changed.associateWith { room ->
+                                subscribers[room.hex]?.filter { toldOtherwise(it, room.config.scopeId, next) }.orEmpty()
+                            },
+                        )
+                    }
+                }
             }
-        config = current.withRuntimeOf(candidate)
-        if (candidate.rateCastsTotal != current.rateCastsTotal) castTotalBucket = castBucketFor(candidate.rateCastsTotal)
-        if ((candidate.token == null) != (current.token == null)) logWithheldNames(config)
-        return ignored
+        return when (outcome) {
+            is RoomReload.Refused -> {
+                outcome.why
+            }
+
+            is RoomReload.Installed -> {
+                touched.forEach(::logRoom)
+                for ((room, closing) in outcome.closing) {
+                    val what =
+                        when {
+                            next.roomOf(room.config.scopeId) != null -> "changed its bounds or attachments"
+                            wanted.any { it.number == room.config.number } -> "rotated to a new id"
+                            else -> "removed"
+                        }
+                    log.info(
+                        "commons room {} {}: closing {} member connection(s) so they read the rooms again",
+                        room.config.number,
+                        what,
+                        closing.size,
+                    )
+                    closing.forEach(::closeForNewHello)
+                }
+                null
+            }
+        }
+    }
+
+    /** The reloadable half as it runs now: what a reload's log line reports, which a refused room set makes differ from what was asked. */
+    internal val reloadable: Map<String, Any?> get() = config.reloadable()
+
+    /** What [reloadRooms]' store hop did: the swap and whom it closes, or the creation that was refused. */
+    private sealed interface RoomReload {
+        class Installed(
+            val closing: Map<Room, List<Conn>>,
+        ) : RoomReload
+
+        class Refused(
+            val why: String,
+        ) : RoomReload
+    }
+
+    /**
+     * A table of [rooms] under a total budget of [totalRate]. A room keeps [previous]'s bucket while its
+     * id and rate are unchanged, and the total bucket is kept while [totalRate] is, so a reload that
+     * changes something else gives back no budget a member has already spent.
+     */
+    private fun roomTableFor(
+        rooms: List<CommonsConfig>,
+        totalRate: Int,
+        previous: RoomTable?,
+    ): RoomTable =
+        RoomTable(
+            rooms.map { room ->
+                val kept = previous?.roomOf(room.scopeId)?.takeIf { it.config.ratePushes == room.ratePushes }
+                val bucket = kept?.bucket ?: TokenBucket(room.ratePushes.toDouble(), COMMONS_BURST_FACTOR * room.ratePushes, clock)
+                Room(room, hex(room.scopeId), bucket)
+            },
+            totalBucket =
+                previous?.takeIf { it.totalRate == totalRate }?.totalBucket
+                    ?: TokenBucket(totalRate.toDouble(), COMMONS_BURST_FACTOR * totalRate, clock),
+            totalRate = totalRate,
+        )
+
+    /**
+     * Whether [conn]'s `hello` described the room [scope] in a shape [table] no longer runs: gone, or
+     * with other bounds or `attach` (S-7.4-21). False for a scope its `hello` did not list as a room.
+     * Called under [roomLock], by a reload's scan and by a `sub` that joins such a room after it.
+     */
+    private fun toldOtherwise(
+        conn: Conn,
+        scope: ByteArray,
+        table: RoomTable = roomTable,
+    ): Boolean {
+        val told = conn.rooms.roomOf(scope)?.config ?: return false
+        return table.roomOf(scope)?.config?.sameShape(told) != true
+    }
+
+    /**
+     * Closes [conn] `1001` so it reconnects and reads the rooms from a new `hello` (S-7.4-21). That is
+     * the close a spool going away sends, which every client already answers by reconnecting under its
+     * own backoff. Launched, because a reload runs on the signal thread. Abandoned after
+     * [GOING_AWAY_CLOSE_MS] as [stop] abandons one: `close` waits behind a full outgoing queue, and a
+     * member left open would stay in a room the spool no longer runs.
+     */
+    private fun closeForNewHello(conn: Conn) {
+        appScope?.launch {
+            withTimeoutOrNull(GOING_AWAY_CLOSE_MS) {
+                conn.session.close(CloseReason(CloseReason.Codes.GOING_AWAY.code, "rooms changed"))
+            } ?: conn.session.cancel()
+        }
     }
 
     /**
      * Says whether `hello` is carrying the rooms' names, when any room has one. A spool with no token
      * leaves them out (S-7.4-19): anyone who connects reads its `hello`, so a room's name would be
-     * public. Logged at boot and again when a reload adds or removes the token, since that is what
-     * moves it; a connection keeps the `hello` it was sent.
+     * public. Logged at boot and again when a reload adds or removes the token or the rooms' names,
+     * since that is what moves it; a connection keeps the `hello` it was sent.
      */
     private fun logWithheldNames(config: Config) {
         if (config.rooms.none { it.name != null }) return
@@ -981,19 +1216,21 @@ class SpoolServer(
     /** Flips [setDraining]; what the SIGUSR1 handler calls, so one signal both starts and stops. */
     fun toggleDrain() = setDraining(!draining)
 
-    /** The room [scope] is, or null for any other scope. At most eight 32-byte compares, cheaper than hex. */
-    private fun roomOf(scope: ByteArray): Room? = rooms.firstOrNull { it.config.scopeId.contentEquals(scope) }
-
-    private fun isCommons(scope: ByteArray): Boolean = roomOf(scope) != null
+    /** The room [scope] is in the running table, or null for any other scope. */
+    private fun roomOf(scope: ByteArray): Room? = roomTable.roomOf(scope)
 
     /**
-     * Scopes the store must never reclaim however bare (ADR 2026-10.d2zb): every commons room, any a live
-     * connection subscribes to, and any a `sub` is in the middle of subscribing to ([subscribing]),
-     * so a newcomer at the cap cannot evict a scope between its store call and its subscriber
-     * entry. Read on the store thread; both maps are concurrent.
+     * Scopes the store must never reclaim however bare (ADR 2026-10.d2zb): every commons room, and
+     * every scope [isSubscribed] covers.
      */
-    private fun isHeld(scope: ByteArray): Boolean {
-        if (isCommons(scope)) return true
+    private fun isHeld(scope: ByteArray): Boolean = roomOf(scope) != null || isSubscribed(scope)
+
+    /**
+     * Whether a live connection subscribes to [scope], or a `sub` is in the middle of subscribing to it
+     * ([subscribing]), so a newcomer at the cap cannot evict a scope between its store call and its
+     * subscriber entry. Read on the store thread; both maps are concurrent.
+     */
+    private fun isSubscribed(scope: ByteArray): Boolean {
         val key = hex(scope)
         return subscribers[key]?.isNotEmpty() == true || subscribing.containsKey(key)
     }
@@ -1012,7 +1249,7 @@ class SpoolServer(
      * join with a plain `sub` even on a spool mining at 20 bits (§6.4, S-7.4-3).
      */
     private fun createRooms() {
-        for (room in config.rooms) {
+        for (room in roomTable.rooms.map { it.config }) {
             val result = runBlocking { withStore { store.subscribe(room.scopeId, room.bounds, clock(), ::isHeld) } }
             if (result is SubscribeResult.QuotaExceeded) {
                 // Reachable on a persistent store that already holds maxScopes scopes, none of them
@@ -1023,15 +1260,20 @@ class SpoolServer(
                         "(${config.hardLimits.maxScopes}) scopes, none of them empty. Raise SPOOL_MAX_SCOPES, or clear SPOOL_DATA_DIR.",
                 )
             }
-            // The first room's line reads as it did before rooms; the others say which they are.
-            log.info(
-                "commons enabled{}: {} frames, ttl {} ms, attachments {}",
-                if (room.number == 1) "" else " (room ${room.number})",
-                room.bounds.maxFrames,
-                room.bounds.ttlMs,
-                if (room.attach) "on" else "off",
-            )
+            logRoom(room)
         }
+    }
+
+    /** A room's bounds, at boot and when a reload creates or reshapes it; by number, never by id or name. */
+    private fun logRoom(room: CommonsConfig) {
+        // The first room's line reads as it did before rooms; the others say which they are.
+        log.info(
+            "commons enabled{}: {} frames, ttl {} ms, attachments {}",
+            if (room.number == 1) "" else " (room ${room.number})",
+            room.bounds.maxFrames,
+            room.bounds.ttlMs,
+            if (room.attach) "on" else "off",
+        )
     }
 
     private suspend fun acceptConnection(session: DefaultWebSocketServerSession) {
@@ -1084,8 +1326,11 @@ class SpoolServer(
         session: DefaultWebSocketServerSession,
         ipState: IpState,
     ) {
-        val hello = serverHello()
-        val conn = Conn(session, ipState, entAdvertised = hello.ent == true, castInfo = hello.cast, gates = hello.ticketGates)
+        // One read: the rooms this hello describes are the rooms the connection remembers it was told.
+        val rooms = roomTable
+        val hello = serverHello(rooms)
+        val conn =
+            Conn(session, ipState, entAdvertised = hello.ent == true, castInfo = hello.cast, gates = hello.ticketGates, rooms = rooms)
         activeSessions.add(session)
         try {
             conn.out.send(binary(RecordCodec.encode(hello)))
@@ -1335,15 +1580,30 @@ class SpoolServer(
             // A commons room declares its own bounds (S-7.4-2). Substituted rather than refused — the
             // `digest` reply already carries the applied bounds, so the client learns the truth in
             // the answer it was going to read anyway. Same shape as a truncated `pull` (§7.2).
-            val declared = roomOf(scopeSub.scope)?.config?.bounds ?: scopeSub.bounds
             subscribing.merge(scopeHex, 1, Int::plus)
             try {
-                when (val result = withStore { store.subscribe(scopeSub.scope, declared, now, ::isHeld) }) {
+                // The room is looked up on the store thread, beside the write: a reload re-applies a
+                // reshaped room's bounds there, so a `sub` that read the table before it cannot write the
+                // old bounds back after it.
+                val (declared, result) =
+                    withStore {
+                        val applied = roomOf(scopeSub.scope)?.config?.bounds ?: scopeSub.bounds
+                        applied to store.subscribe(scopeSub.scope, applied, now, ::isHeld)
+                    }
+                when (result) {
                     is SubscribeResult.Subscribed -> {
                         noteReclaimed(result.reclaimed)
                         // The *applied* bounds, so the push-recreate path below re-subscribes with them.
                         conn.subscriptions[scopeHex] = declared
                         subscribers.computeIfAbsent(scopeHex) { ConcurrentHashMap.newKeySet() }.add(conn)
+                        // A room this connection's hello described that a reload has since retired or
+                        // reshaped: after the subscriber entry, so the reload's own scan or this check
+                        // sees the other (S-7.4-21). The rest of the batch would be answered to a
+                        // connection that is closing, so it is dropped.
+                        if (conn.rooms.roomOf(scopeSub.scope) != null && synchronized(roomLock) { toldOtherwise(conn, scopeSub.scope) }) {
+                            closeForNewHello(conn)
+                            return
+                        }
                         conn.out.send(binary(RecordCodec.encode(digestRecord(scopeSub.scope, result.digest))))
                     }
 
@@ -1886,15 +2146,17 @@ class SpoolServer(
         scope: ByteArray,
         q: Long,
     ): Boolean {
-        val room = roomOf(scope) ?: return true
+        // One read, so the room's bucket and the total it is charged beside are one generation's.
+        val table = roomTable
+        val room = table.roomOf(scope) ?: return true
         val roomRetryMs = room.bucket.take()
         if (roomRetryMs > 0L) {
             metrics.commonsRateLimited(room.config.number, CommonsBudget.ROOM)
-            val retryMs = maxOf(roomRetryMs, commonsTotalBucket.peek())
+            val retryMs = maxOf(roomRetryMs, table.totalBucket.peek())
             rateLimited(conn, q = q, scope = scope, retryMs = retryMs, strike = false)
             return false
         }
-        val totalRetryMs = commonsTotalBucket.take()
+        val totalRetryMs = table.totalBucket.take()
         if (totalRetryMs > 0L) {
             room.bucket.refund()
             metrics.commonsRateLimited(room.config.number, CommonsBudget.SPOOL)
@@ -1972,7 +2234,7 @@ class SpoolServer(
             scopeHex !in conn.subscriptions -> CastDrop.NOT_SUBSCRIBED
 
             // A shared room is the one place one cast reaches everyone; casts are for a pair.
-            isCommons(cast.scope) -> CastDrop.COMMONS
+            roomOf(cast.scope) != null -> CastDrop.COMMONS
 
             cast.data.size > info.maxBytes -> CastDrop.TOO_LARGE
 
@@ -2044,9 +2306,10 @@ class SpoolServer(
         val lowWater = config.maxBytes / 10 * 9
         while (withStore { store.totalBytes() } > lowWater) {
             val shed =
-                withStore { store.shedOldestScope(pinnedScopes) } ?: run {
+                // The pinned set is read on the store thread, where a reload swaps the rooms.
+                withStore { store.shedOldestScope(roomTable.pinned) } ?: run {
                     // Only reachable when the commons rooms alone are over the watermark, which
-                    // configFromEnv refuses at boot — so this means the arithmetic there and the
+                    // configFromEnv refuses at boot and on a reload — so this means the arithmetic there and the
                     // bytes here have drifted apart, and the operator needs to know rather than
                     // watch the watermark quietly stop working.
                     if (!watermarkStuck) {
@@ -2148,7 +2411,7 @@ class SpoolServer(
         val now = clock()
         val (scopeCount, liveBytes) = withStore { store.scopeCount() to store.totalBytes() }
         val commons =
-            rooms.map { room ->
+            roomTable.rooms.map { room ->
                 RoomStatus(subscribers[room.hex]?.size ?: 0, withStore { store.digest(room.config.scopeId, now)?.count } ?: 0)
             }
         statusLog.info(statusLine.render(now, scopeCount, liveBytes, commons, draining))
@@ -2162,7 +2425,7 @@ class SpoolServer(
      * offered to clients: who is in a room is a delivery fact the spool does not deal in (§1).
      */
     private fun commonsSubscribers(): Map<Int, Int>? =
-        rooms.takeIf { it.isNotEmpty() }?.associate { it.config.number to (subscribers[it.hex]?.size ?: 0) }
+        roomTable.rooms.takeIf { it.isNotEmpty() }?.associate { it.config.number to (subscribers[it.hex]?.size ?: 0) }
 
     private suspend fun <T> withStore(block: () -> T): T = withContext(storeDispatcher) { block() }
 
@@ -2223,7 +2486,7 @@ class SpoolServer(
         return true
     }
 
-    private fun serverHello(): Hello =
+    private fun serverHello(table: RoomTable): Hello =
         Hello(
             t = RecordType.HELLO,
             v = RECORD_VERSION,
@@ -2268,9 +2531,10 @@ class SpoolServer(
             // who connects can subscribe to and flood. `commons` repeats the first room for clients
             // that predate `rooms` (S-7.4-15). Names only behind a token (S-7.4-19): without one,
             // whoever connects reads this, and the room's name rides its invite link instead.
-            // Decided per connection, since the token reloads and rooms do not (ADR 2026-10.5cwn).
+            // Decided per connection, since the token reloads (ADR 2026-10.5cwn). The rooms come from
+            // `table`, the one the connection keeps, so what it was told is what a reload compares.
             commons =
-                config.rooms.firstOrNull()?.let {
+                table.rooms.firstOrNull()?.config?.let {
                     CommonsInfo(
                         name = it.name.takeIf { config.token != null },
                         maxFrames = it.bounds.maxFrames,
@@ -2280,7 +2544,7 @@ class SpoolServer(
                     )
                 },
             rooms =
-                config.rooms.takeIf { it.isNotEmpty() }?.map {
+                table.rooms.takeIf { it.isNotEmpty() }?.map { it.config }?.map {
                     RoomInfo(
                         tag = it.tag,
                         name = it.name.takeIf { config.token != null },

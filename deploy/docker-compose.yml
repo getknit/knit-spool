@@ -19,7 +19,7 @@ services:
       # SPOOL_TRUST_PROXY: "true"     # only when the proxy sets X-Forwarded-For
       # SPOOL_MAX_BYTES: "268435456"  # payload watermark (default 256 MiB)
       # SPOOL_MAX_CONNS: "2000"       # total live connections; over it, 503 + Retry-After
-      # SPOOL_RELOAD_FILE: "/data/reload.env"  # the file SIGHUP re-reads; no restart needed
+      # SPOOL_RELOAD_FILE: "/data/reload.env"  # the file SIGHUP re-reads, and boot too; no restart needed
       # SPOOL_SOURCE_URL: "https://example.com/your/fork"  # AGPL §13, if you run a modified build
       # SPOOL_COMMONS_ID: "<64 hex>"  # the first shared room (§7.4); unset = no commons
       # SPOOL_REQUIRE_MODERATION: "true"  # ask clients to screen before sending (§7.5); a request, not a check

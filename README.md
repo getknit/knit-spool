@@ -148,8 +148,9 @@ Implements the full **v1** protocol:
   contract, plus a periodic sweeper.
 - **Ops** — `/healthz`, `/source` (build stamp and the §13 source offer), `/metrics` (Prometheus
   text), a periodic status log line, graceful shutdown.
-- **Operator controls** — `SIGHUP` reloads quotas and credentials from a file while connections
-  stay up, `SIGUSR1` drains for a rolling upgrade, `SPOOL_TOKEN_NEXT` rotates the bearer token
+- **Operator controls** — `SIGHUP` reloads quotas, credentials and commons rooms from a file while
+  connections stay up (rotating a room reconnects only its members), `SIGUSR1` drains for a rolling
+  upgrade, `SPOOL_TOKEN_NEXT` rotates the bearer token
   with nothing refused mid-rotation, and `knit-spool check` validates a configuration before a
   container starts. See [operating](#-operating).
 
@@ -160,13 +161,14 @@ Implements the full **v1** protocol:
 SPOOL_TOKEN=s3cret ./gradlew :daemon:run   # private Spool: wss://host/spool/v1?k=s3cret
 ```
 
-`knit-spool check` validates the environment and prints what it resolved to, without binding a port,
-opening a store, or creating a directory — for confirming a configuration before a container starts:
+`knit-spool check` validates the environment, with `SPOOL_RELOAD_FILE` over it as boot reads it, and
+prints what it resolved to, without binding a port, opening a store, or creating a directory — for
+confirming a configuration before a container starts:
 
 ```sh
 $ knit-spool check
-port=9470 maxBlob=65536 maxFrames=1000 … commons=off source=https://github.com/getknit/knit-spool \
-token=unset tokenNext=unset metricsToken=unset pow=0 maxRecord=131072 … moderation=false store=memory
+port=9470 maxBlob=65536 maxFrames=1000 … source=https://github.com/getknit/knit-spool \
+token=unset tokenNext=unset metricsToken=unset pow=0 maxRecord=131072 … commons=off store=memory
 $ echo $?
 0
 ```
@@ -190,7 +192,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_PORT` | `9470` | listen port |
 | `SPOOL_TOKEN` | unset | bearer token; unset = public Spool |
 | `SPOOL_TOKEN_NEXT` | unset | a second accepted token, for rotating without a cutover: set it, let clients migrate, promote it into `SPOOL_TOKEN`, unset it. Requires `SPOOL_TOKEN`, and must differ from it |
-| `SPOOL_RELOAD_FILE` | unset | a `KEY=value` file `SIGHUP` re-reads, layered over the environment. Unset means `SIGHUP` has nothing to read and says so |
+| `SPOOL_RELOAD_FILE` | unset | a `KEY=value` file layered over the environment, read at boot and again on every `SIGHUP`, so a restart keeps what a reload installed. A missing file is no overrides; an unreadable or invalid one refuses to boot. Unset means `SIGHUP` has nothing to read and says so |
 | `SPOOL_METRICS_TOKEN` | unset | `?k=` credential for `/metrics`; unset = `SPOOL_TOKEN` gates it. Setting it **replaces** the Spool token there, so a scrape that used `SPOOL_TOKEN` stops working |
 | `SPOOL_DATA_DIR` | unset | unset = in-memory; set = SQLite at `$DIR/spool.db` |
 | `SPOOL_SOURCE_URL` | upstream repo | corresponding-source URL served at `GET /source`; **set this if you run a modified build** (AGPL §13) |
@@ -298,9 +300,10 @@ anyone who connects reads `hello`, so there the name reaches members through the
 > [!NOTE]
 > Every member of a room shares one key, so a room is exactly as private as its invite, and there
 > is no per-member identity or ban list. Removing someone means rotating their room: mint a new
-> invite, set the new id, restart. Rooms are read at boot, so the restart reconnects every room's
-> members, not just that one's. The old scope is no longer pinned and ages out on its TTL or under
-> the watermark. The operator cannot moderate individual messages — that would need the key they do
+> invite, put the new id in the reload file and send `SIGHUP` ([rotating a room](#rotating-a-commons-room)).
+> Only that room's members are disconnected, and their clients reconnect to a `hello` without the
+> old room; every other room and conversation stays connected. The old scope is no longer pinned and
+> ages out on its TTL or under the watermark. The operator cannot moderate individual messages — that would need the key they do
 > not have; the one lever is [send-side moderation](#-send-side-moderation), which covers the whole
 > Spool and every room on it, and it is the members' clients that pull it. See
 > [`SECURITY.md`](SECURITY.md#the-commons).
@@ -638,15 +641,40 @@ still a credential that works.
 
 Each step is a `SIGHUP` away — see below — so a rotation costs no client a reconnect.
 
+### Rotating a commons room
+
+A room's invite is its only key, so removing a member means a new invite. With `SPOOL_RELOAD_FILE`
+set, that is a reload and not a restart:
+
+```sh
+knit-spool commons-invite --room 2 --url wss://spool.example.org/spool/v1 --token-file token --name Den
+echo 'SPOOL_COMMONS_2_ID=<the new id>' >> /data/reload.env   # replaces room 2's id
+docker exec knit-spool kill -HUP 1
+```
+
+The Spool creates the new room before any `hello` lists it, then closes every connection in the old
+room with `1001`, the close a Spool going away sends. Those members reconnect within a couple of
+seconds; their `hello` no longer lists the old room, and the app tells them to ask you for the new
+link. Send it to the members who stay. Nobody outside that room is disconnected. The log names the
+room by number and how many connections it closed, never the id.
+
+A reload that only renames a room, or changes its push budget, closes nobody. One that changes its
+bounds or `SPOOL_COMMONS_<n>_ATTACH` closes its members the same way, because each was told the old
+values in its `hello`. To take room 1 away while others run, move the next room into the unnumbered
+variables: a numbered room needs the first.
+
 ### Reloading configuration
 
 `SIGHUP` re-reads the file named by `SPOOL_RELOAD_FILE` and installs it without restarting, so a
-quota or a credential can change while connections stay up.
+quota, a credential or a commons room can change while connections stay up. Boot reads the same
+file the same way, so a restart comes back with what the last reload installed rather than undoing
+it; a file that is missing at boot is no overrides, and one that cannot be read stops the boot.
 
 The file is `KEY=value` lines in the environment's own syntax, `#` comments and blanks skipped, and
-it is layered **over** the environment: what the file names wins, what it omits falls back to what
-the process booted with. Unsetting a value therefore means deleting its line, not writing an empty
-one.
+it is layered **over** the environment: what the file names wins, what it omits falls back to the
+environment. A value only the file sets is unset by deleting its line. A token or a room the
+environment sets is removed by a blank line instead (`SPOOL_TOKEN_NEXT=`), since deleting the line
+brings the environment's value back.
 
 ```sh
 printf 'SPOOL_MAX_CONNS=500\nSPOOL_TOKEN=old\nSPOOL_TOKEN_NEXT=new\n' > /data/reload.env
@@ -684,13 +712,15 @@ this feature exists to avoid.
 | `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
 | `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
+| `SPOOL_COMMONS_*`, `SPOOL_COMMONS_<n>_*`, `SPOOL_COMMONS_RATE_TOTAL` | immediately, as one unit. A room it adds is in every `hello` after it. The members of a room it rotates to a new id, removes, or gives new bounds or attachments are closed `1001` and reconnect to the new `hello`; a name or a rate closes nobody. A room the store has no slot for (`SPOOL_MAX_SCOPES` full, nothing bare to reclaim) keeps every room as it was, and is logged |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope
-limits, the sweeper and status line from their cadences, the commons rooms from their ids, the
-listener from the port: `SPOOL_PORT`, `SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`,
-`SPOOL_MAX_SCOPES`, `SPOOL_MAX_ATTACH_BYTES`, `SPOOL_MAX_A_CHUNK`, `SPOOL_SWEEP_MS`,
-`SPOOL_STATUS_MS`, `SPOOL_TRUST_PROXY`, `SPOOL_COMMONS_*`, every `SPOOL_TURN_*` setting (server 1's
-and `SPOOL_TURN_<n>_*` alike), `SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`.
+limits, the sweeper and status line from their cadences, the listener from the port: `SPOOL_PORT`,
+`SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`, `SPOOL_MAX_SCOPES`,
+`SPOOL_MAX_ATTACH_BYTES`, `SPOOL_MAX_A_CHUNK`, `SPOOL_SWEEP_MS`, `SPOOL_STATUS_MS`,
+`SPOOL_TRUST_PROXY`, every `SPOOL_TURN_*` setting (server 1's and `SPOOL_TURN_<n>_*` alike),
+`SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`. A room is checked against the limits the Spool booted with,
+so raising `SPOOL_MAX_FRAMES` in the same file does not make room for a bigger room until a restart.
 
 Naming one of those in the file is not fatal — it is logged as ignored and everything else still
 applies, so a stale line cannot block a later change. A file that is missing, unreadable or invalid

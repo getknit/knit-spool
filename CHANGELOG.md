@@ -18,6 +18,33 @@ document:
 
 # Knit Spool changelog
 
+## Unreleased
+
+### Added
+
+- **Commons rooms reload on `SIGHUP`, so rotating one no longer restarts the Spool.** Put a room's
+  new id in `SPOOL_RELOAD_FILE` and send `SIGHUP`: the Spool creates the new room before any
+  `hello` lists it and closes only the connections in the old room, with `1001`. Those members
+  reconnect to a `hello` that no longer lists it, and every other room and private conversation
+  stays connected. Adding or removing a room works the same way. So does a change to a room's
+  bounds or `SPOOL_COMMONS_<n>_ATTACH`, which closes that room's members because their `hello` told
+  them the old values. A rename or a new push budget closes nobody. `SPOOL_COMMONS_RATE_TOTAL`
+  reloads with the rooms. If the store has no slot for a new room (`SPOOL_MAX_SCOPES` full, nothing
+  bare to reclaim), every room stays as it was and the rest of the reload still applies. Follows
+  knit-next spec S-7.4-21 (ADR 2026-10.hs75).
+
+### Changed
+
+- **Boot and `knit-spool check` read `SPOOL_RELOAD_FILE` too, layered over the environment as a
+  reload does.** Before, a restart fell back to the environment for every line the file set, so a
+  room rotated through the file came back as the old room, and a token promoted there reverted. A
+  missing file is no overrides. An unreadable one now stops the boot instead of being ignored, and
+  boot-only lines in the file take effect at the next boot (ADR 2026-10.hnqs).
+- **A blank `SPOOL_COMMONS_RATE_TOTAL=` reads as unset,** as a room's id does, so a reload file can
+  remove the last room the environment set.
+- **A `SIGHUP` that names a boot-only setting logs it as `… needs a restart — ignored`,** and the
+  reload's summary line reports what is now running rather than what the file asked for.
+
 ## [0.6.1](https://github.com/getknit/knit-spool/releases/tag/v0.6.1) — 2026-10-26T01:37:23Z
 
 > A maintenance release for the conformance CLI and the shipped dependencies. A run over `wss://`

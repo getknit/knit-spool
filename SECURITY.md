@@ -94,8 +94,14 @@ What a commons does move:
   secret, and the holder could then subscribe and collect ciphertext they cannot read. That is
   traffic analysis, not disclosure, and it is the same exposure every scope id already carries.
 
-Removing a member means rotating their room: mint a new invite, set the room's new id, and
-restart. The old scope is no longer pinned, so it ages out on its TTL or under the watermark. The
+Removing a member means rotating their room: mint a new invite, put the room's new id in
+`SPOOL_RELOAD_FILE`, and send `SIGHUP`. The Spool closes every connection in the old room, the
+removed member's included, so none of them keeps talking in the old scope on a connection that
+outlives the rotation; nobody else is disconnected. The old scope is no longer pinned, so it ages
+out on its TTL or under the watermark. Boot reads the same file, so a restart does not bring the
+old room back. A removed member who still holds the old id can subscribe to it as an ordinary scope,
+as anyone can name any scope; a conforming client stops subscribing to a room its Spool no longer
+lists, so the members who stay are not there. The
 operator cannot moderate individual messages — that would need the key they do not have. The one
 lever is `SPOOL_REQUIRE_MODERATION`, and it is the members' clients that pull it (below).
 

@@ -30,5 +30,7 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.d9ez](decisions/2026-10-d9ez-the-sweep-runs-in-batches.md) | the sweep runs in batches and visits only due scopes | store, sweep, capacity |
 | [2026-10.ywkw](decisions/2026-10-ywkw-a-new-scope-is-admitted.md) | a new scope is admitted without counting every scope | store, quota, capacity |
 | [2026-10.3kgr](decisions/2026-10-3kgr-the-conformance-runner-speaks-websocket.md) | the conformance runner speaks WebSocket through the JDK | conformance, tls, dependencies |
+| [2026-10.hnqs](decisions/2026-10-hnqs-boot-layers-spool-reload-file.md) | boot layers SPOOL_RELOAD_FILE over the environment, as SIGHUP does | config, reload |
+| [2026-10.hs75](decisions/2026-10-hs75-commons-rooms-reload-on-sighup.md) | commons rooms reload on SIGHUP, and only a changed room's members reconnect | commons, config, reload |
 | [2026-10.u5f4](decisions/2026-10-u5f4-a-spool-signs-for-up.md) | a spool signs for up to four TURN servers, one per host | turn, config, hello |
 | [2026-10.zm4z](decisions/2026-10-zm4z-public-copy-names-supporters.md) | Public copy names supporters, never payers | docs, tickets, support |
