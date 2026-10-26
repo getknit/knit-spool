@@ -19,11 +19,14 @@ ktlint {
 
 dependencies {
     implementation(project(":protocol"))
-    implementation(libs.ktor.client.cio)
+    // Not CIO: its TLS client corrupts the process-wide segment pool on close (KTOR-9974, ADR 2026-10.3kgr).
+    implementation(libs.ktor.client.java)
     implementation(libs.ktor.client.websockets)
     implementation(libs.logback.classic)
 
     testImplementation(kotlin("test"))
+    // Mints the self-signed certificate behind the wss:// tests. Test-only: nothing shipped needs it.
+    testImplementation(libs.ktor.network.tls.certificates)
 }
 
 application {

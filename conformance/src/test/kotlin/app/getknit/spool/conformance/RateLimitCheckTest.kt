@@ -11,9 +11,6 @@ import app.getknit.spool.protocol.RECORD_VERSION
 import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
 import app.getknit.spool.protocol.Sub
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.websocket.WebSockets
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,7 +43,7 @@ class RateLimitCheckTest {
 
     private fun runRateLimit(server: WsTestServer) =
         runBlocking {
-            val http = HttpClient(CIO) { install(WebSockets) }
+            val http = conformanceHttpClient()
             try {
                 val client = SpoolClient(http, server.url, TIMEOUT_MS)
                 val ctx =

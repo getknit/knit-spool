@@ -8,7 +8,10 @@ import app.getknit.spool.protocol.RECORD_VERSION
 import app.getknit.spool.protocol.RecordCodec
 import app.getknit.spool.protocol.RecordType
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.java.Java
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.WebSocketException
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocketSession
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -24,9 +27,30 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeoutException
+import javax.net.ssl.SSLContext
 
 /**
- * A thin conformance-side wrapper over the ktor CIO WebSocket client: one [connect] per check
+ * The runner's HTTP client: ktor's Java engine, which is the JDK's own WebSocket and TLS. The CLI
+ * and every test that runs the suite build it here, so CI runs the engine that ships.
+ *
+ * Not CIO, whose TLS client writes `close_notify` concurrently with a connection's last record and
+ * corrupts kotlinx-io's process-wide segment pool (KTOR-9974). The next connection to open then
+ * fails inside its handshake, so over `wss://` a few checks a run were lost to errors that have
+ * nothing to do with the spool (#6, ADR 2026-10.3kgr). [sslContext] replaces the JDK's default
+ * trust, for a test spool on a self-signed certificate.
+ */
+fun conformanceHttpClient(sslContext: SSLContext? = null): HttpClient =
+    HttpClient(Java) {
+        install(WebSockets)
+        engine {
+            config {
+                if (sslContext != null) sslContext(sslContext)
+            }
+        }
+    }
+
+/**
+ * A thin conformance-side wrapper over ktor's WebSocket client: one [connect] per check
  * connection, one CBOR record per binary frame (spec §7.1), every receive fenced by the run's
  * timeout.
  */
@@ -64,10 +88,10 @@ class SpoolClient(
  * coroutine's own cancellation, which it rethrows.
  *
  * A `CancellationException` is not always one. ktor cancels a session's channels when its socket
- * dies: a failed write cancels `outgoing` with "Failed to send frame", so the next send throws a
- * cancellation whose cause is the I/O error. Every catch in the suite rethrows cancellation, so
- * one let through ends the whole run instead of the one check. A spool that resets a client still
- * writing, as a 4003 mid-blast does, is the everyday case.
+ * dies, so the next send throws a cancellation that belongs to the dead socket, not to this
+ * coroutine. Every catch in the suite rethrows cancellation, so one let through ends the whole run
+ * instead of the one check. A spool that resets a client still writing, as a 4003 mid-blast does,
+ * is the everyday case.
  */
 private suspend fun transportDied(
     doing: String,
@@ -84,12 +108,22 @@ private suspend fun transportDied(
  */
 private val SYNTHETIC_CLOSE_CODES = setOf<Short>(1005, 1006)
 
+/**
+ * The closes ktor's session can report on its own once a send has died under it: the synthetic
+ * ones, and 1000, which it completes `closeReason` with when its outgoing side is cancelled before
+ * the socket's end is read.
+ */
+private val CLOSES_AFTER_A_DEAD_SEND = SYNTHETIC_CLOSE_CODES + CloseReason.Codes.NORMAL.code
+
 /** One live spool connection: typed send/expect helpers over binary CBOR frames. */
 class Session(
     val ws: DefaultClientWebSocketSession,
     val timeoutMs: Long,
 ) {
     private var q = 0L
+
+    /** Set once a send has died under this connection, after which its close is not the spool's word. */
+    private var sendDied = false
 
     /** The next request correlation id (spec §7.1: monotonically increasing per connection). */
     fun nextQ(): Long = ++q
@@ -108,8 +142,9 @@ class Session(
         try {
             ws.send(frame)
         } catch (e: CancellationException) {
-            throw transportDied("sending a record", e)
+            throw transportDied("sending a record", e).also { sendDied = true }
         } catch (_: ClosedSendChannelException) {
+            sendDied = true
             throw TransportFailure("connection closed while sending a record")
         }
     }
@@ -186,6 +221,10 @@ class Session(
             }
         if (reason == null) throw CheckFailure("expected close $code, got connection end without a close frame")
         val got = reason.code.toInt()
+        // Not a code the spool sent, so it does not judge the spool. One the spool did send still does.
+        if (got != code && sendDied && reason.code in CLOSES_AFTER_A_DEAD_SEND) {
+            throw TransportFailure("expected close $code, but the connection died under a send (close $got)")
+        }
         ensure(got == code) { "expected close $code, got close $got (${reason.message})" }
     }
 
@@ -224,20 +263,11 @@ class Session(
                 try {
                     ws.incoming.receive()
                 } catch (_: ClosedReceiveChannelException) {
-                    val reason =
-                        withTimeoutOrNull(1_000) { ws.closeReason.await() }
-                            ?: throw TransportFailure("connection died while awaiting a record (no close frame)")
-                    // 1005/1006 are reserved by RFC 6455 §7.4.1 and MUST NOT be sent in a close
-                    // frame, so the client synthesised them: the connection dropped without the
-                    // spool ever saying why. Only a code the spool actually sent judges the spool.
-                    if (reason.code in SYNTHETIC_CLOSE_CODES) {
-                        throw TransportFailure(
-                            "connection died while awaiting a record (close ${reason.code}, no close frame sent)",
-                        )
-                    }
-                    throw CheckFailure(
-                        "connection closed while awaiting a record (close ${reason.code} ${reason.message})",
-                    )
+                    throw closedUnderReceive()
+                } catch (e: WebSocketException) {
+                    // The Java engine's word for a socket that died under it (the JDK's onError):
+                    // `incoming` is closed with it as the cause, so it lands here and not above.
+                    throw TransportFailure("connection died while awaiting a record: ${describeFailure(e)}")
                 } catch (e: CancellationException) {
                     // receiveBytes' own timeout lands here too; transportDied rethrows it as the
                     // cancellation it is.
@@ -245,5 +275,19 @@ class Session(
                 }
             if (frame is Frame.Binary) return frame.readBytes()
         }
+    }
+
+    /** What a receive that found `incoming` closed tells the check: the spool's close, or a dead transport. */
+    private suspend fun closedUnderReceive(): Exception {
+        val reason =
+            withTimeoutOrNull(1_000) { ws.closeReason.await() }
+                ?: return TransportFailure("connection died while awaiting a record (no close frame)")
+        // 1005/1006 are reserved by RFC 6455 §7.4.1 and MUST NOT be sent in a close frame, so the
+        // client synthesised them: the connection dropped without the spool ever saying why. Only a
+        // code the spool actually sent judges the spool.
+        if (reason.code in SYNTHETIC_CLOSE_CODES) {
+            return TransportFailure("connection died while awaiting a record (close ${reason.code}, no close frame sent)")
+        }
+        return CheckFailure("connection closed while awaiting a record (close ${reason.code} ${reason.message})")
     }
 }

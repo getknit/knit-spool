@@ -22,6 +22,14 @@ document:
 
 ### Fixed
 
+- **Conformance runs over `wss://` no longer lose checks to TLS faults.** Ktor's CIO TLS client
+  corrupts a buffer pool its connections share when one of them closes, so a later connection
+  failed to open. The failures were `Invalid TLS record type code`, `Failed requirement.` and
+  null pointers from inside the TLS code. Each one turned a check into an error and the run into
+  an inconclusive exit 3 against a spool that conformed. The runner now uses the JDK's own
+  WebSocket and TLS, over `ws://` too, so CI runs the engine that ships, and a new test covers
+  `wss://`. A connection that dies under a send is no longer read as the spool closing it with
+  1000 or 1006.
 - **A connection reset no longer ends a conformance run.** ktor reports a write to a socket the
   spool has reset as a cancellation, and the runner rethrows cancellation, so one reset stopped
   the whole run instead of failing one check. It is now a transport error on that check, outside

@@ -21,10 +21,10 @@ modules) whenever a dependency changes.
 | Component | Project | License |
 |---|---|---|
 | Kotlin standard library, `kotlin-reflect`, `org.jetbrains:annotations` | [JetBrains — Kotlin](https://github.com/JetBrains/kotlin) | Apache-2.0 |
-| kotlinx.coroutines (`-core`, `-slf4j`) | [JetBrains — kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Apache-2.0 |
+| kotlinx.coroutines (`-core`, `-jdk8`, `-slf4j`) | [JetBrains — kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Apache-2.0 |
 | kotlinx.serialization (`-core`, `-cbor`) — the CBOR wire format | [JetBrains — kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | Apache-2.0 |
 | kotlinx-io (`-core`, `-bytestring`) | [JetBrains — kotlinx-io](https://github.com/Kotlin/kotlinx-io) | Apache-2.0 |
-| Ktor — server (CIO engine, WebSockets, forwarded-header) and client (CIO, WebSockets), with `ktor-http`, `ktor-io`, `ktor-network`, `ktor-network-tls`, `ktor-serialization`, `ktor-sse`, `ktor-utils`, `ktor-events` | [JetBrains — Ktor](https://github.com/ktorio/ktor) | Apache-2.0 |
+| Ktor — server (CIO engine, WebSockets, forwarded-header) and client (Java engine, WebSockets), with `ktor-http`, `ktor-io`, `ktor-network`, `ktor-serialization`, `ktor-sse`, `ktor-utils`, `ktor-events` | [JetBrains — Ktor](https://github.com/ktorio/ktor) | Apache-2.0 |
 | Typesafe Config (`com.typesafe:config`) — pulled in by `ktor-server-core` | [Lightbend — config](https://github.com/lightbend/config) | Apache-2.0 |
 | Jansi (`org.fusesource.jansi:jansi`) — pulled in by `ktor-server-core` | [fusesource/jansi](https://github.com/fusesource/jansi) | Apache-2.0 |
 | SLF4J API | [QOS.ch — SLF4J](https://github.com/qos-ch/slf4j) | MIT |

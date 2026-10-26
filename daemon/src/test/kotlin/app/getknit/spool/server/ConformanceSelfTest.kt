@@ -2,6 +2,7 @@
 package app.getknit.spool.server
 
 import app.getknit.spool.conformance.SuiteOptions
+import app.getknit.spool.conformance.conformanceHttpClient
 import app.getknit.spool.conformance.runSuite
 import app.getknit.spool.protocol.Tickets
 import app.getknit.spool.store.HardLimits
@@ -233,7 +234,13 @@ class ConformanceSelfTest {
                     ticketAudience = ticketAudience,
                     ticketAudienceAlias = ticketAudienceAlias,
                 )
-            exitCode = runSuite(http, options, out = PrintStream(tap, true), err = PrintStream(summary, true))
+            // The runner's own client, not the harness's CIO one: the suite runs on the engine that ships.
+            val runner = conformanceHttpClient()
+            try {
+                exitCode = runSuite(runner, options, out = PrintStream(tap, true), err = PrintStream(summary, true))
+            } finally {
+                runner.close()
+            }
         }
         return Run(exitCode, tap.toString(), summary.toString())
     }

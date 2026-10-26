@@ -3,9 +3,6 @@ package app.getknit.spool.conformance
 
 import app.getknit.spool.protocol.Commons
 import app.getknit.spool.protocol.Tickets
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.websocket.WebSockets
 import kotlinx.coroutines.runBlocking
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
@@ -29,10 +26,7 @@ private const val USAGE =
  */
 fun main(args: Array<String>) {
     val options = parseArgs(args)
-    val httpClient =
-        HttpClient(CIO) {
-            install(WebSockets)
-        }
+    val httpClient = conformanceHttpClient()
     val exitCode =
         try {
             runBlocking { runSuite(httpClient, options) }

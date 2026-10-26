@@ -9,15 +9,19 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.Base64
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocket
 import kotlin.concurrent.thread
 
 /**
  * A WebSocket server written by hand for the runner's own tests. No ktor server, so a test can
  * script a spool record by record or reset a connection mid-write, which is what the suite has to
  * survive against a real one. [onConnection] runs on a thread of its own per connection, numbered
- * from 1; whatever it throws ends that connection only.
+ * from 1; whatever it throws ends that connection only. With [tls] it speaks `wss://`, layered
+ * over the accepted socket so that [WsConn.reset] still resets TCP rather than closing TLS.
  */
 internal class WsTestServer(
+    private val tls: SSLContext? = null,
     private val onConnection: (number: Int, conn: WsConn) -> Unit,
 ) : AutoCloseable {
     private val server = ServerSocket(0)
@@ -27,15 +31,19 @@ internal class WsTestServer(
     var connections = 0
         private set
 
-    val url: String get() = "ws://127.0.0.1:${server.localPort}/spool/v1"
+    val url: String get() = "${if (tls == null) "ws" else "wss"}://127.0.0.1:${server.localPort}/spool/v1"
 
     init {
         thread(isDaemon = true) {
             while (true) {
-                val socket = runCatching { server.accept() }.getOrNull() ?: break
+                val raw = runCatching { server.accept() }.getOrNull() ?: break
                 val number = ++connections
                 thread(isDaemon = true) {
-                    runCatching { onConnection(number, WsConn.accept(socket)) }
+                    val socket =
+                        tls?.let {
+                            (it.socketFactory.createSocket(raw, null, raw.port, true) as SSLSocket).apply { useClientMode = false }
+                        } ?: raw
+                    runCatching { onConnection(number, WsConn.accept(socket, raw)) }
                     runCatching { socket.close() }
                 }
             }
@@ -48,6 +56,7 @@ internal class WsTestServer(
 /** One accepted connection: unmasked frames out, masked client frames in (RFC 6455 §5.2). */
 internal class WsConn private constructor(
     private val socket: Socket,
+    private val raw: Socket,
     private val input: DataInputStream,
 ) {
     /** Sends [payload] as one final binary frame. */
@@ -86,10 +95,21 @@ internal class WsConn private constructor(
         }
     }
 
-    /** Resets the connection: SO_LINGER 0 sends an RST, as a closed socket with unread data does. */
+    /** Sends a close frame carrying [code], as a spool ending the connection on purpose does. */
+    fun sendClose(code: Int) {
+        socket.getOutputStream().apply {
+            write(byteArrayOf(FIN_CLOSE, 2, (code shr 8).toByte(), code.toByte()))
+            flush()
+        }
+    }
+
+    /**
+     * Resets the connection: SO_LINGER 0 sends an RST, as a closed socket with unread data does.
+     * Under TLS it is the TCP socket that resets, with no close_notify first, as a dying peer's does.
+     */
     fun reset() {
-        socket.setSoLinger(true, 0)
-        socket.close()
+        raw.setSoLinger(true, 0)
+        raw.close()
     }
 
     /** True when nothing more arrives from the client within [ms]; a byte that does is consumed. */
@@ -112,6 +132,7 @@ internal class WsConn private constructor(
     companion object {
         private const val WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
         private const val FIN_BINARY: Byte = 0x82.toByte()
+        private const val FIN_CLOSE: Byte = 0x88.toByte()
         private const val OPCODE_MASK = 0x0F
         private const val OPCODE_BINARY = 0x2
         private const val OPCODE_CLOSE = 0x8
@@ -120,8 +141,14 @@ internal class WsConn private constructor(
         private const val LEN_64 = 127
         private const val MASK_BYTES = 4
 
-        /** Reads the upgrade request and answers 101, leaving the stream at the first frame. */
-        fun accept(socket: Socket): WsConn {
+        /**
+         * Reads the upgrade request on [socket] and answers 101, leaving the stream at the first
+         * frame. [raw] is the TCP socket under it, which is [socket] itself without TLS.
+         */
+        fun accept(
+            socket: Socket,
+            raw: Socket = socket,
+        ): WsConn {
             val input = socket.getInputStream()
             val key =
                 readHeaders(input)
@@ -141,7 +168,7 @@ internal class WsConn private constructor(
                 )
                 flush()
             }
-            return WsConn(socket, DataInputStream(input))
+            return WsConn(socket, raw, DataInputStream(input))
         }
 
         /** Header lines up to the blank one, read a byte at a time so no frame byte is buffered away. */
