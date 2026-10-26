@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-25T22:40:15Z
+  updated: 2026-10-26T01:37:23Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -18,7 +18,14 @@ document:
 
 # Knit Spool changelog
 
-## Unreleased
+## [0.6.1](https://github.com/getknit/knit-spool/releases/tag/v0.6.1) — 2026-10-26T01:37:23Z
+
+> A maintenance release for the conformance CLI and the shipped dependencies. A run over `wss://`
+> no longer loses checks to faults in Ktor's TLS client, and a connection reset no longer ends a
+> run, so a Spool that conforms no longer comes back inconclusive. The daemon and the CLI ship
+> Logback 1.6.6, with seven CVE fixes, none of them reachable from the `logback.xml` this repo
+> ships, and build on Kotlin 2.4.21, Ktor 3.6.0 and Gradle 9.8.2. The wire and the environment
+> contract are unchanged from 0.6.0, so a 0.6.0 Spool upgrades in place.
 
 ### Changed
 
