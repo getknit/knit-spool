@@ -20,6 +20,14 @@ document:
 
 ## Unreleased
 
+### Changed
+
+- **Dependencies updated.** Kotlin 2.4.21, Ktor 3.6.0, kotlinx.coroutines 1.11.0,
+  kotlinx.serialization 1.12.0, sqlite-jdbc 3.53.4.0 (SQLite 3.53.4) and Kover 0.9.11. The build
+  runs on Gradle 9.8.2, which fixes three advisories in Gradle's own daemon and repository
+  handling. The wire is unchanged: the spec vectors still match byte for byte. Jansi is no longer
+  shipped, since Ktor's server core stopped pulling it in.
+
 ### Fixed
 
 - **Conformance runs over `wss://` no longer lose checks to TLS faults.** Ktor's CIO TLS client
@@ -41,6 +49,15 @@ document:
   four pushes unanswered. That is too few strikes for this repo's daemon to close on. The first
   blast stays unbounded, so a distant spool with a generous budget still trips. Found when the
   0.6.0 release build's self-test lost its run to such a reset.
+
+### Security
+
+- **Logback 1.6.6, from 1.5.18.** The daemon and the conformance CLI ship Logback, and 1.5.18
+  predates seven CVE fixes: CVE-2025-11226, CVE-2026-1225, CVE-2026-9828, CVE-2026-10532,
+  CVE-2026-13006, CVE-2026-19880 and CVE-2026-104721. They are in conditional configuration,
+  configuration-file parsing, deserialization, the status servlet and `SiftingAppender`. The
+  `logback.xml` files this repo ships are a single console appender and use none of those, so
+  none of the fixes is reachable from the shipped configuration.
 
 ## [0.6.0](https://github.com/getknit/knit-spool/releases/tag/v0.6.0) — 2026-10-25T22:40:15Z
 

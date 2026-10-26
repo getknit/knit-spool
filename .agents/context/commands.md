@@ -1,6 +1,6 @@
 # Commands
 
-Build, test and lint invocations. JDK 21; the Gradle wrapper pins Gradle 9.5.0. Which ones a
+Build, test and lint invocations. JDK 21; the Gradle wrapper pins Gradle 9.8.2. Which ones a
 change must pass is in [`../rules/coding.md`](../rules/coding.md).
 
 ```sh

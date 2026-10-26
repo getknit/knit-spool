@@ -26,7 +26,6 @@ modules) whenever a dependency changes.
 | kotlinx-io (`-core`, `-bytestring`) | [JetBrains — kotlinx-io](https://github.com/Kotlin/kotlinx-io) | Apache-2.0 |
 | Ktor — server (CIO engine, WebSockets, forwarded-header) and client (Java engine, WebSockets), with `ktor-http`, `ktor-io`, `ktor-network`, `ktor-serialization`, `ktor-sse`, `ktor-utils`, `ktor-events` | [JetBrains — Ktor](https://github.com/ktorio/ktor) | Apache-2.0 |
 | Typesafe Config (`com.typesafe:config`) — pulled in by `ktor-server-core` | [Lightbend — config](https://github.com/lightbend/config) | Apache-2.0 |
-| Jansi (`org.fusesource.jansi:jansi`) — pulled in by `ktor-server-core` | [fusesource/jansi](https://github.com/fusesource/jansi) | Apache-2.0 |
 | SLF4J API | [QOS.ch — SLF4J](https://github.com/qos-ch/slf4j) | MIT |
 | Logback (`logback-classic`, `logback-core`) — the logging backend | [QOS.ch — Logback](https://github.com/qos-ch/logback) | EPL-1.0 **or** LGPL-2.1 (dual) — see the note below |
 | sqlite-jdbc (`org.xerial:sqlite-jdbc`) — the persistent store | [xerial/sqlite-jdbc](https://github.com/xerial/sqlite-jdbc) | Apache-2.0 |

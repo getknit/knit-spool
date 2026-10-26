@@ -65,7 +65,7 @@ which is how `check` proves the reference daemon conforms.
 
 ## Development
 
-JDK 21 — the Gradle wrapper pins Gradle 9.5.0. ktlint and detekt both run as part of `check`;
+JDK 21 — the Gradle wrapper pins Gradle 9.8.2. ktlint and detekt both run as part of `check`;
 detekt runs with type resolution (the `detektMain`/`detektTest` tasks, which see the compile
 classpath), and its rule set is the bundled defaults plus the short overlay in
 [`config/detekt/detekt.yml`](config/detekt/detekt.yml), where every departure from a default

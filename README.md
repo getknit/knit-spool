@@ -49,7 +49,7 @@ one conversation member.
 |---|---|
 | **What** | Store-and-forward relay daemon for Knit's optional Internet plane |
 | **Wire** | CBOR records over one WebSocket, `wss://host/spool/v1` (`?k=` token on private Spools) |
-| **Stack** | Kotlin 2.4.0 · Ktor 3.3.0 (CIO) · kotlinx-serialization CBOR · SQLite (WAL) · JDK 21 |
+| **Stack** | Kotlin 2.4.21 · Ktor 3.6.0 (CIO) · kotlinx-serialization CBOR · SQLite (WAL) · JDK 21 |
 | **Sees** | Scope ids, blob ids, ciphertext, sizes, timing |
 | **Never sees** | Node ids, plaintext, rosters, who read what, which Spools a client also uses |
 | **Config** | Environment variables only; invalid values refuse to start |
@@ -779,7 +779,7 @@ built daemon on every pipeline (`conformance-selftest`).
 
 ## 🔨 Build and test
 
-JDK 21 — the Gradle wrapper pins Gradle 9.5.0.
+JDK 21 — the Gradle wrapper pins Gradle 9.8.2.
 
 ```sh
 ./gradlew check                 # compile + ktlint + detekt + every suite
