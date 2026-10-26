@@ -848,11 +848,11 @@ is the same one [Knit Hosted](https://hosted.getknit.app) runs, and everyone run
 build.
 
 Knit is funded by its supporters, through GitHub Sponsors and Ko-fi. Knit is its developer's
-full-time job, and supporters help pay their bills and keep Knit's servers running. As a thank-you,
-supporters receive a badge in Knit and Knit Anywhere: calls through Knit's own call relay (a TURN
-server), and larger files in chats over Knit's free public relay. Relaying calls and storing files
-costs real money for every person who uses them, so Knit offers them as a thank-you to the people
-who fund them. [What supporters receive](https://anywhere.getknit.app/sponsor).
+full-time job, and supporters help pay their bills and keep Knit's servers running. Anyone can send
+small files over Knit's free public relay. As a thank-you, supporters receive a badge in Knit and
+Knit Anywhere: calls through Knit's own call relay (a TURN server), and larger files in chats over
+that same relay. Relaying calls and storing files costs real money for every person who uses them,
+so Knit offers them as a thank-you to the people who fund them. [What supporters receive](https://anywhere.getknit.app/sponsor).
 
 Those perks live on Knit's own servers, not in this daemon. On a Spool you run, the attachment size
 and the TURN server are yours to set, with [no gate unless you add one](#-deploy).
