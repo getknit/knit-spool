@@ -332,8 +332,8 @@ behind tap-to-reveal, as their own setting says.
 ## 📞 TURN (experimental)
 
 > [!WARNING]
-> Experimental and off by default. Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.6; Knit's own
-> client half is not in a shipped build yet.
+> Experimental and off by default. Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.6. Knit's
+> app asks for TURN from 2.10.0, the release that added calls.
 
 Knit voice calls run peer to peer over WebRTC, and the 10–20% that cannot connect directly need a
 relay. Set `SPOOL_TURN_SECRET` and the Spool hands short-lived relay credentials to clients that ask;
@@ -397,25 +397,25 @@ asks for the last box and for one no Spool lists, and expects server 1's URLs fo
 
 ### Tickets and STUN
 
-Two further switches, for an operator who sells TURN to some callers and not others (knit-next
-`docs/SPOOL_PROTOCOL.md` §7.6; ADR 2026-10.bxsg), plus the choice of what else a ticket unlocks (ADR
-2026-10.h6pt):
+Two further switches, for an operator who offers TURN to ticket holders and not to everyone
+(knit-next `docs/SPOOL_PROTOCOL.md` §7.6; ADR 2026-10.bxsg), plus the choice of what else a ticket
+unlocks (ADR 2026-10.h6pt):
 
 - **`SPOOL_STUN_URLS`** puts a credential-free `stun` list in every `hello`. A phone with no TURN of
-  its own needs one: without it, it offers only private addresses, and a paying peer's relay —
+  its own needs one: without it, it offers only private addresses, and a ticket holder's relay —
   which admits peers by IP — cannot permit it. The TURN overlay points it at its own coturn.
 - **`SPOOL_TICKET_KEY`** and **`SPOOL_TICKET_AUDIENCE`** make `hello` carry `ent`, and `turnreq` then
   needs an Ed25519 ticket presented once per connection with `{ t: "ent", q, tk, sig }`. With one,
   no subscription is needed, and the TURN username's suffix is derived from the ticket's daily
   pseudonym, so every credential one holder fetches shares it and `TURN_USER_QUOTA` counts the
   holder. A refusal is `err ticket` with a `msg` (`expired`, `audience`, …), never a strike.
-- **`SPOOL_TICKET_GATES`** picks what a ticket unlocks on this one Spool, so paid and free callers
-  share it instead of needing a Spool each. It defaults to `turn,cast`, what a key gated before the
-  list existed. Adding `files` makes **sending** an attachment need the sender's own ticket minted
+- **`SPOOL_TICKET_GATES`** picks what a ticket unlocks on this one Spool, so callers with and without
+  a ticket share it instead of needing a Spool each. It defaults to `turn,cast`, what a key gated
+  before the list existed. Adding `files` makes **sending** an attachment need the sender's own ticket minted
   with `--files`: each stored chunk is charged to that holder's daily budget,
   `min(ab, SPOOL_TICKET_ATTACH_BYTES)`, and a spent budget is refused `err ticket` with `msg`
   `budget`. A ticket's `am` lowers the largest attachment its holder may send, and a larger one is
-  refused `size`. Another member's ticket never pays for an upload, and **receiving** never needs one.
+  refused `size`. Another member's ticket never covers an upload, and **receiving** never needs one.
 - **`SPOOL_TICKET_TURN_RATE`** limits each holder's TURN credentials by its daily pseudonym, so
   one ticket copied to many addresses shares one budget. The per-connection and per-address
   limits still apply first, and a refusal is `err rate` with `retryMs`, never a strike.
@@ -431,10 +431,11 @@ Two further switches, for an operator who sells TURN to some callers and not oth
   2026-10.zprp). A ticket names one host, and a client asks for one for the host it dialled, so
   while both names reach the Spool, set the new name as `SPOOL_TICKET_AUDIENCE` and the old one as
   the alias. Clear the alias once every client has moved, and before the old name is given to
-  another Spool. Until then one account can hold a ticket for each name, and so two pseudonyms and twice the
+  another Spool. Until then one holder can carry a ticket for each name, and so two pseudonyms and twice the
   per-holder budgets.
 
-The Spool holds only the public key. Until a storefront issues tickets, an operator can stand in:
+The Spool holds only the public key. An operator with no ticket issuer of their own can mint
+tickets by hand:
 
 ```sh
 knit-spool ticket-keygen                    # prints the signing key and SPOOL_TICKET_KEY=…
@@ -479,7 +480,7 @@ connected when it went out never gets it, which is what a walkie means.
 | **Never answered** | A cast carries no `q` and draws no `ok` or `err`. A refused one is dropped and counted: not subscribed, over `maxBytes`, over budget, the commons, or casts off. `hello` states the bounds up front, so a client can keep to them unprompted. |
 | **Never struck** | Past its budget a cast is just dropped. A flood still costs the record bucket every record does, and that bucket strikes. |
 | **Never a slow consumer** | A subscriber whose outbound channel is full loses that cast and nothing else. It is not counted toward the 4003 slow-consumer close. |
-| **Sold with tickets** | With `cast` in `SPOOL_TICKET_GATES` (the default once `SPOOL_TICKET_KEY` is set), a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One payer unlocks the scope both ways, so a free friend can talk back. Without a ticket key, any subscriber may cast. |
+| **Gated by tickets** | With `cast` in `SPOOL_TICKET_GATES` (the default once `SPOOL_TICKET_KEY` is set), a cast is carried only on a scope where some live subscriber holds a ticket with the cast flag (`ticket-mint --cast`). One ticket holder unlocks the scope both ways, so a friend without a ticket can talk back. Without a ticket key, any subscriber may cast. |
 | **Never logged** | No line names a cast or its scope. `knit_spool_casts_total`, `knit_spool_casts_fanned_total` and `knit_spool_casts_dropped_total{reason}` count them, and the status line shows `casts=+N`. |
 
 What a Spool sees of a cast: that a conversation is in a walkie session, who talks when and for how
@@ -499,6 +500,13 @@ from a dashboard without dropping a device. Plans are priced by how many devices
 once, paid a month at a time. The Spool is as blind there as it is on your box; what Knit Hosted
 keeps about you is an email address, a billing reference and an instance id — no scope ids, no
 connection logs, no client addresses. Knit works with either, or with several Spools at once.
+
+**Your own Spool has no tiers.** Raise `SPOOL_MAX_ATTACH_BYTES` as high as your disk allows (the ceiling is about 2 GiB per scope, and
+`SPOOL_MAX_BYTES` bounds the whole store), and run your own TURN server through
+`SPOOL_TURN_SECRET`, `SPOOL_TURN_URLS` and the [coturn overlay](#-turn-experimental). With no
+`SPOOL_TICKET_KEY`, a Spool gates nothing: any subscribed client can fetch a TURN credential, and
+every member can send attachments up to the size you set. Tickets exist for an operator who
+chooses to offer TURN or larger files to some callers only.
 
 The daemon serves plain WebSocket; **TLS terminates at a reverse proxy**. Either one you already
 run ([`deploy/Caddyfile`](deploy/Caddyfile), [`deploy/nginx.conf`](deploy/nginx.conf) alongside
@@ -813,8 +821,9 @@ against the packaged binaries; it proves the shipped artefacts rather than addin
 ## 🤝 Contributing
 
 Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), which also sets out the
-(deliberately modest) **support expectations**: this is a best-effort hobby project shipped as-is,
-with no warranty and no response-time guarantee. Development happens on GitHub at
+(deliberately modest) **support expectations**: this is a best-effort project shipped as-is,
+maintained by one person as their full-time job, with no warranty and no response-time guarantee.
+Development happens on GitHub at
 [github.com/getknit/knit-spool](https://github.com/getknit/knit-spool); the issue and pull-request
 templates cover what to include. Participation is governed by the
 [Code of Conduct](CODE_OF_CONDUCT.md), and notable changes are recorded in
@@ -834,15 +843,29 @@ default) rather than findings.
 
 ## 💛 Support
 
-Knit Spool is free and open source, with no ads, no tracking, and no paid edition — the daemon here
-is the same one [Knit Hosted](https://hosted.getknit.app) runs. If you run a Spool yourself and it's
-been useful, you can leave a one-off tip on Ko-fi or set up a recurring one on Liberapay:
+Knit Spool is free and open source, with no ads, no tracking, and no paid edition. The daemon here
+is the same one [Knit Hosted](https://hosted.getknit.app) runs, and everyone runs the same AGPL
+build.
 
-[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-leave%20a%20tip-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/knit)
-[![Support on Liberapay](https://img.shields.io/badge/Liberapay-give%20recurring-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/zaventh/)
+Knit is funded by its supporters, through GitHub Sponsors and Ko-fi. Knit is its developer's
+full-time job, and supporters help pay their bills and keep Knit's servers running. As a thank-you,
+supporters receive a badge in Knit and Knit Anywhere: calls through Knit's own call relay (a TURN
+server), and larger files in chats over Knit's free public relay. Relaying calls and storing files
+costs real money for every person who uses them, so Knit offers them as a thank-you to the people
+who fund them. [What supporters receive](https://anywhere.getknit.app/sponsor).
 
-Tips are optional and buy no special treatment — Knit Spool is AGPLv3 and stays that way. Reporting
-bugs, running a public Spool, and telling people it exists help just as much.
+Those perks live on Knit's own servers, not in this daemon. On a Spool you run, the attachment size
+and the TURN server are yours to set, with [no gate unless you add one](#-deploy).
+
+[![Support Knit on GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-support%20Knit-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/getknit)
+[![Support Knit on Ko-fi](https://img.shields.io/badge/Ko--fi-leave%20a%20tip-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/knit)
+
+Liberapay supports the developer directly, and carries no perks:
+
+[![Support the developer on Liberapay](https://img.shields.io/badge/Liberapay-support%20the%20developer-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/zaventh/)
+
+Support never changes the daemon: Knit Spool is AGPLv3 and stays that way. Reporting bugs, running
+a public Spool, and telling people it exists help just as much.
 
 ## 📄 License
 

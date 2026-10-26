@@ -32,7 +32,7 @@ services:
       # point at a TURN server elsewhere.
       SPOOL_TURN_URLS: "${SPOOL_TURN_URLS:-turn:${SPOOL_DOMAIN}:3478?transport=udp,turns:${SPOOL_DOMAIN}:5349?transport=tcp}"
       # coturn answers STUN without a credential, so every client — with a TURN credential or not —
-      # can learn its public address here. That is what lets a free phone reach a paying peer's relay.
+      # can learn its public address here. That lets a phone without a ticket reach a ticket holder's relay.
       SPOOL_STUN_URLS: "${SPOOL_STUN_URLS:-stun:${SPOOL_DOMAIN}:3478}"
 
   turn:

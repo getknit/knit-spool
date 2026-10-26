@@ -51,7 +51,7 @@ class Metrics(
     /**
      * New scopes refused `quota` at `SPOOL_MAX_SCOPES`, on a `sub` or on the push that recreates a
      * shed scope (ADR 2026-10.x9gq). Apart from the `quota` errs, which also count attachments over
-     * their caps: this one is a conversation that could not start here, and on a spool that sells
+     * their caps: this one is a conversation that could not start here, and on a spool that offers
      * TURN, a call that gets none from it. Rising means the spool is sized too small, not attacked.
      */
     val newScopesQuotaRefusedTotal = LongAdder()
@@ -89,7 +89,7 @@ class Metrics(
      */
     val turnIssuedTotal = ServerCounter()
 
-    /** Of [turnIssuedTotal], those issued under an entitlement ticket: the paying callers. */
+    /** Of [turnIssuedTotal], those issued under an entitlement ticket: the ticket holders. */
     val turnIssuedTicketedTotal = ServerCounter()
 
     /** `ent` records accepted (experimental). */

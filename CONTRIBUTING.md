@@ -6,8 +6,9 @@ the expectations below.
 
 ## Support expectations (read this first)
 
-Knit Spool is released **as-is** under the [GNU AGPL v3.0-or-later](LICENSE). It is developed on a
-**best-effort, hobby basis**, with **no support, warranty, or response-time guarantee** of any kind —
+Knit Spool is released **as-is** under the [GNU AGPL v3.0-or-later](LICENSE). It is maintained by one
+person as their full-time job, on a **best-effort basis**, with **no support, warranty, or
+response-time guarantee** of any kind —
 this is the "NO WARRANTY" clause of the AGPL, stated plainly:
 
 - Issues and pull requests are welcome, but may not be triaged, answered, or accepted.

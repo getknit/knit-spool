@@ -27,6 +27,7 @@ growing an explanation, that explanation belongs in the ADR.
 | commons rooms: `SPOOL_COMMONS_*` or `SPOOL_COMMONS_<n>_*`, `roomsFromEnv`, `hello`'s `rooms` or `commons`, `commonsBudget`, `commons-invite` | [ADR 2026-10.5cwn](../memory/decisions/2026-10-5cwn-one-spool-runs-up-to.md) |
 | several TURN servers: `SPOOL_TURN_<n>_*`, `turnFromEnv`, `TurnConfig.select`, `TurnUris`, `hello`'s `turnHosts`, `turnreq`'s `host`, or `knit_spool_turn_issued_total`'s `server` label | [ADR 2026-10.u5f4](../memory/decisions/2026-10-u5f4-a-spool-signs-for-up.md) |
 | the conformance runner's HTTP engine, `conformanceHttpClient`, a `ktor-client-*` dependency in `:conformance`, or how `SpoolClient` classifies a dead connection | [ADR 2026-10.3kgr](../memory/decisions/2026-10-3kgr-the-conformance-runner-speaks-websocket.md) |
+| public wording about money, supporters or ticket holders: the README's Support section, "hobby", or prose that says who pays for TURN or files | [ADR 2026-10.zm4z](../memory/decisions/2026-10-zm4z-public-copy-names-supporters.md) |
 
 ## Where they live
 

@@ -24,8 +24,9 @@ Please include:
 - steps to reproduce (or a proof of concept), and
 - the affected version / commit, plus the relevant `SPOOL_*` configuration if it matters.
 
-Please allow reasonable time for a fix before any public disclosure. As a best-effort hobby project,
-there is no guaranteed acknowledgement or remediation timeline, but genuine reports will be
+Please allow reasonable time for a fix before any public disclosure. Knit Spool is maintained
+by one person as their full-time job, on a best-effort basis, so there is no guaranteed
+acknowledgement or remediation timeline, but genuine reports will be
 reviewed.
 
 [report]: https://github.com/getknit/knit-spool/security/advisories/new

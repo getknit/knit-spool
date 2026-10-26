@@ -473,7 +473,7 @@ internal fun configFromEnv(env: (String) -> String?): SpoolServer.Config {
  * Entitlement-ticket checking (experimental, SPOOL_PROTOCOL.md §7.6), or null when
  * `SPOOL_TICKET_KEY` is unset. The key is the issuer's raw Ed25519 public key in unpadded base64url,
  * as `knit-spool ticket-keygen` prints it; it is decoded and tried as a verifier here, so a key the
- * JDK cannot use stops the spool at boot rather than refusing the first paying caller.
+ * JDK cannot use stops the spool at boot rather than refusing the first ticket holder.
  *
  * An audience, an alias, gates or an attach budget without a key is refused rather than ignored,
  * for the TURN settings' reason. None is a secret, but the key is still never echoed: a refusal that
@@ -531,7 +531,7 @@ internal fun ticketFromEnv(env: (String) -> String?): SpoolServer.TicketConfig? 
 
 /**
  * [raw] decoded and tried as an Ed25519 verifier, so a key the JDK cannot use stops the spool at boot
- * rather than refusing the first paying caller. The refusal names [name] and never echoes the value.
+ * rather than refusing the first ticket holder. The refusal names [name] and never echoes the value.
  */
 private fun ticketKeyBytes(
     name: String,

@@ -13,9 +13,9 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * `knit-spool ticket-keygen` and `ticket-mint`: an operator's stand-in for the storefront that will
- * issue entitlement tickets (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6, ADR 2026-10.bxsg), so
- * a field test can tell paying callers from free ones before any storefront exists.
+ * `knit-spool ticket-keygen` and `ticket-mint`: an operator's stand-in for a ticket issuer
+ * (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.6, ADR 2026-10.bxsg), so a field test can tell
+ * ticket holders from other callers without one.
  *
  * The daemon itself never reads a signing key: `serve` and `check` take only the public half. These
  * two commands are the only code paths here that hold the private half, and they print to stdout

@@ -25,4 +25,4 @@ contact_links:
     about: For operator questions, ideas, and open-ended discussion that isn't a bug or a concrete feature request.
   - name: 📖 Contributing guide & support expectations
     url: https://github.com/getknit/knit-spool/blob/main/CONTRIBUTING.md
-    about: Knit Spool is a best-effort hobby project shipped as-is. Please read this before filing.
+    about: Knit Spool is a best-effort project shipped as-is, maintained by one person as their full-time job. Please read this before filing.

@@ -1986,8 +1986,8 @@ class SpoolServer(
 
     /**
      * Whether some live subscriber of the scope holds a cast ticket: the caster itself, checked
-     * first, or anyone else subscribed to it here. One payer unlocks the scope both ways, as one
-     * payer is enough for TURN, so a free friend can talk back. It ties the payer's pseudonym to
+     * first, or anyone else subscribed to it here. One ticket holder unlocks the scope both ways, as
+     * one is enough for TURN, so a friend without a ticket can talk back. It ties the holder's pseudonym to
      * nothing the spool did not already tie it to: a ticketed connection's subscriptions.
      */
     private fun castUnlocked(

@@ -362,8 +362,8 @@ whatever clients declare (ADR 2026-10.x9gq). `SPOOL_MAX_TTL_MS` is boot-only: ch
 same restart as `SPOOL_MAX_ATTACH_BYTES`.
 
 The disk stays bounded by `SPOOL_MAX_BYTES`, ticketed or not: past it the least-active scope is
-shed whatever paid for it. What the budget buys is fairness. One customer's uploads can push out
-only as much as their own budget, rather than everything other customers hold. Size the watermark
+shed whatever ticket stored it. What the budget gives is fairness. One holder's uploads can push
+out only as much as their own budget, rather than everything other holders keep. Size the watermark
 for the number of holders you expect to be active at once times what each may keep: 1,000 holders
 at the default budget is up to ~94 GiB with a 48 h ceiling, or 250 GiB at 7 days. Attachments are also capped at `SPOOL_MAX_SCOPES` ×
 `SPOOL_MAX_ATTACH_BYTES` (64 GiB at 4,096 scopes), and the lower of the two is what the disk must

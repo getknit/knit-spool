@@ -8,8 +8,8 @@ body:
       value: |
         Thanks for the proposal. **Please search existing issues before opening a new one.**
 
-        - Knit Spool is a **best-effort hobby project** — proposals are welcome but may not be
-          accepted.
+        - Knit Spool is a **best-effort project**, maintained by one person as their full-time job —
+          proposals are welcome but may not be accepted.
         - **Read this first: the spec is the product.** Behavior the Spool protocol does not
           describe is out of scope for this daemon, and a change to the protocol itself belongs in
           the Knit repo
@@ -83,5 +83,5 @@ body:
       options:
         - label: I searched existing issues and this is not a duplicate.
           required: true
-        - label: I understand Knit Spool is a best-effort hobby project and this may not be accepted.
+        - label: I understand Knit Spool is a best-effort project and this may not be accepted.
           required: true
