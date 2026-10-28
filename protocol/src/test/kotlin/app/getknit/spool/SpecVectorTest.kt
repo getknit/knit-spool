@@ -381,7 +381,7 @@ class SpecVectorTest {
                     ),
                 // §7.8: helloSpool with `sig` as its sixth key, and a c→s sig on the cast record's fixture.
                 // This repo produced them (ADR 2026-10.2q49); the spec carries them since knit-next
-                // c02f7963d (docs/SPOOL_PROTOCOL.md §13).
+                // ba26a7904 (docs/SPOOL_PROTOCOL.md §13).
                 "helloSpoolSig" to
                     RecordCodec.encode(
                         Hello(
@@ -654,7 +654,7 @@ class SpecVectorTest {
                     "a3617464636173746573636f70655820000102030405060708090a0b0c0d0e0f1011" +
                     "12131415161718191a1b1c1d1e1f646461746150a0a1a2a3a4a5a6a7a8a9aaabacad" +
                     "aeaf",
-                // knit-next c02f7963d, §13, line for line.
+                // knit-next ba26a7904, §13, line for line.
                 "helloSpoolSig" to
                     "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a0001" +
                     "0000696d61785265636f72641a00020000696d617853636f7065731840676d617850756c" +

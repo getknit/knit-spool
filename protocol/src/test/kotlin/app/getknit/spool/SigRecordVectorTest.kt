@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * its sixth key, and `{t: "sig", scope, data}` in that key order, with `cast`'s scope and data. The
  * same script reproduced §13's `helloSpool` and `cast` byte for byte first. Neither is named `sig`,
  * which §13 already gives the ticket signature. The spec's §13 carries both since knit-next
- * c02f7963d, and [SpecVectorTest] pins its text; [theSpecCarriesWhatThisRepoMade] holds the two
+ * ba26a7904, and [SpecVectorTest] pins its text; [theSpecCarriesWhatThisRepoMade] holds the two
  * copies together.
  */
 class SigRecordVectorTest {

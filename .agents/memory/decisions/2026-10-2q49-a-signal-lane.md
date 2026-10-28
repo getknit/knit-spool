@@ -9,7 +9,7 @@ topics: [sigs, casts, tickets, typing]
 # ADR 2026-10.2q49 — A signal lane: live fan-out that no ticket gates
 
 Status: Accepted (2026-10-28). Implements knit-next `docs/SPOOL_PROTOCOL.md` §7.8 spool-side, as of
-knit-next `c02f7963d` (the spec's revision of 2026-10-28): S-7.8-1 to S-7.8-8, with the client rules
+knit-next `ba26a7904` (the spec's revision of 2026-10-28): S-7.8-1 to S-7.8-8, with the client rules
 C-7.8-9 to C-7.8-16 on knit-next's side, whose half is its ADR 2026-10.97vs. B-7.1-8 and S-7.7-2 now
 name casts and sigs as the two records with no `q`. Builds on ADR 2026-10.3wdy (casts),
 ADR 2026-10.x9gq (ticketed and unticketed members share a spool) and ADR 2026-10.h4ps (bit 4 of `fl`
@@ -102,7 +102,7 @@ listed and pulled on every heal round, and be served back as history.
     casts'; the reload kill switch and a connection never told of sigs; a sig between two connections
     with no ticket on a spool that gates every capability; the metrics; nothing logged.
   - `SigRecordVectorTest`, whose `helloSpoolSig` and `sigRecord` were made by a hand-rolled encoder,
-    not kotlinx. knit-next's §13 copied them at `c02f7963d`, and `SpecVectorTest` pins that text.
+    not kotlinx. knit-next's §13 copied them at `ba26a7904`, and `SpecVectorTest` pins that text.
   - The conformance checks `sig-advertised`, `sig-fanout` (never presenting a ticket, so S-7.8-4 on a
     ticketed spool), `sig-silent-refusal` and the advisory `sig-rate`, run in process by
     `ConformanceSelfTest`, which also runs one suite with sigs off.
