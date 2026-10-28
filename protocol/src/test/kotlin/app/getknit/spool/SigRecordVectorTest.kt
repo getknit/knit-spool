@@ -23,7 +23,9 @@ import kotlin.test.assertTrue
  * in Python from the contract's inputs: `helloSpool`'s map with `sig = {maxBytes: 8192, rate: 2}` as
  * its sixth key, and `{t: "sig", scope, data}` in that key order, with `cast`'s scope and data. The
  * same script reproduced §13's `helloSpool` and `cast` byte for byte first. Neither is named `sig`,
- * which §13 already gives the ticket signature.
+ * which §13 already gives the ticket signature. The spec's §13 carries both since knit-next
+ * c02f7963d, and [SpecVectorTest] pins its text; [theSpecCarriesWhatThisRepoMade] holds the two
+ * copies together.
  */
 class SigRecordVectorTest {
     @Test
@@ -78,6 +80,13 @@ class SigRecordVectorTest {
         // `cast`'s map, byte for byte, but for the record type.
         val cast = SpecVectorTest.EXPECTED.getValue("cast")
         assertEquals(cast.substringAfter("6463617374"), SIG_RECORD.substringAfter("63736967"))
+    }
+
+    /** §13's copies are this repo's production, unchanged: the spec copied them, nobody re-encoded them. */
+    @Test
+    fun theSpecCarriesWhatThisRepoMade() {
+        assertEquals(HELLO_SPOOL_SIG, SpecVectorTest.EXPECTED.getValue("helloSpoolSig"))
+        assertEquals(SIG_RECORD, SpecVectorTest.EXPECTED.getValue("sigRecord"))
     }
 
     /** What each side reads from each: the bounds a client keeps to, and the scope and data a spool relays. */

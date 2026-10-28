@@ -31,6 +31,8 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
+import app.getknit.spool.protocol.Sig
+import app.getknit.spool.protocol.SigInfo
 import app.getknit.spool.protocol.Sub
 import app.getknit.spool.protocol.Ticket
 import app.getknit.spool.protocol.Tickets
@@ -377,6 +379,32 @@ class SpecVectorTest {
                     RecordCodec.encode(
                         Cast(t = RecordType.CAST, scope = ByteArray(32) { it.toByte() }, data = ByteArray(16) { (0xa0 + it).toByte() }),
                     ),
+                // §7.8: helloSpool with `sig` as its sixth key, and a c→s sig on the cast record's fixture.
+                // This repo produced them (ADR 2026-10.2q49); the spec carries them since knit-next
+                // c02f7963d (docs/SPOOL_PROTOCOL.md §13).
+                "helloSpoolSig" to
+                    RecordCodec.encode(
+                        Hello(
+                            t = RecordType.HELLO,
+                            v = RECORD_VERSION,
+                            min = 1,
+                            limits =
+                                Limits(
+                                    maxBlob = 65_536,
+                                    maxRecord = 131_072,
+                                    maxScopes = 64,
+                                    maxPull = 64,
+                                    maxFramesCap = 1_000,
+                                    maxTtlMs = 604_800_000L,
+                                ),
+                            powBits = 20,
+                            sig = SigInfo(maxBytes = 8_192, rate = 2),
+                        ),
+                    ),
+                "sigRecord" to
+                    RecordCodec.encode(
+                        Sig(t = RecordType.SIG, scope = ByteArray(32) { it.toByte() }, data = ByteArray(16) { (0xa0 + it).toByte() }),
+                    ),
             )
         for ((name, encoded) in vectors) {
             assertEquals(EXPECTED.getValue(name), encoded.toHex(), "record vector '$name' diverges from the spec")
@@ -626,6 +654,15 @@ class SpecVectorTest {
                     "a3617464636173746573636f70655820000102030405060708090a0b0c0d0e0f1011" +
                     "12131415161718191a1b1c1d1e1f646461746150a0a1a2a3a4a5a6a7a8a9aaabacad" +
                     "aeaf",
+                // knit-next c02f7963d, §13, line for line.
+                "helloSpoolSig" to
+                    "a661746568656c6c6f617601636d696e01666c696d697473a6676d6178426c6f621a0001" +
+                    "0000696d61785265636f72641a00020000696d617853636f7065731840676d617850756c" +
+                    "6c18406c6d61784672616d65734361701903e8686d617854746c4d731a240c840067706f" +
+                    "77426974731463736967a2686d61784279746573192000647261746502",
+                "sigRecord" to
+                    "a36174637369676573636f70655820000102030405060708090a0b0c0d0e0f1011121314" +
+                    "15161718191a1b1c1d1e1f646461746150a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
                 "kid" to "21fe31dfa154a261",
                 "tk" to
                     "a7617601636b69644821fe31dfa154a261636175646b6c61622e6578616d706c6563" +
