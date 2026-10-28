@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-26T07:43:54Z
+  updated: 2026-10-28T11:49:25Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -18,12 +18,20 @@ document:
 
 # Knit Spool changelog
 
-## Unreleased
+## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
+
+> The signal release. Typing indicators cross a Spool now, for every phone: a new `sig` record is
+> fanned out live to a conversation's other members and never stored, and no ticket gates it, so
+> phones without one get them too. Pre-1.0, so every interface below is still subject to change. The
+> wire change is additive: a new optional `hello` key and a record that only a client told of it
+> sends, and that an older client skips. What an operator sees move: **signals are on by default**,
+> and **a Spool that sets `SPOOL_MAX_RECORD` below 8704 must lower `SPOOL_MAX_SIG`, or it refuses
+> to start**. A 0.7 Spool on the default record size upgrades in place.
 
 ### Added
 
 - **Signals: typing cues relayed live, never stored, and open to every phone** (knit-next
-  `docs/SPOOL_PROTOCOL.md` §7.8; ADR 2026-10.2q49). `hello` carries `sig: { maxBytes, rate }`, and
+  `docs/SPOOL_PROTOCOL.md` §7.8, `ba26a7904`; ADR 2026-10.2q49). `hello` carries `sig: { maxBytes, rate }`, and
   a new `sig` record goes to every other subscriber of its scope, with casts' lane rules: no `q`, never
   answered, never struck, never stored, and never counted toward the slow-consumer close. Unlike a
   cast, no ticket gates a sig, whatever `SPOOL_TICKET_GATES` says, so phones without a ticket get
@@ -35,7 +43,7 @@ document:
   and `sigs=+N` on the status line. New conformance checks `sig-advertised`, `sig-fanout`,
   `sig-silent-refusal` and the advisory `sig-rate`. A client that predates signals skips the record.
   A Spool that sets `SPOOL_MAX_RECORD` below 8704 must set `SPOOL_MAX_SIG` to fit, or it refuses to
-  start. The development version moves to `0.8.0-dev.2` with the three new variables.
+  start. `0.8.0-dev.2` was the first development build to read the three variables.
 
 ## [0.7.0](https://github.com/getknit/knit-spool/releases/tag/v0.7.0) — 2026-10-26T07:43:54Z
 
