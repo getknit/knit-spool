@@ -90,6 +90,9 @@ internal val KNOWN_VARS =
         "SPOOL_RATE_CASTS",
         "SPOOL_MAX_CAST",
         "SPOOL_RATE_CASTS_TOTAL",
+        "SPOOL_RATE_SIGS",
+        "SPOOL_MAX_SIG",
+        "SPOOL_RATE_SIGS_TOTAL",
         "SPOOL_COMMONS_RATE_TOTAL",
     ) + (2..MAX_COMMONS_ROOMS).flatMap { room -> COMMONS_ROOM_KEYS.map { "SPOOL_COMMONS_${room}_$it" } } +
         (2..MAX_TURN_SERVERS).flatMap { server -> TURN_SERVER_KEYS.map { "SPOOL_TURN_${server}_$it" } }
@@ -128,6 +131,12 @@ private const val ID_RECORD_BYTES = 34
  * hundred the per-connection bucket bounds nothing the record bucket does not already.
  */
 private const val MAX_CAST_RATE = 100
+
+/**
+ * The most sigs a second one connection may be allowed (SPOOL_PROTOCOL.md §7.8), the cap a client
+ * clamps the advertised rate to (C-7.8-9). A typing cue goes out once every eight seconds at most.
+ */
+private const val MAX_SIG_RATE = 100
 
 /** A coturn REST secret is an HMAC key; 32 characters is the floor `openssl rand -base64 24` clears. */
 private const val MIN_TURN_SECRET = 32
@@ -503,6 +512,11 @@ internal fun configFromEnv(
     require(maxCast + RECORD_ENVELOPE <= maxRecord) {
         "SPOOL_MAX_CAST ($maxCast) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
     }
+    // Signals (SPOOL_PROTOCOL.md §7.8). On by default, since no ticket gates one; a rate of 0 is the off switch.
+    val maxSig = intVar(env, "SPOOL_MAX_SIG", default = 8_192, min = 1)
+    require(maxSig + RECORD_ENVELOPE <= maxRecord) {
+        "SPOOL_MAX_SIG ($maxSig) + $RECORD_ENVELOPE bytes of CBOR envelope must fit SPOOL_MAX_RECORD ($maxRecord)"
+    }
     val turn = turnFromEnv(env)
     val ticket = ticketFromEnv(env)
     val rooms = roomsFromEnv(env, roomLimits ?: hardLimits, maxRecord, maxBytes)
@@ -541,6 +555,9 @@ internal fun configFromEnv(
         rateCasts = intVar(env, "SPOOL_RATE_CASTS", default = 0, min = 0, max = MAX_CAST_RATE),
         maxCast = maxCast,
         rateCastsTotal = intVar(env, "SPOOL_RATE_CASTS_TOTAL", default = 200, min = 1),
+        rateSigs = intVar(env, "SPOOL_RATE_SIGS", default = 2, min = 0, max = MAX_SIG_RATE),
+        maxSig = maxSig,
+        rateSigsTotal = intVar(env, "SPOOL_RATE_SIGS_TOTAL", default = 200, min = 1),
     )
 }
 

@@ -33,6 +33,8 @@ import app.getknit.spool.protocol.ScopeBounds
 import app.getknit.spool.protocol.ScopeDigest
 import app.getknit.spool.protocol.ScopeList
 import app.getknit.spool.protocol.ScopeSub
+import app.getknit.spool.protocol.Sig
+import app.getknit.spool.protocol.SigInfo
 import app.getknit.spool.protocol.Sub
 import app.getknit.spool.protocol.Ticket
 import app.getknit.spool.protocol.Tickets
@@ -62,6 +64,15 @@ private const val CAST_BURST_FACTOR = 4
 
 /** How many casts past the burst `cast-rate` sends. */
 private const val CAST_RATE_EXCESS = 10
+
+/** A sig's payload in the sig checks: a typing frame sealed as SPOOL_PROTOCOL.md §7.8 seals one. */
+private const val SIG_PROBE_BYTES = 285
+
+/** The burst a sig budget allows, as a multiple of its advertised rate (SPOOL_PROTOCOL.md §7.8). */
+private const val SIG_BURST_FACTOR = 4
+
+/** How many sigs past the burst `sig-rate` sends. */
+private const val SIG_RATE_EXCESS = 10
 
 /** Generous CBOR envelope allowance for a push record beyond its `data` payload. */
 private const val PUSH_RECORD_OVERHEAD = 128L
@@ -299,6 +310,11 @@ fun allChecks(): List<Check> =
         castSilentRefusal(),
         castTicket(),
         castRate(),
+        // SPOOL_PROTOCOL.md §7.8: signals. sig-rate last of them, since it drains this address's sig budget.
+        sigAdvertised(),
+        sigFanout(),
+        sigSilentRefusal(),
+        sigRate(),
         rateLimit(),
         quotaScopes(),
     )
@@ -741,7 +757,7 @@ private fun Ctx.castOf(
 
 /**
  * Proves nothing was sent to [this] ahead of a `list` for [scope]: the spool handles a connection's
- * records in order, so anything a cast drew would arrive before the listing. Digests are skipped.
+ * records in order, so anything a cast or sig drew would arrive before the listing. Digests are skipped.
  */
 private suspend fun Session.nextIsListing(scope: ByteArray): ScopeList {
     val q = nextQ()
@@ -888,6 +904,108 @@ private fun castRate(): Check =
                     }
                 }
                 if (heard > allowed) throw Advisory("$heard casts fanned out of a burst the advertised rate allows $allowed of")
+            }
+        }
+    }
+
+/** Skips every sig check on a spool whose `hello` carried no `sig` (SPOOL_PROTOCOL.md §7.8, S-7.8-1). */
+private fun Ctx.requireSig(): SigInfo = serverHello.sig ?: throw SkipCheck("spool advertises no sig (SPOOL_PROTOCOL.md §7.8)")
+
+private fun Ctx.sigOf(
+    scope: ByteArray,
+    size: Int = SIG_PROBE_BYTES,
+): Sig = Sig(t = RecordType.SIG, scope = scope, data = Random.nextBytes(size))
+
+/** The next sig at [this], skipping digests, with what it should carry. */
+private suspend fun Session.expectSig(sent: Sig) {
+    val got = expect<Sig>(RecordType.SIG)
+    ensure(got.scope.contentEquals(sent.scope)) { "expected the sig for scope ${hex(sent.scope)}, got ${hex(got.scope)}" }
+    ensure(got.data.contentEquals(sent.data)) { "expected the sig's data unchanged" }
+}
+
+/** A `sig` advertisement is a positive size inside a record and a positive rate (S-7.8-1). */
+private fun sigAdvertised(): Check =
+    Check(name = "sig-advertised") { ctx ->
+        val sig = ctx.requireSig()
+        ensure(sig.maxBytes in 1..ctx.limits().maxRecord) { "sig maxBytes ${sig.maxBytes} outside 1..maxRecord" }
+        ensure(sig.rate >= 1) { "sig rate ${sig.rate}; omitted is the off state, never 0" }
+    }
+
+/**
+ * A sig reaches the scope's other subscriber unchanged, never comes back to its sender, not even as
+ * an answer (S-7.8-2), and leaves nothing behind (S-7.8-5). Neither connection presents a ticket, so
+ * on a spool with `ent` this is also S-7.8-4: whatever `entGates` says, no ticket gates a sig.
+ */
+private fun sigFanout(): Check =
+    Check(name = "sig-fanout") { ctx ->
+        ctx.requireSig()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val sent = ctx.sigOf(scope)
+                a.send(sent)
+                val listing = a.nextIsListing(scope)
+                b.expectSig(sent)
+                ensure(listing.blobIds.isNullOrEmpty()) { "expected a sig never to be listed, got ${listing.blobIds?.size} ids" }
+                ensure(listing.tombstones.isNullOrEmpty()) { "expected a sig never to leave a tombstone" }
+            }
+        }
+    }
+
+/** Sigs the spool will not carry are dropped without a word (S-7.8-2, S-7.8-3), and the connection stays usable. */
+private fun sigSilentRefusal(): Check =
+    Check(name = "sig-silent-refusal") { ctx ->
+        val sig = ctx.requireSig()
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            hello()
+            ctx.subscribeFresh(this, scope)
+            send(ctx.sigOf(ctx.randomScope())) // a scope this connection never subscribed
+            send(ctx.sigOf(scope, size = sig.maxBytes + 1))
+            nextIsListing(scope)
+        }
+    }
+
+/**
+ * Advisory: a burst well past `rate × 4` fans out no more than the burst, give or take what refills
+ * while it is sent. A spool may hold sigs to a tighter budget than it advertises; never a looser one.
+ */
+private fun sigRate(): Check =
+    Check(name = "sig-rate", must = false) { ctx ->
+        val sig = ctx.requireSig()
+        val burst = SIG_BURST_FACTOR * sig.rate
+        val scope = ctx.randomScope()
+        ctx.client.connect {
+            val a = this
+            a.hello()
+            ctx.subscribeFresh(a, scope)
+            ctx.client.connect {
+                val b = this
+                b.hello()
+                ctx.subscribeFresh(b, scope)
+                val started = System.currentTimeMillis()
+                repeat(burst + SIG_RATE_EXCESS) { a.send(ctx.sigOf(scope)) }
+                a.nextIsListing(scope)
+                val elapsedS = (System.currentTimeMillis() - started + MS_PER_S - 1) / MS_PER_S
+                val allowed = burst + sig.rate * elapsedS
+                var heard = 0
+                val q = b.nextQ()
+                b.send(ScopeList(t = RecordType.LIST, q = q, scope = scope))
+                while (true) {
+                    val bytes = b.receiveBytes()
+                    when (RecordCodec.peekType(bytes)) {
+                        RecordType.SIG -> heard++
+                        RecordType.LIST -> break
+                        else -> Unit
+                    }
+                }
+                if (heard > allowed) throw Advisory("$heard sigs fanned out of a burst the advertised rate allows $allowed of")
             }
         }
     }

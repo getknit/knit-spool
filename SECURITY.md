@@ -57,6 +57,13 @@ conversation is in a walkie session, which side talks when and for how long, and
 addresses. It still shows nothing of what was said, and none of it reaches the disk or the log. A
 cast, or the scope it names, in this daemon's log is a reportable vulnerability.
 
+Every Spool on 0.8 or later also relays signals live and keeps none, unless `SPOOL_RATE_SIGS=0`.
+Today a signal is a typing cue. It shows the operator that someone in a conversation is typing,
+when, and the sender's address, and nothing of what is typed or who is typing: the client seals and
+signs it inside. No ticket gates a signal, so it ties no ticket pseudonym to that timing. None of it
+reaches the disk or the log. A signal, or the scope it names, in this daemon's log is a reportable
+vulnerability.
+
 A Spool with a ticket key (`SPOOL_TICKET_KEY`, experimental) also learns each ticket holder's daily
 pseudonym, and can link that holder's connections, and the scopes they hold, within a day. Where
 `files` is gated it keeps an upload budget per pseudonym: how many attachment bytes that holder

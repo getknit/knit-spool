@@ -78,6 +78,11 @@ fun testConfig(
     rateCasts: Int = 0,
     maxCast: Int = 2_048,
     rateCastsTotal: Int = 200,
+    // On, as the daemon's default is, so every server test meets the lane a stock spool runs. The size
+    // is the daemon's 8 KiB scaled down to fit this harness's 8 KiB record.
+    rateSigs: Int = 2,
+    maxSig: Int = 2_048,
+    rateSigsTotal: Int = 200,
 ): SpoolServer.Config =
     SpoolServer.Config(
         port = 0,
@@ -109,6 +114,9 @@ fun testConfig(
         rateCasts = rateCasts,
         maxCast = maxCast,
         rateCastsTotal = rateCastsTotal,
+        rateSigs = rateSigs,
+        maxSig = maxSig,
+        rateSigsTotal = rateSigsTotal,
     )
 
 /** Whether [needle] occurs anywhere in this array — for asserting what an encoded record does *not* carry. */

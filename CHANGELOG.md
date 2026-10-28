@@ -18,6 +18,25 @@ document:
 
 # Knit Spool changelog
 
+## Unreleased
+
+### Added
+
+- **Signals: typing cues relayed live, never stored, and open to every phone** (knit-next
+  `docs/SPOOL_PROTOCOL.md` §7.8; ADR 2026-10.2q49). `hello` carries `sig: { maxBytes, rate }`, and
+  a new `sig` record goes to every other subscriber of its scope, with casts' lane rules: no `q`, never
+  answered, never struck, never stored, and never counted toward the slow-consumer close. Unlike a
+  cast, no ticket gates a sig, whatever `SPOOL_TICKET_GATES` says, so phones without a ticket get
+  typing indicators over the Internet too. **On by default**: `SPOOL_RATE_SIGS` (2 a second per
+  connection, burst 4×, one address 8× that), `SPOOL_MAX_SIG` (8 KiB) and the Spool-wide
+  `SPOOL_RATE_SIGS_TOTAL` (200), budgets apart from the casts'. All reloadable, and
+  `SPOOL_RATE_SIGS=0` turns signals off and stops them on live connections at once. Metrics
+  `knit_spool_sigs_total`, `knit_spool_sigs_fanned_total` and `knit_spool_sigs_dropped_total{reason}`,
+  and `sigs=+N` on the status line. New conformance checks `sig-advertised`, `sig-fanout`,
+  `sig-silent-refusal` and the advisory `sig-rate`. A client that predates signals skips the record.
+  A Spool that sets `SPOOL_MAX_RECORD` below 8704 must set `SPOOL_MAX_SIG` to fit, or it refuses to
+  start. The development version moves to `0.8.0-dev.2` with the three new variables.
+
 ## [0.7.0](https://github.com/getknit/knit-spool/releases/tag/v0.7.0) — 2026-10-26T07:43:54Z
 
 > The rotation release. Rotating a commons room, which is how an operator removes a member, is now

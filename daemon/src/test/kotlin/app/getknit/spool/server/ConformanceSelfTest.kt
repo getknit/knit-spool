@@ -163,12 +163,14 @@ class ConformanceSelfTest {
                             maxAttachBytes = 1_500,
                             maxATotal = 8,
                         ),
+                    // Signals off: the one run where the sig checks skip, so the off branch stays under the suite.
+                    rateSigs = 0,
                 ),
                 destructive = false,
             )
         run.assertClean(
             expectedSkips =
-                BARE_SKIPS +
+                BARE_SKIPS + SIG_CHECKS +
                     setOf(
                         "push-too-large",
                         "pow-gate",
@@ -304,7 +306,13 @@ class ConformanceSelfTest {
         /** Every capability `SPOOL_TICKET_GATES` can gate today. */
         val EVERY_GATE = Tickets.FL_TURN or Tickets.FL_FILES or Tickets.FL_CAST
 
-        /** What skips without a token, a commons, a moderation flag, TURN or casts — the CI job's exact SKIP set. */
+        /** What skips on a spool with `SPOOL_RATE_SIGS=0` (SPOOL_PROTOCOL.md §7.8). */
+        val SIG_CHECKS = setOf("sig-advertised", "sig-fanout", "sig-silent-refusal", "sig-rate")
+
+        /**
+         * What skips without a token, a commons, a moderation flag, TURN or casts — the CI job's exact
+         * SKIP set. Sigs are on by default, so no sig check is in it.
+         */
         val BARE_SKIPS =
             setOf(
                 "auth-required",

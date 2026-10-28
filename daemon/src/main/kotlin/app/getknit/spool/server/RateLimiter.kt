@@ -10,7 +10,10 @@ private const val IP_TURN_FACTOR = 4.0
 private const val TURN_WINDOW_S = 600.0
 private const val TURN_IP_BURST = 2.0
 private const val IP_CAST_FACTOR = 4.0
-private const val CAST_BURST_FACTOR = 4.0
+
+/** Eight times one connection's sigs, not four: typing is every phone's, and carrier NAT puts many behind one address. */
+private const val IP_SIG_FACTOR = 8.0
+private const val LIVE_BURST_FACTOR = 4.0
 
 /**
  * Token bucket for the spec §6.4 rate limits. `take()` returns 0 on success or the milliseconds
@@ -85,12 +88,12 @@ class StrikeWindow(
 
 /**
  * Per-client-IP state: connection count, the new-scope-creation bucket and, on a spool that issues
- * TURN credentials or fans out casts, their per-address budgets — four times one connection's, so
- * a household behind one address is not one caller.
+ * TURN credentials or fans out casts or sigs, their per-address budgets — a multiple of one
+ * connection's, so a household behind one address is not one caller.
  */
 class IpState(
     rateNewScopesPerMin: Int,
-    private val clock: () -> Long,
+    clock: () -> Long,
     turnRatePer10Min: Int? = null,
 ) {
     val connections = AtomicInteger(0)
@@ -107,22 +110,36 @@ class IpState(
             TokenBucket(ratePerSec = IP_TURN_FACTOR * it / TURN_WINDOW_S, burst = IP_TURN_FACTOR * TURN_IP_BURST, clock = clock)
         }
 
-    private var castBucket: TokenBucket? = null
-    private var castRate = 0
+    private val castBuckets = RateFollowingBucket(IP_CAST_FACTOR, clock)
+    private val sigBuckets = RateFollowingBucket(IP_SIG_FACTOR, clock)
 
-    /**
-     * This address's cast budget, four times one connection's like [turnBucket], built for [rate]
-     * casts a second. Built on first use and rebuilt when a reload moves the rate, because casts
-     * can be switched on long after this address first connected.
-     */
-    @Synchronized
-    fun castBucket(rate: Int): TokenBucket {
-        val current = castBucket
-        if (current != null && castRate == rate) return current
-        castRate = rate
-        return TokenBucket(IP_CAST_FACTOR * rate, IP_CAST_FACTOR * CAST_BURST_FACTOR * rate, clock).also { castBucket = it }
-    }
+    /** This address's cast budget, four times one connection's like [turnBucket], built for [rate] casts a second. */
+    fun castBucket(rate: Int): TokenBucket = castBuckets.forRate(rate)
+
+    /** This address's sig budget, eight times one connection's, built for [rate] sigs a second (SPOOL_PROTOCOL.md §7.8). */
+    fun sigBucket(rate: Int): TokenBucket = sigBuckets.forRate(rate)
 
     @Volatile
     var lastSeen = 0L
+}
+
+/**
+ * A per-address budget of [factor] times a per-connection rate, with the burst of four times that.
+ * Built on first use and rebuilt when a reload moves the rate, because a live lane can be switched
+ * on long after its address first connected.
+ */
+private class RateFollowingBucket(
+    private val factor: Double,
+    private val clock: () -> Long,
+) {
+    private var bucket: TokenBucket? = null
+    private var rate = 0
+
+    @Synchronized
+    fun forRate(rate: Int): TokenBucket {
+        val current = bucket
+        if (current != null && this.rate == rate) return current
+        this.rate = rate
+        return TokenBucket(factor * rate, factor * LIVE_BURST_FACTOR * rate, clock).also { bucket = it }
+    }
 }

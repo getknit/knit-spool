@@ -61,10 +61,10 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. 0.8.0-dev.1 is the reset after
-         * the 0.7.0 release, so the fingerprint is 0.7.0's, unchanged since 0.7.0-dev.2.
+         * The development version and the contract's fingerprint at it. 0.8.0-dev.2 adds the signal
+         * lane's `SPOOL_RATE_SIGS`, `SPOOL_MAX_SIG` and `SPOOL_RATE_SIGS_TOTAL` (ADR 2026-10.2q49).
          */
-        val PINNED = "0.8.0-dev.1" to "8904f9a46f9048a5"
+        val PINNED = "0.8.0-dev.2" to "551123af388a9c50"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

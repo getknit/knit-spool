@@ -135,6 +135,18 @@ class Metrics(
 
     fun castDroppedCount(reason: CastDrop): Long = castDroppedTotal.getValue(reason).sum()
 
+    /** Sig records received (SPOOL_PROTOCOL.md §7.8), fanned out or not. */
+    val sigsTotal = LongAdder()
+
+    /** Copies of sigs handed to subscribers: one sig in leaves as up to (subscribers - 1) of these. */
+    val sigsFannedTotal = LongAdder()
+
+    /**
+     * Sigs dropped, by [SigDrop], for [castDroppedTotal]'s reason: a sig is never answered either.
+     * Counts and reasons only (S-7.8-8): never a scope, so no series names a conversation.
+     */
+    val sigsDropped = ReasonCounter(SigDrop.entries)
+
     /**
      * Record bytes handed to clients — the input to a metered link's monthly bill, which no other
      * counter here exposes. Fan-out means one push leaves as (subscribers - 1) copies, so egress is
@@ -166,6 +178,7 @@ class Metrics(
         turnServers: Int = 0,
         tickets: Boolean = false,
         casts: Boolean = false,
+        sigs: Boolean = false,
     ): String =
         buildString {
             // A gauge that is always 1, carrying its payload in the labels — the exposition idiom
@@ -247,6 +260,19 @@ class Metrics(
                         .append('\n')
                 }
             }
+            // Absent while sigs are off, for the commons' reason.
+            if (sigs) {
+                line("knit_spool_sigs_total", "counter", sigsTotal.sum())
+                line("knit_spool_sigs_fanned_total", "counter", sigsFannedTotal.sum())
+                append("# TYPE knit_spool_sigs_dropped_total counter\n")
+                SigDrop.entries.forEach { reason ->
+                    append("knit_spool_sigs_dropped_total{reason=\"")
+                        .append(reason.word)
+                        .append("\"} ")
+                        .append(sigsDropped.count(reason))
+                        .append('\n')
+                }
+            }
             append("# TYPE knit_spool_errs_total counter\n")
             errsTotal.entries.sortedBy { it.key }.forEach { (code, adder) ->
                 append("knit_spool_errs_total{code=\"")
@@ -322,6 +348,20 @@ class ServerCounter {
 }
 
 /**
+ * A counter per reason of a closed set, every reason counted from zero, so a series never appears
+ * mid-scrape. Split by reason as [ServerCounter] is split by server.
+ */
+class ReasonCounter<R : Enum<R>>(
+    reasons: Iterable<R>,
+) {
+    private val counts = reasons.associateWith { LongAdder() }
+
+    fun increment(reason: R) = counts.getValue(reason).increment()
+
+    fun count(reason: R): Long = counts.getValue(reason).sum()
+}
+
+/**
  * Which commons budget refused a push (spec S-7.4-4): the room's own, or the spool-wide one every
  * room shares. A metrics label and nothing else: a refused member sees the same `err rate` either way.
  */
@@ -350,6 +390,29 @@ enum class CastDrop(
 
     /** On a ticketed spool, no subscriber of the scope holds a live cast ticket. */
     TICKET("ticket"),
+    RATE("rate"),
+
+    /** One subscriber's outbound channel was full; that copy was lost. */
+    FULL("full"),
+}
+
+/**
+ * Why a sig was dropped (SPOOL_PROTOCOL.md §7.8, S-7.8-3), named after [CastDrop]'s words. A metrics
+ * label and nothing else: a sig is never answered. There is no `ticket`, because no ticket gates a sig.
+ */
+enum class SigDrop(
+    val word: String,
+) {
+    /** Undecodable, or a scope id that is not 32 bytes. */
+    MALFORMED("malformed"),
+
+    /** Sigs are off, or were off when this connection was sent its hello. */
+    OFF("off"),
+    NOT_SUBSCRIBED("not_subscribed"),
+    COMMONS("commons"),
+    TOO_LARGE("too_large"),
+
+    /** Over the connection's, the address's or the spool's sig budget. */
     RATE("rate"),
 
     /** One subscriber's outbound channel was full; that copy was lost. */

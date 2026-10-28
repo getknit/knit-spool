@@ -17,10 +17,12 @@ class StatusLineTest {
         metrics: Metrics,
         maxBytes: Long = 268_435_456L,
         heapUsed: Long = 100L * 1024 * 1024,
+        sigsOn: () -> Boolean = { false },
     ) = StatusLine(
         metrics = metrics,
         maxScopes = 64,
         maxBytes = { maxBytes },
+        sigsOn = sigsOn,
         startedAtMs = 0L,
         heap = { HeapUse(used = heapUsed, max = 256L * 1024 * 1024) },
     )
@@ -148,6 +150,21 @@ class StatusLineTest {
         assertEquals("2sub/3f,0sub/7f", two["commons"])
     }
 
+    /** `sigs=+N` while sigs are on, and while a switch-off is still draining in; gone once both are false. */
+    @Test
+    fun theSigsFieldFollowsTheSwitch() {
+        val metrics = Metrics()
+        var on = true
+        val status = statusLine(metrics, sigsOn = { on })
+        repeat(3) { metrics.sigsTotal.increment() }
+        assertEquals("+3", fields(status.render(now = 60_000L, scopes = 1, liveBytes = 0L))["sigs"])
+        on = false
+        metrics.sigsTotal.increment()
+        assertEquals("+1", fields(status.render(now = 120_000L, scopes = 1, liveBytes = 0L))["sigs"], "a draining switch-off still shows")
+        assertFalse("sigs" in fields(status.render(now = 180_000L, scopes = 1, liveBytes = 0L)), "off and quiet: no field")
+        assertFalse("casts" in fields(status.render(now = 240_000L, scopes = 1, liveBytes = 0L)), "sigs never switch casts on")
+    }
+
     /** The loop `start()` launches is what logs the line in production: nothing here calls the tick. */
     @Test
     fun theScheduledStatusLineLogsOnItsCadence() {
@@ -186,5 +203,7 @@ class StatusLineTest {
         assertEquals("40B", fields["live"], line)
         assertEquals("+1", fields["pushes"], line)
         assertEquals("+1", fields["accepted"], line)
+        // Sigs are on by default, so a stock spool's line carries the field.
+        assertEquals("+0", fields["sigs"], line)
     }
 }

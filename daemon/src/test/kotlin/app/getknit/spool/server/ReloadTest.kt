@@ -167,6 +167,27 @@ class ReloadTest {
         }
     }
 
+    /**
+     * The sig trio is runtime like the cast trio: a reload names none of them as ignored, the next
+     * connection's `hello` carries the new bounds, and a rate of 0 leaves `sig` out of it.
+     */
+    @Test
+    fun sigSettingsReloadForNewConnections() {
+        withServer(testConfig()) {
+            connect {
+                assertEquals(2, helloHandshake().sig?.rate)
+                assertTrue(spool.reload(testConfig(rateSigs = 5, maxSig = 1_024, rateSigsTotal = 20)).isEmpty())
+            }
+            connect {
+                val sig = helloHandshake().sig
+                assertEquals(5, sig?.rate)
+                assertEquals(1_024, sig?.maxBytes)
+                assertTrue(spool.reload(testConfig(rateSigs = 0)).isEmpty())
+            }
+            connect { assertNull(helloHandshake().sig) }
+        }
+    }
+
     /** A reload that changes nothing reports nothing. */
     @Test
     fun anIdenticalReloadIsSilent() {

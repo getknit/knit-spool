@@ -69,6 +69,7 @@ one conversation member.
 - [Send-side moderation](#-send-side-moderation)
 - [TURN (experimental)](#-turn-experimental)
 - [Casts (experimental)](#-casts-experimental)
+- [Signals](#-signals)
 - [Deploy](#-deploy)
 - [Docker](#-docker)
 - [Operating](#-operating)
@@ -140,6 +141,9 @@ Implements the full **v1** protocol:
   `SPOOL_REQUIRE_MODERATION` is set, asking clients to run their on-device content screen before
   sending. A request the Spool cannot check, and nothing on the data path. See
   [send-side moderation](#-send-side-moderation).
+- **Signals** (§7.8) — typing cues fanned out live to a scope's other subscribers, never stored and
+  never answered, and open to every phone with no ticket. On by default; `SPOOL_RATE_SIGS=0` turns
+  them off. See [signals](#-signals).
 - **Capacity** — an optional total-connection cap that refuses the upgrade with `503` and a
   `Retry-After` rather than letting the box degrade into GC thrash. Not a protocol limit: a full
   Spool is a property of the hardware, and a multi-homing client treats it as one more unreachable
@@ -243,6 +247,9 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_RATE_CASTS` | `0` | *experimental:* casts per connection per second (burst 4×; one address gets 4× that). **0 = no casts**, and `hello` omits `cast`. With a ticket key, a cast needs a cast ticket on its scope. Reloadable; 0 stops casts at once |
 | `SPOOL_MAX_CAST` | `2048` | the largest cast, in bytes; must fit `SPOOL_MAX_RECORD`. Reloadable |
 | `SPOOL_RATE_CASTS_TOTAL` | `200` | **Spool-wide** casts/s accepted (burst 4×); each leaves once per other subscriber of its scope. Reloadable, immediately |
+| `SPOOL_RATE_SIGS` | `2` | [sigs](#-signals) per connection per second (burst 4×; one address gets 8× that). **0 = no sigs**, and `hello` omits `sig`. No ticket gates a sig. 0–100. Reloadable; 0 stops sigs at once |
+| `SPOOL_MAX_SIG` | `8192` | the largest sig, in bytes; must fit `SPOOL_MAX_RECORD` with 512 to spare. Reloadable |
+| `SPOOL_RATE_SIGS_TOTAL` | `200` | **Spool-wide** sigs/s accepted (burst 4×), a budget apart from the casts'. Reloadable, immediately |
 
 Each commons room's bounds must fit the Spool-wide caps and leave a `list` reply that fits
 `SPOOL_MAX_RECORD`, and every room together must fit under `SPOOL_MAX_BYTES` — rooms are pinned
@@ -491,6 +498,36 @@ long, and both phones' addresses. It never sees what was said: each cast is seal
 conversation's key, and the chunk inside it is sealed again under the pair's ratchet. Client-side
 padding hides chunk sizes. See [`HOSTING.md`](HOSTING.md#what-casts-cost) for the bandwidth.
 
+## 💬 Signals
+
+On by default. Specified in knit-next `docs/SPOOL_PROTOCOL.md` §7.8.
+
+A typing cue matters for a second and not after. Signals carry it over the Internet, so typing
+indicators no longer need the radios. **A sig is fanned out to the scope's other live subscribers
+and never stored**, like a [cast](#-casts-experimental). Unlike a cast, **no ticket gates it**, so
+every phone gets typing indicators, free ones included. The lane is sized for the other small live
+signals clients may send later.
+
+```
+{ t: "hello", …, sig: { maxBytes: 8192, rate: 2 } }
+{ t: "sig", scope, data }   // client → Spool: no q, never answered
+{ t: "sig", scope, data }   // Spool → every other subscriber of the scope
+```
+
+| | |
+|---|---|
+| **Open to every subscriber** | No ticket, `entGates` bit or `SPOOL_TICKET_GATES` word applies to a sig. A Spool that gates TURN, files and casts still carries a typing cue from a phone with no ticket. |
+| **Never answered, struck or stored** | As for casts. A refused sig is dropped and counted: not subscribed, over `maxBytes`, over budget, the commons, or sigs off. A full outbound channel loses that one copy and does not count toward the slow-consumer close. Nothing reaches the store, a digest or a listing. |
+| **Budgets of its own** | Per connection, `SPOOL_RATE_SIGS` (burst 4×). Per address, 8× that, so phones behind one carrier NAT keep typing. Spool-wide, `SPOOL_RATE_SIGS_TOTAL`. None is shared with casts. |
+| **One switch** | `SPOOL_RATE_SIGS=0` leaves `sig` out of `hello`. On a reload it also stops sigs on live connections at once. |
+| **Never logged** | No line names a sig or its scope. `knit_spool_sigs_total`, `knit_spool_sigs_fanned_total` and `knit_spool_sigs_dropped_total{reason}` count them, and the status line shows `sigs=+N`. |
+
+What a Spool sees of a sig: that someone in a conversation is typing, when, and the sender's
+address. Not what is typed, and not who: the client seals each sig under the conversation's key,
+with its sender's signature inside, and pads it to a multiple of 128 bytes. A client that predates
+signals skips a `sig` record unread, as it skips any record it does not know. See
+[`HOSTING.md`](HOSTING.md#what-signals-cost) for the bandwidth.
+
 ## 🌐 Deploy
 
 Picking a host first? [`HOSTING.md`](HOSTING.md) covers what a Spool needs from a box, which
@@ -711,6 +748,8 @@ this feature exists to avoid.
 | `SPOOL_RATE_RECORDS`, `SPOOL_RATE_PUSHES` | on the next connection — the bucket is per connection |
 | `SPOOL_RATE_CASTS`, `SPOOL_MAX_CAST` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_CASTS=0` stops every cast at once |
 | `SPOOL_RATE_CASTS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |
+| `SPOOL_RATE_SIGS`, `SPOOL_MAX_SIG` | on the next connection, which is told them in `hello`; but `SPOOL_RATE_SIGS=0` stops every sig at once |
+| `SPOOL_RATE_SIGS_TOTAL` | immediately — the Spool-wide bucket is rebuilt |
 | `SPOOL_RATE_NEW_SCOPES`, `SPOOL_MAX_CONNS_PER_IP` | on the next connection from an address (IPv6: a /64) the Spool has not seen recently |
 | `SPOOL_COMMONS_*`, `SPOOL_COMMONS_<n>_*`, `SPOOL_COMMONS_RATE_TOTAL` | immediately, as one unit. A room it adds is in every `hello` after it. The members of a room it rotates to a new id, removes, or gives new bounds or attachments are closed `1001` and reconnect to the new `hello`; a name or a rate closes nobody. A room the store has no slot for (`SPOOL_MAX_SCOPES` full, nothing bare to reclaim) keeps every room as it was, and is logged |
 
@@ -757,7 +796,7 @@ Every `SPOOL_STATUS_MS` (5 min by default; `0` switches it off) the daemon logs 
 ```text
 2026-08-17 14:05:00,123 INFO  a.getknit.spool.Status up=2h14m conns=3/2000 accepted=+12 \
 scopes=12/64 live=4.2MiB/256.0MiB heap=96.4MiB/256.0MiB records=+142 pushes=+58 events=+170 \
-egress=+21.1MiB limited=+0 refused=+0 sheds=+0 errs=+3{rate=2,quota=1}
+sigs=+31 egress=+21.1MiB limited=+0 refused=+0 sheds=+0 errs=+3{rate=2,quota=1}
 ```
 
 (Wrapped with `\` here to fit the page; in the log it is one line.)
@@ -765,8 +804,9 @@ egress=+21.1MiB limited=+0 refused=+0 sheds=+0 errs=+3{rate=2,quota=1}
 Gauges (`conns`, `scopes`, `live`, `heap`) are absolute and shown against their caps; everything
 with a `+` is the delta **since the previous line**, because on a scrolling log the useful question
 is what the last five minutes did, not what the process has done since boot — `/metrics` answers
-that one exactly. The error breakdown names the three busiest codes and summarizes the rest as
-`+Nmore`, so the line stays one line under any load.
+that one exactly. `casts=+N` and `sigs=+N` appear while that lane is on. The error breakdown names
+the three busiest codes and summarizes the rest as `+Nmore`, so the line stays one line under any
+load.
 
 It logs under its own logger name, `app.getknit.spool.Status`, so a logback override can silence or
 re-level just this line; `SPOOL_LOG_LEVEL` is the root level and would take the rest of the daemon

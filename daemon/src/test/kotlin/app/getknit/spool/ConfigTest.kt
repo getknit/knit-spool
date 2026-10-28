@@ -597,6 +597,50 @@ class ConfigTest {
         assertTrue(e.message!!.contains("SPOOL_MAX_RECORD"), e.message!!)
     }
 
+    /** Signals are on with no configuration (SPOOL_PROTOCOL.md §7.8), and need no secret or ticket key. */
+    @Test
+    fun sigsAreOnByDefaultAndParseAlone() {
+        val stock = config(emptyMap())
+        assertEquals(2, stock.rateSigs)
+        assertEquals(8_192, stock.maxSig)
+        assertEquals(200, stock.rateSigsTotal)
+        val tuned = config(mapOf("SPOOL_RATE_SIGS" to "0", "SPOOL_MAX_SIG" to "512", "SPOOL_RATE_SIGS_TOTAL" to "50"))
+        assertEquals(0, tuned.rateSigs)
+        assertEquals(512, tuned.maxSig)
+        assertEquals(50, tuned.rateSigsTotal)
+        assertEquals(100, config(mapOf("SPOOL_RATE_SIGS" to "100")).rateSigs)
+    }
+
+    @Test
+    fun sigBoundsAreRefusedOutsideTheirRange() {
+        for ((name, bad) in listOf(
+            "SPOOL_RATE_SIGS" to "-1",
+            "SPOOL_RATE_SIGS" to "101",
+            "SPOOL_MAX_SIG" to "0",
+            "SPOOL_RATE_SIGS_TOTAL" to "0",
+            "SPOOL_RATE_SIGS" to "two",
+        )) {
+            val e = assertFailsWith<IllegalArgumentException>("$name=$bad") { config(mapOf(name to bad)) }
+            assertTrue(e.message!!.contains(name), e.message!!)
+        }
+    }
+
+    /**
+     * A sig is one record, so the largest one has to fit `SPOOL_MAX_RECORD` with its envelope. The
+     * default 8 KiB does under the default record, and a spool that shrinks the record below it has to
+     * shrink the sig too.
+     */
+    @Test
+    fun maxSigMustFitInARecord() {
+        val e = assertFailsWith<IllegalArgumentException> { config(mapOf("SPOOL_MAX_SIG" to "130561")) }
+        assertTrue(e.message!!.contains("SPOOL_MAX_RECORD"), e.message!!)
+        assertEquals(130_560, config(mapOf("SPOOL_MAX_SIG" to "130560")).maxSig)
+        val small = mapOf("SPOOL_MAX_BLOB" to "4096", "SPOOL_MAX_RECORD" to "8192")
+        val refused = assertFailsWith<IllegalArgumentException> { config(small) }
+        assertTrue(refused.message!!.contains("SPOOL_MAX_SIG"), refused.message!!)
+        assertEquals(7_680, config(small + ("SPOOL_MAX_SIG" to "7680")).maxSig)
+    }
+
     /** RFC 8032 §7.1 TEST 1's public key, as `ticket-keygen` prints one: unpadded base64url. */
     private val ticketKey =
         java.util.Base64

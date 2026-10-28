@@ -60,6 +60,22 @@ class MetricsTest {
         assertTrue(withTurn.contains("knit_spool_turn_issued_total{server=\"1\"} 1\n"), withTurn)
     }
 
+    /** Absent while sigs are off; on, every drop reason from zero, and none of them `ticket`. */
+    @Test
+    fun sigSeriesAreEmittedOnlyWhileOnAndEveryReasonFromZero() {
+        val metrics = Metrics()
+        assertTrue(!metrics.render(scopesCurrent = 0, liveBytes = 0L).contains("sigs"))
+        metrics.sigsTotal.increment()
+        metrics.sigsDropped.increment(SigDrop.RATE)
+        val rendered = metrics.render(scopesCurrent = 0, liveBytes = 0L, sigs = true)
+        assertTrue(rendered.contains("# TYPE knit_spool_sigs_total counter\nknit_spool_sigs_total 1\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_sigs_fanned_total 0\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_sigs_dropped_total{reason=\"rate\"} 1\n"), rendered)
+        SigDrop.entries.forEach { assertTrue(rendered.contains("knit_spool_sigs_dropped_total{reason=\"${it.word}\"}"), it.word) }
+        assertTrue(!rendered.contains("reason=\"ticket\""), rendered)
+        assertTrue(!rendered.contains("knit_spool_casts_total"), "the cast series follow casts, not sigs: $rendered")
+    }
+
     /**
      * A stray quote in a label value corrupts not just its own line but the scrape's parse from that
      * point on, and the stamp is whatever `-PspoolVersion` was handed.

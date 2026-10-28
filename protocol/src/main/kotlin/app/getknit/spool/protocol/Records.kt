@@ -46,6 +46,11 @@ object RecordType {
     // Casts (experimental; knit-next docs/SPOOL_PROTOCOL.md §7.7): one name for both
     // directions, like `hello` and `list`. Only ever sent to a spool whose HELLO carried `cast`.
     const val CAST = "cast"
+
+    // Signals (SPOOL_PROTOCOL.md §7.8): casts' shape, with no ticket gate. One name for both
+    // directions, and for the HELLO key that advertises them. Only ever sent to a spool whose HELLO
+    // carried `sig`.
+    const val SIG = "sig"
 }
 
 /** Error codes (append-only registry, spec §7.2). */
@@ -210,8 +215,11 @@ class RoomInfo(
  *
  * [turnHosts] names, beside [turn], each TURN server's entry ([TurnUris.entry] of its UDP URL), in
  * server order (S-7.6-48): what a client measures and names in [TurnReq.host]. Omitted, never empty,
- * when no server has a UDP URL. Last in the class, after [rooms], as §13's `helloSpoolTurnHosts`
- * orders it.
+ * when no server has a UDP URL. After [rooms], as §13's `helloSpoolTurnHosts` orders it.
+ *
+ * [sig] says the spool fans out [Sig]s, and within what (SPOOL_PROTOCOL.md §7.8, S-7.8-1). Omitted
+ * when signals are off. No ticket gates one, so [ticketGates] never mentions it. Last in the class,
+ * after [turnHosts], as §13's `helloSpoolSig` orders it.
  */
 @Serializable
 class Hello(
@@ -229,6 +237,7 @@ class Hello(
     val entGates: Long? = null,
     val rooms: List<RoomInfo>? = null,
     val turnHosts: List<String>? = null,
+    val sig: SigInfo? = null,
 ) {
     /**
      * The [Ticket.fl] bits this spool requires a ticket for (S-7.6-13): none without [ent], and
@@ -246,6 +255,17 @@ class Hello(
  */
 @Serializable
 class CastInfo(
+    val maxBytes: Int,
+    val rate: Int,
+)
+
+/**
+ * The signal advertisement (SPOOL_PROTOCOL.md §7.8): this spool fans sigs out. [maxBytes] bounds a
+ * sig's `data`, and [rate] is sigs per second per connection, with a burst of four times that. Stated
+ * up front for [CastInfo]'s reason: a sig is never answered, so a client keeps to them unprompted.
+ */
+@Serializable
+class SigInfo(
     val maxBytes: Int,
     val rate: Int,
 )
@@ -394,6 +414,19 @@ class Ent(
  */
 @Serializable
 class Cast(
+    val t: String,
+    val scope: ByteArray,
+    val data: ByteArray,
+)
+
+/**
+ * A signal (SPOOL_PROTOCOL.md §7.8): one sealed frame for a scope's other live subscribers, never
+ * stored and never answered, like a [Cast]. What sets it apart is who may send one: every subscriber,
+ * with no ticket (S-7.8-4), so a free phone's typing cue crosses a spool. Spool→client it is relayed
+ * unchanged, the sender's connection excluded.
+ */
+@Serializable
+class Sig(
     val t: String,
     val scope: ByteArray,
     val data: ByteArray,

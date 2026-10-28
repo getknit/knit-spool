@@ -34,3 +34,4 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.hs75](decisions/2026-10-hs75-commons-rooms-reload-on-sighup.md) | commons rooms reload on SIGHUP, and only a changed room's members reconnect | commons, config, reload |
 | [2026-10.u5f4](decisions/2026-10-u5f4-a-spool-signs-for-up.md) | a spool signs for up to four TURN servers, one per host | turn, config, hello |
 | [2026-10.zm4z](decisions/2026-10-zm4z-public-copy-names-supporters.md) | Public copy names supporters, never payers | docs, tickets, support |
+| [2026-10.2q49](decisions/2026-10-2q49-a-signal-lane.md) | A signal lane: live fan-out that no ticket gates | sigs, casts, tickets, typing |

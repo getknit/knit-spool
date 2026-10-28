@@ -19,6 +19,7 @@ growing an explanation, that explanation belongs in the ADR.
 | the scope quota's count (`scopeRows`, `scopeDelta`), `idx_scopes_empty`, `BARE_BY_ACTIVITY_SQL`, or a new statement that inserts into or deletes from `scopes` | [ADR 2026-10.ywkw](../memory/decisions/2026-10-ywkw-a-new-scope-is-admitted.md) |
 | `ScopeStore.sweep`, `ScopeStore.reclaimIdle`, `ScopeBatch`, `inBatches`, `SWEEP_BATCH_SCOPES`, `SWEEP_WINDOW_SQL`, `RECLAIM_WINDOW_SQL` or any pass over every scope on the store thread | [ADR 2026-10.d9ez](../memory/decisions/2026-10-d9ez-the-sweep-runs-in-batches.md) |
 | `cast`, `handleCast` / `fanOutCast`, `SPOOL_*CAST*` or `Tickets.FL_CAST` | [ADR 2026-10.3wdy](../memory/decisions/2026-10-3wdy-casts-fan-out-unstored.md) |
+| `sig`, `handleSig` / `sigRefusal`, `fanOutLive`, `SigDrop`, `SPOOL_*SIG*`, or adding a gate to a live lane | [ADR 2026-10.2q49](../memory/decisions/2026-10-2q49-a-signal-lane.md) |
 | `aput` gating, `Tickets.FL_FILES`, `SPOOL_TICKET_GATES` or `entGates` | [ADR 2026-10.h6pt](../memory/decisions/2026-10-h6pt-tickets-gate-verbs-per-connection.md) |
 | a ticket's `am`, `Tickets.Reason.SIZE` or `ticket-mint --am` | [ADR 2026-10.h4ps](../memory/decisions/2026-10-h4ps-a-ticket-s-am-claim.md) |
 | a ticket's `aud`, `SPOOL_TICKET_AUDIENCE_ALIAS`, `TicketConfig.audiences` or renaming a ticketed spool | [ADR 2026-10.zprp](../memory/decisions/2026-10-zprp-a-renamed-spool-accepts-tickets.md) |

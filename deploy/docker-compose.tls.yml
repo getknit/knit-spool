@@ -182,6 +182,11 @@ services:
       SPOOL_RATE_CASTS:
       SPOOL_MAX_CAST:
       SPOOL_RATE_CASTS_TOTAL:
+      # Signals: typing cues fanned out to a scope's other subscribers and never stored. On by
+      # default (2 a second per connection, 8 KiB each); no ticket gates them. SPOOL_RATE_SIGS=0 = off.
+      SPOOL_RATE_SIGS:
+      SPOOL_MAX_SIG:
+      SPOOL_RATE_SIGS_TOTAL:
     volumes:
       - spool-data:/data # SQLite; the image sets SPOOL_DATA_DIR=/data
     networks:

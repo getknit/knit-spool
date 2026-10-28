@@ -31,6 +31,7 @@ the [README](README.md#-deploy) has the rest.
 - [What TURN costs](#what-turn-costs)
 - [Several TURN boxes](#several-turn-boxes)
 - [What casts cost](#what-casts-cost)
+- [What signals cost](#what-signals-cost)
 - [What ticketed uploads hold](#what-ticketed-uploads-hold)
 - [Upgrading without a reconnect storm](#upgrading-without-a-reconnect-storm)
 - [Before you commit](#before-you-commit)
@@ -334,6 +335,23 @@ casts off the bill.
 
 CPU and memory are noise beside the store's: a cast is one decode, a few table reads and one
 encode, and the Spool holds none of them.
+
+## What signals cost
+
+Signals carry typing cues live, on by default and with no ticket (see the README). Nothing is
+stored, so the cost is bandwidth alone, and honest use is tiny. A phone that is typing sends at most
+one cue every 8 seconds, a few hundred bytes sealed, and the Spool sends it once to each other
+subscriber of the conversation. That is well under 100 bytes a second out while someone in a DM
+types, and about 2 KB/s while someone in a group of 50 does.
+
+The worst case is set by the Spool-wide budget. `SPOOL_RATE_SIGS_TOTAL` (200 sigs a second, burst
+4×) bounds what comes in, apart from the casts' budget. What goes out is that times the sig size
+(`SPOOL_MAX_SIG`, 8 KiB) times each scope's other subscribers, about 1.6 MB/s per listener at
+saturation. No ticket narrows who may send one, and anyone who learns a scope id can subscribe to it
+(spec §10.4). On a metered link, lower `SPOOL_MAX_SIG` or `SPOOL_RATE_SIGS_TOTAL` to what you will
+pay at saturation; typing needs well under 1 KiB a sig. `SPOOL_RATE_SIGS=0` turns signals off.
+
+CPU and memory are noise, as for casts: a sig is one decode, a few table reads and one encode.
 
 ## What ticketed uploads hold
 
