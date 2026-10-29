@@ -44,7 +44,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # The root-project (`:`-prefixed) Kover tasks are the merged three-module report. The
       # unqualified names would fan out to per-module reports instead.
@@ -105,7 +105,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # Eats its own dogfood: the same wire contract an external implementation would be held to,
       # run against the daemon this commit produces. Stamped with the commit so `publish` can prove
