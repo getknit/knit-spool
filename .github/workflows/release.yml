@@ -118,7 +118,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v5
 
       # A tag can point at any commit, including one CI never saw green. Re-running the gate is a
       # few minutes against publishing a broken image under a version number that is forever.
