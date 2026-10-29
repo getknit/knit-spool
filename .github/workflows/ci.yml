@@ -40,7 +40,7 @@ jobs:
       # do not fail the job. GitHub-only: the internal pipeline has no counterpart yet.
       - uses: whatsnew-fyi/declarative-changelog@v0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -101,7 +101,7 @@ jobs:
       SPOOL_PORT: '9470'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
