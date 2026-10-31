@@ -20,6 +20,7 @@ growing an explanation, that explanation belongs in the ADR.
 | `ScopeStore.sweep`, `ScopeStore.reclaimIdle`, `ScopeBatch`, `inBatches`, `SWEEP_BATCH_SCOPES`, `SWEEP_WINDOW_SQL`, `RECLAIM_WINDOW_SQL` or any pass over every scope on the store thread | [ADR 2026-10.d9ez](../memory/decisions/2026-10-d9ez-the-sweep-runs-in-batches.md) |
 | `cast`, `handleCast` / `fanOutCast`, `SPOOL_*CAST*` or `Tickets.FL_CAST` | [ADR 2026-10.3wdy](../memory/decisions/2026-10-3wdy-casts-fan-out-unstored.md) |
 | `sig`, `handleSig` / `sigRefusal`, `fanOutLive`, `SigDrop`, `SPOOL_*SIG*`, or adding a gate to a live lane | [ADR 2026-10.2q49](../memory/decisions/2026-10-2q49-a-signal-lane.md) |
+| `SPOOL_MAX_SCOPE_SUBSCRIBERS`, a cap or count in `handleSub`, a `quota` answer to a `sub`, or any bound on fan-out or egress per scope | [ADR 2026-10.fxcs](../memory/decisions/2026-10-fxcs-live-subscribers-per-scope-are.md) |
 | `aput` gating, `Tickets.FL_FILES`, `SPOOL_TICKET_GATES` or `entGates` | [ADR 2026-10.h6pt](../memory/decisions/2026-10-h6pt-tickets-gate-verbs-per-connection.md) |
 | a ticket's `am`, `Tickets.Reason.SIZE` or `ticket-mint --am` | [ADR 2026-10.h4ps](../memory/decisions/2026-10-h4ps-a-ticket-s-am-claim.md) |
 | a ticket's `aud`, `SPOOL_TICKET_AUDIENCE_ALIAS`, `TicketConfig.audiences` or renaming a ticketed spool | [ADR 2026-10.zprp](../memory/decisions/2026-10-zprp-a-renamed-spool-accepts-tickets.md) |

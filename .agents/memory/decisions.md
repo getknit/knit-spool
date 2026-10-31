@@ -35,3 +35,4 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.u5f4](decisions/2026-10-u5f4-a-spool-signs-for-up.md) | a spool signs for up to four TURN servers, one per host | turn, config, hello |
 | [2026-10.zm4z](decisions/2026-10-zm4z-public-copy-names-supporters.md) | Public copy names supporters, never payers | docs, tickets, support |
 | [2026-10.2q49](decisions/2026-10-2q49-a-signal-lane.md) | A signal lane: live fan-out that no ticket gates | sigs, casts, tickets, typing |
+| [2026-10.fxcs](decisions/2026-10-fxcs-live-subscribers-per-scope-are.md) | live subscribers per scope are capped, the commons exempt | scopes, fan-out, abuse, egress |
