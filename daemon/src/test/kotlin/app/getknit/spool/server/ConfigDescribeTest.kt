@@ -6,6 +6,7 @@ import ch.qos.logback.classic.Level
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** The boot line that says what this spool actually resolved to. */
 class ConfigDescribeTest {
@@ -23,6 +24,9 @@ class ConfigDescribeTest {
         assertEquals("1024", fields["maxBlob"])
         assertEquals("4", fields["maxScopes"])
         assertEquals("16", fields["maxConnsPerIp"])
+        assertEquals("64", fields["maxScopeSubscribers"])
+        // Read by every sub, so SIGHUP may move it (ADR 2026-10.fxcs).
+        assertTrue("maxScopeSubscribers" in testConfig().reloadable())
         assertEquals("false", fields["trustProxy"])
         assertEquals("off", fields["commons"])
         assertEquals("false", fields["moderation"])

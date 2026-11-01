@@ -597,6 +597,18 @@ class ConfigTest {
         assertTrue(e.message!!.contains("SPOOL_MAX_RECORD"), e.message!!)
     }
 
+    /** A scope admits 64 live subscribers unless told otherwise, and never fewer than a DM's two (ADR 2026-10.fxcs). */
+    @Test
+    fun scopeSubscribersDefaultTo64AndRefuseFewerThanTwo() {
+        assertEquals(64, config(emptyMap()).maxScopeSubscribers)
+        assertEquals(8, config(mapOf("SPOOL_MAX_SCOPE_SUBSCRIBERS" to "8")).maxScopeSubscribers)
+        assertEquals(2, config(mapOf("SPOOL_MAX_SCOPE_SUBSCRIBERS" to "2")).maxScopeSubscribers)
+        for (bad in listOf("1", "0", "-3", "many")) {
+            val e = assertFailsWith<IllegalArgumentException>(bad) { config(mapOf("SPOOL_MAX_SCOPE_SUBSCRIBERS" to bad)) }
+            assertTrue(e.message!!.contains("SPOOL_MAX_SCOPE_SUBSCRIBERS"), e.message!!)
+        }
+    }
+
     /** Signals are on with no configuration (SPOOL_PROTOCOL.md §7.8), and need no secret or ticket key. */
     @Test
     fun sigsAreOnByDefaultAndParseAlone() {

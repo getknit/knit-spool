@@ -21,6 +21,17 @@ class MetricsTest {
         assertTrue(rendered.contains("""knit_spool_build_info{version="1.2.3",commit="cd08e5f"} 1"""), rendered)
     }
 
+    /** Emitted from zero, so a rate() over it never starts on a missing series (ADR 2026-10.fxcs). */
+    @Test
+    fun subsCrowdedIsACounterFromZero() {
+        val metrics = Metrics()
+        assertTrue(metrics.render(scopesCurrent = 0, liveBytes = 0L).contains("knit_spool_subs_crowded_total 0\n"))
+        metrics.subsCrowdedTotal.increment()
+        val rendered = metrics.render(scopesCurrent = 0, liveBytes = 0L)
+        assertTrue(rendered.contains("# TYPE knit_spool_subs_crowded_total counter\n"), rendered)
+        assertTrue(rendered.contains("knit_spool_subs_crowded_total 1\n"), rendered)
+    }
+
     /**
      * Absent on a spool that issues no TURN credentials, rather than a flat zero, and otherwise one
      * series per configured server from zero, labelled by its number and never its host.

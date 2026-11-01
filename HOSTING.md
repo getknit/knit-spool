@@ -105,6 +105,13 @@ Egress. Every push fans out to (subscribers − 1) copies, so what leaves the bo
 what arrives, and the multiplier is the size of the conversation. Metered transfer binds long before
 CPU does, and — once attachments are in play — before memory does too.
 
+`SPOOL_MAX_SCOPE_SUBSCRIBERS` (64 by default) caps that multiplier for every conversation but a
+commons room, which [What a commons costs](#what-a-commons-costs) sizes on its own. Anyone who
+learns a scope id can subscribe to it (spec §10.4), so without the cap one client opening many
+connections could make each message, cast or sig into that scope leave thousands of times. A Knit
+group is at most eight members, so 64 leaves room for every member's devices. Lower it only if you
+know your groups are smaller; `knit_spool_subs_crowded_total` counts the subscriptions it refused.
+
 The arithmetic is easy: 1 TB/month is about 386 KB/s sustained outbound. That's an enormous number
 of sealed text frames and a very ordinary number of attachments, which is why the blob and
 attachment ceilings — not the box — are the knobs that set the bill.
@@ -329,7 +336,7 @@ The worst case is set by the Spool-wide budget, not by honest use. `SPOOL_RATE_C
 casts a second, burst 4×) bounds what comes in. What goes out is that times the cast size
 (`SPOOL_MAX_CAST`, 2 KB) times each scope's other subscribers, which is about 400 KB/s per
 listener at saturation. Anyone who learns a scope id can subscribe to it (spec §10.4), so a scope
-can have more listeners than the pair. Size the budget for what you will pay at saturation, as for
+can have more listeners than the pair, up to `SPOOL_MAX_SCOPE_SUBSCRIBERS`. Size the budget for what you will pay at saturation, as for
 TURN. On a ticketed Spool only a scope a cast ticket has unlocked carries any, which keeps strangers'
 casts off the bill.
 
@@ -348,7 +355,7 @@ The worst case is set by the Spool-wide budget. `SPOOL_RATE_SIGS_TOTAL` (200 sig
 4×) bounds what comes in, apart from the casts' budget. What goes out is that times the sig size
 (`SPOOL_MAX_SIG`, 8 KiB) times each scope's other subscribers, about 1.6 MB/s per listener at
 saturation. No ticket narrows who may send one, and anyone who learns a scope id can subscribe to it
-(spec §10.4). On a metered link, lower `SPOOL_MAX_SIG` or `SPOOL_RATE_SIGS_TOTAL` to what you will
+(spec §10.4), up to `SPOOL_MAX_SCOPE_SUBSCRIBERS` listeners a scope. On a metered link, lower `SPOOL_MAX_SIG` or `SPOOL_RATE_SIGS_TOTAL` to what you will
 pay at saturation; typing needs well under 1 KiB a sig. `SPOOL_RATE_SIGS=0` turns signals off.
 
 CPU and memory are noise, as for casts: a sig is one decode, a few table reads and one encode.

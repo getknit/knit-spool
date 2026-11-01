@@ -8,7 +8,8 @@ topics: [sigs, casts, tickets, typing]
 
 # ADR 2026-10.2q49 — A signal lane: live fan-out that no ticket gates
 
-Status: Accepted (2026-10-28). Implements knit-next `docs/SPOOL_PROTOCOL.md` §7.8 spool-side, as of
+Status: Accepted (2026-10-28); its copies-out remedy superseded by ADR 2026-10.fxcs (2026-10-31), the rest
+stands. Implements knit-next `docs/SPOOL_PROTOCOL.md` §7.8 spool-side, as of
 knit-next `ba26a7904` (the spec's revision of 2026-10-28): S-7.8-1 to S-7.8-8, with the client rules
 C-7.8-9 to C-7.8-16 on knit-next's side, whose half is its ADR 2026-10.97vs. B-7.1-8 and S-7.7-2 now
 name casts and sigs as the two records with no `q`. Builds on ADR 2026-10.3wdy (casts),

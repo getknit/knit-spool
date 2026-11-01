@@ -60,6 +60,7 @@ internal val KNOWN_VARS =
         "SPOOL_TRUST_PROXY",
         "SPOOL_MAX_CONNS",
         "SPOOL_MAX_CONNS_PER_IP",
+        "SPOOL_MAX_SCOPE_SUBSCRIBERS",
         "SPOOL_RATE_RECORDS",
         "SPOOL_RATE_PUSHES",
         "SPOOL_RATE_NEW_SCOPES",
@@ -540,6 +541,8 @@ internal fun configFromEnv(
         trustProxy = boolVar(env, "SPOOL_TRUST_PROXY", default = false),
         maxConns = maxConns,
         maxConnsPerIp = maxConnsPerIp,
+        // Two at least: a DM's two members must both fit (ADR 2026-10.fxcs).
+        maxScopeSubscribers = intVar(env, "SPOOL_MAX_SCOPE_SUBSCRIBERS", default = 64, min = 2),
         rateRecords = intVar(env, "SPOOL_RATE_RECORDS", default = 50, min = 1),
         ratePushes = intVar(env, "SPOOL_RATE_PUSHES", default = 10, min = 1),
         rateNewScopesPerMin = intVar(env, "SPOOL_RATE_NEW_SCOPES", default = 6, min = 1),

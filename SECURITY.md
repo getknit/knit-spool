@@ -137,6 +137,13 @@ vulnerabilities** — they are documented and out of scope for reports:
   scope can displace only an empty scope nobody is subscribed to, never one holding frames. A
   well-behaved client that shares a Spool with a noisy one can lose held frames — the client's
   answer is multi-homing and re-push, not a promise from the Spool.
+- **A full conversation refuses newcomers.** One scope admits `SPOOL_MAX_SCOPE_SUBSCRIBERS` live
+  connections (64 by default; commons rooms exempt), which caps how many copies a message into it
+  leaves as. Anyone who learns a scope id can subscribe (spec §10.4), so whoever learns one can also
+  fill its places and have this Spool refuse the conversation's real members `quota`. That is the
+  same exposure as flooding the scope, which §10.4 already accepts, and the same answers bound it:
+  the conversation's other Spools still serve it, and the next re-mint moves it to an id the
+  holder does not know.
 - **A Spool can withhold, delay, or forget.** Availability from any single Spool is explicitly not
   guaranteed; that is why no Spool is load-bearing.
 - **`SPOOL_REQUIRE_MODERATION` is a request, not an enforcement.** The Spool holds ciphertext and

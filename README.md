@@ -217,6 +217,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | `SPOOL_TRUST_PROXY` | `false` | honor the proxy-appended `X-Forwarded-For` hop as the client address for the per-IP limits |
 | `SPOOL_MAX_CONNS` | `0` | total live connections; over it the upgrade is refused **503 + `Retry-After`**, never a close code. 0 = unlimited |
 | `SPOOL_MAX_CONNS_PER_IP` | `16` | connection cap per client address; an IPv6 client is its /64 |
+| `SPOOL_MAX_SCOPE_SUBSCRIBERS` | `64` | live connections one scope admits, which caps how many copies any message into it leaves as; a `sub` past it is answered `err quota` and the client retries later. A commons room is exempt. At least 2 (spec S-6.4-6; ADR 2026-10.fxcs) |
 | `SPOOL_RATE_RECORDS` | `50` | records/s per connection (burst 4×); a `sub` spends one token per scope it names, and once the bucket is dry the rest of its scopes answer `err rate` |
 | `SPOOL_RATE_PUSHES` | `10` | pushes/s per connection (burst 4×) |
 | `SPOOL_RATE_NEW_SCOPES` | `6` | new scopes/min per client address (IPv6: per /64; burst 4×); a `sub` naming more new scopes than the burst has its tail answered `err rate`, and a record refused for rate strikes the abuse window once, not once per scope |
@@ -644,7 +645,9 @@ Exported: the build stamp (`knit_spool_build_info`, a labelled gauge carrying ve
 PoW verifications, rate-limit hits, upgrades refused for capacity and for draining (counted apart),
 sheds, bare scopes reclaimed, new scopes refused `quota` at `SPOOL_MAX_SCOPES`
 (`knit_spool_new_scopes_quota_refused_total`: a conversation that could not start here, so size
-the Spool up when it rises), attachment chunks stored, egress bytes, scopes held, live bytes, the
+the Spool up when it rises), subscriptions refused `quota` at `SPOOL_MAX_SCOPE_SUBSCRIBERS`
+(`knit_spool_subs_crowded_total`: someone filling a conversation with connections, or a cap set
+below a real group's devices), attachment chunks stored, egress bytes, scopes held, live bytes, the
 store file's size on disk (`knit_spool_store_file_bytes`, SQLite only), and `err` counts by code.
 A Spool running a [commons](#-the-commons) also exports each room's subscriber count, its pushes,
 and how often a push budget throttled it, labelled `room="1"` to `room="8"` by the room's number,
@@ -741,6 +744,7 @@ this feature exists to avoid.
 | | Takes effect |
 |---|---|
 | `SPOOL_TOKEN`, `SPOOL_TOKEN_NEXT`, `SPOOL_METRICS_TOKEN`, `SPOOL_MAX_CONNS`, `SPOOL_MAX_BYTES` | immediately — read on every use |
+| `SPOOL_MAX_SCOPE_SUBSCRIBERS` | immediately — read by every `sub`; a lower cap refuses the next newcomer and closes nobody already subscribed |
 | `SPOOL_POW_BITS`, `SPOOL_MAX_RECORD`, `SPOOL_MAX_PULL`, `SPOOL_MAX_AGET`, `SPOOL_REQUIRE_MODERATION`, `SPOOL_STUN_URLS`, `SPOOL_TICKET_KEY`, `SPOOL_TICKET_AUDIENCE`, `SPOOL_TICKET_GATES` | on the next connection — they are announced in `hello`, and a live client keeps the contract it negotiated |
 | `SPOOL_TICKET_ATTACH_BYTES` | immediately — read on every gated `aput`; what holders already spent stays spent |
 | `SPOOL_TICKET_KEY_NEXT`, `SPOOL_TICKET_AUDIENCE_ALIAS` | immediately — read by every `ent`; a ticket a connection already holds stays held |
