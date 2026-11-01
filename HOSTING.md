@@ -349,7 +349,8 @@ Signals carry typing cues live, on by default and with no ticket (see the README
 stored, so the cost is bandwidth alone, and honest use is tiny. A phone that is typing sends at most
 one cue every 8 seconds, a few hundred bytes sealed, and the Spool sends it once to each other
 subscriber of the conversation. That is well under 100 bytes a second out while someone in a DM
-types, and about 2 KB/s while someone in a group of 50 does.
+types, and about 300 bytes a second while someone in a full group of eight does, a little more
+when members have several devices.
 
 The worst case is set by the Spool-wide budget. `SPOOL_RATE_SIGS_TOTAL` (200 sigs a second, burst
 4×) bounds what comes in, apart from the casts' budget. What goes out is that times the sig size
