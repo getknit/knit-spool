@@ -55,6 +55,13 @@ class Metrics(
      * TURN, a call that gets none from it. Rising means the spool is sized too small, not attacked.
      */
     val newScopesQuotaRefusedTotal = LongAdder()
+
+    /**
+     * `sub` entries refused `quota` because their scope already had `SPOOL_MAX_SCOPE_SUBSCRIBERS`
+     * live subscribers (spec S-6.4-6; ADR 2026-10.fxcs). Unlike [newScopesQuotaRefusedTotal], rising
+     * here means someone is filling scopes with connections, or the cap is below a real group's devices.
+     */
+    val subsCrowdedTotal = LongAdder()
     val attachChunksStoredTotal = LongAdder()
 
     /**
@@ -207,6 +214,7 @@ class Metrics(
             line("knit_spool_sheds_total", "counter", shedsTotal.sum())
             line("knit_spool_reclaims_total", "counter", reclaimsTotal.sum())
             line("knit_spool_new_scopes_quota_refused_total", "counter", newScopesQuotaRefusedTotal.sum())
+            line("knit_spool_subs_crowded_total", "counter", subsCrowdedTotal.sum())
             line("knit_spool_attach_chunks_stored_total", "counter", attachChunksStoredTotal.sum())
             line("knit_spool_egress_bytes_total", "counter", egressBytesTotal.sum())
             line("knit_spool_scopes_current", "gauge", scopesCurrent.toLong())

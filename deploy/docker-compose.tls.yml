@@ -74,6 +74,7 @@ services:
       # Abuse control.
       SPOOL_MAX_CONNS:
       SPOOL_MAX_CONNS_PER_IP:
+      SPOOL_MAX_SCOPE_SUBSCRIBERS:
       SPOOL_RATE_RECORDS:
       SPOOL_RATE_PUSHES:
       SPOOL_RATE_NEW_SCOPES:

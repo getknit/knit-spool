@@ -18,6 +18,21 @@ document:
 
 # Knit Spool changelog
 
+## Unreleased
+
+### Added
+
+- **A cap on one conversation's live subscribers** (knit-next `docs/SPOOL_PROTOCOL.md` S-6.4-6;
+  ADR 2026-10.fxcs). Every message, cast and sig into a scope leaves once per other subscriber,
+  and anyone who learns a scope id can subscribe, so one client opening many connections could
+  multiply a scope's egress without bound. `SPOOL_MAX_SCOPE_SUBSCRIBERS` (default 64, at least 2)
+  caps it: a `sub` that would take a scope past the cap is answered `err quota` with its `q` and
+  scope, which clients already park and retry later, and the rest of the batch is answered as usual.
+  A commons room is exempt, and so is a member re-subscribing to a scope it holds. Reloadable,
+  immediately; a lower cap closes nobody already subscribed. New metric
+  `knit_spool_subs_crowded_total`. No record, error code or `hello` key changed. The development
+  version moves to `0.9.0-dev.2` with the new variable.
+
 ## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
 
 > The signal release. Typing indicators cross a Spool now, for every phone: a new `sig` record is

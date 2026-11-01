@@ -8,7 +8,7 @@ topics: [casts, calls, tickets, abuse]
 
 # ADR 2026-10.3wdy — casts fan out unstored, unlocked by one ticket
 
-Status: Accepted (2026-10-10)
+Status: Accepted (2026-10-10). Its copies-out remedy is superseded by ADR 2026-10.fxcs (2026-10-31); the rest stands.
 
 **Context:** knit-next's walkie-talkie (its ADR 2026-10.79yb, `feat/voip-calling`)
 streams Opus in sealed `talk` frames of about 700 bytes every 480 ms, and carries them over

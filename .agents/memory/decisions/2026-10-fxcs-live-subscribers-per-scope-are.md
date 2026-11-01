@@ -8,10 +8,11 @@ topics: [scopes, fan-out, abuse, egress]
 
 # ADR 2026-10.fxcs — live subscribers per scope are capped, the commons exempt
 
-Status: Proposed (2026-10-31). Not built. Waits on a knit-next `docs/SPOOL_PROTOCOL.md` amendment that
-lets a spool refuse a `sub` with `quota` at a per-scope subscriber cap. Tracked as knit-spool #7. Builds on
-ADR 2026-10.3wdy (casts) and ADR 2026-10.2q49 (sigs), and replaces the copies-out budget both name as the
-change to make if their lanes are ever amplified.
+Status: Accepted (2026-10-31). Implements knit-next `docs/SPOOL_PROTOCOL.md` S-6.4-6 spool-side, as of
+knit-next `18ac2f0b8` (the spec's revision of 2026-10-31, on branch `spec/scope-subscriber-cap`), with
+its §10.4 paragraph. Tracked as knit-spool #7. Builds on ADR 2026-10.3wdy (casts) and ADR 2026-10.2q49
+(sigs), and replaces the copies-out budget both name as the change to make if their lanes are ever
+amplified. Moves the development version to `0.9.0-dev.2` (ADR 2026-10.8ymn).
 
 **Context:** a spool's egress is every fanned-out record times the other live subscribers of its scope.
 Each per-lane budget counts records accepted, never copies sent. Issue #7 first asked for a bound on cast
@@ -41,8 +42,11 @@ and sig fan-out, using a 2,000-member scope as its example. That framing was wro
   quota already answers. A shipped client parks a scope refused `quota` (C-9.1-5) rather than re-subbing
   it every heal round, so no new error code, record or HELLO key is needed. A connection that already
   holds the scope, re-subbing to refresh it, always passes.
-- **Checked in `handleSub`, before `store.subscribe`.** The count is `subscribers` plus the in-flight
-  `subscribing` entries, so two concurrent subs cannot both take the last place. Refusals are counted in
+- **Checked in `handleSub`, before `store.subscribe`.** `reserveSubscriber` counts `subscribers` plus
+  the in-flight `subscribing` places and takes one in a single `compute` on `subscribing`, so two
+  concurrent subs cannot both take the last place. `Slot.admit` moves the place into `subscribers` under
+  the same entry's lock, so no connection is counted twice. The check runs after the creation gates, so a
+  crowded scope the store has shed may charge a gate first. Refusals are counted in
   `knit_spool_subs_crowded_total`.
 - **The commons is exempt.** A room is meant to hold many members, and its pushes already pay the
   per-room and spool-wide commons budgets. Casts and sigs are refused there.
@@ -70,14 +74,15 @@ and sig fan-out, using a 2,000-member scope as its example. That framing was wro
   leaves, bound this as they bound that. A per-address share of the cap would raise the cost of filling
   it. It is left out until a lockout is seen, because carrier NAT puts real members behind one address.
 - **The trap:** counting only `subscribers`. A burst of concurrent `sub`s for one scope all read the same
-  count before any of them adds itself, and overshoot the cap. Count `subscribing` too.
+  count before any of them adds itself, and overshoot the cap. Count `subscribing` too, and move a place
+  from one to the other in one step, or a racer counts it twice and refuses a newcomer below the cap.
 - **The second trap:** applying the cap to a commons room, or to a refresh. Either refuses a member the
   spool already serves.
-- **Guards (to be written with the code):**
-  - a daemon test that refuses the 65th subscriber `quota` and counts it in
-    `knit_spool_subs_crowded_total`;
-  - a refresh by a subscriber already in the scope passes at the cap;
-  - a commons room takes more than the cap;
-  - a reload that lowers the cap closes nobody;
-  - `ConfigTest`, `ReloadTest` and `EnvContractTest` for the new variable;
-  - a conformance check if the spec makes the refusal a MUST.
+- **Guards:**
+  - `ScopeSubscribersTest`: the sub past the cap refused `quota` with its `q` and scope, counted, never a
+    strike, with the rest of its batch answered; a refresh at the cap; a place freed by a member leaving;
+    a commons room past the cap; a reload that lowers the cap closing nobody; and eight concurrent subs
+    for three places getting exactly three.
+  - `ConfigTest` (default 64, at least 2), `ConfigDescribeTest` (in the reloadable half), `MetricsTest`,
+    `DeployConfigTest` (the compose passthrough) and `EnvContractTest`'s pin at `0.9.0-dev.2`.
+  - No conformance check: S-6.4-6 is a MAY, and the cap is not advertised.

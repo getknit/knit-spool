@@ -258,6 +258,14 @@ class SpoolServer(
          */
         val maxConns: Int = 0,
         val maxConnsPerIp: Int = 16,
+        /**
+         * Live connections one scope admits (spec S-6.4-6; ADR 2026-10.fxcs). Every record a scope
+         * carries leaves once per other subscriber, and anyone who learns a scope id may subscribe
+         * (§10.4), so this bounds the fan-out multiplier of pushes, casts and sigs at once. A `sub` past
+         * it is refused `quota`. A commons room is exempt, and so is a connection re-subscribing to a
+         * scope it holds. Read by every `sub`, so a reload applies at once and closes nobody.
+         */
+        val maxScopeSubscribers: Int = 64,
         val rateRecords: Int = 50,
         val ratePushes: Int = 10,
         val rateNewScopesPerMin: Int = 6,
@@ -302,7 +310,8 @@ class SpoolServer(
          * Casts per second the whole spool accepts, with a burst of four times that. The
          * per-connection bucket bounds one client; this bounds all of them together, the way the
          * commons budget bounds one room. Each accepted cast leaves once per other subscriber of
-         * its scope, so egress is this times the cast size times that fan-out.
+         * its scope, so egress is this times the cast size times that fan-out, which
+         * [maxScopeSubscribers] bounds (ADR 2026-10.fxcs).
          */
         val rateCastsTotal: Int = 200,
         /**
@@ -381,6 +390,8 @@ class SpoolServer(
                 "maxBytes" to maxBytes,
                 "maxConns" to maxConns,
                 "maxConnsPerIp" to maxConnsPerIp,
+                // Read by every sub; a lower cap refuses newcomers and closes nobody.
+                "maxScopeSubscribers" to maxScopeSubscribers,
                 "rateRecords" to rateRecords,
                 "ratePushes" to ratePushes,
                 "rateNewScopes" to rateNewScopesPerMin,
@@ -450,6 +461,7 @@ class SpoolServer(
                 maxBytes = candidate.maxBytes,
                 maxConns = candidate.maxConns,
                 maxConnsPerIp = candidate.maxConnsPerIp,
+                maxScopeSubscribers = candidate.maxScopeSubscribers,
                 rateRecords = candidate.rateRecords,
                 ratePushes = candidate.ratePushes,
                 rateNewScopesPerMin = candidate.rateNewScopesPerMin,
@@ -996,6 +1008,8 @@ class SpoolServer(
      * bound is worth stating rather than discovering:
      *
      *  - `maxConns`, `maxBytes` and the credentials are read on every use, so they bite immediately.
+     *  - `maxScopeSubscribers` is read by every `sub`, so it bites immediately, on newcomers only: a
+     *    lower cap leaves a scope's subscribers past it subscribed (ADR 2026-10.fxcs).
      *  - `powBits`, `maxRecord`, `maxPull`, `maxAget` and `requireModeration` are announced in
      *    `hello`, so they apply to connections opened after the reload. Existing ones keep the
      *    contract they negotiated.
@@ -1626,11 +1640,17 @@ class SpoolServer(
                 if (gate == Gate.RATE_REFUSED) struck = true
                 if (gate != Gate.PASSED) continue
             }
-            // A commons room declares its own bounds (S-7.4-2). Substituted rather than refused — the
-            // `digest` reply already carries the applied bounds, so the client learns the truth in
-            // the answer it was going to read anyway. Same shape as a truncated `pull` (§7.2).
-            subscribing.merge(scopeHex, 1, Int::plus)
+            // A full scope refuses a newcomer `quota` before the store subscribes it (S-6.4-6; ADR 2026-10.fxcs).
+            val slot = reserveSubscriber(conn, scopeSub.scope, scopeHex)
+            if (slot == null) {
+                metrics.subsCrowdedTotal.increment()
+                sendErr(conn, ErrCode.QUOTA, q = sub.q, scope = scopeSub.scope)
+                continue
+            }
             try {
+                // A commons room declares its own bounds (S-7.4-2). Substituted rather than refused — the
+                // `digest` reply already carries the applied bounds, so the client learns the truth in
+                // the answer it was going to read anyway. Same shape as a truncated `pull` (§7.2).
                 // The room is looked up on the store thread, beside the write: a reload re-applies a
                 // reshaped room's bounds there, so a `sub` that read the table before it cannot write the
                 // old bounds back after it.
@@ -1639,32 +1659,118 @@ class SpoolServer(
                         val applied = roomOf(scopeSub.scope)?.config?.bounds ?: scopeSub.bounds
                         applied to store.subscribe(scopeSub.scope, applied, now, ::isHeld)
                     }
-                when (result) {
-                    is SubscribeResult.Subscribed -> {
-                        noteReclaimed(result.reclaimed)
-                        // The *applied* bounds, so the push-recreate path below re-subscribes with them.
-                        conn.subscriptions[scopeHex] = declared
-                        subscribers.computeIfAbsent(scopeHex) { ConcurrentHashMap.newKeySet() }.add(conn)
-                        // A room this connection's hello described that a reload has since retired or
-                        // reshaped: after the subscriber entry, so the reload's own scan or this check
-                        // sees the other (S-7.4-21). The rest of the batch would be answered to a
-                        // connection that is closing, so it is dropped.
-                        if (conn.rooms.roomOf(scopeSub.scope) != null && synchronized(roomLock) { toldOtherwise(conn, scopeSub.scope) }) {
-                            closeForNewHello(conn)
-                            return
-                        }
-                        conn.out.send(binary(RecordCodec.encode(digestRecord(scopeSub.scope, result.digest))))
-                    }
-
-                    SubscribeResult.QuotaExceeded -> {
-                        metrics.newScopesQuotaRefusedTotal.increment()
-                        sendErr(conn, ErrCode.QUOTA, q = sub.q, scope = scopeSub.scope)
-                    }
-                }
+                if (!answerSubscribe(conn, sub.q, scopeSub.scope, declared, result, slot)) return
             } finally {
-                subscribing.computeIfPresent(scopeHex) { _, n -> (n - 1).takeIf { it > 0 } }
+                slot.release()
             }
         }
+    }
+
+    /**
+     * Answers one `sub` entry the store has handled: on success the connection joins the scope's
+     * [subscribers] through [slot] and is sent the `digest`. False when the connection is closing for a
+     * new `hello` and the rest of its batch must be dropped.
+     */
+    private suspend fun answerSubscribe(
+        conn: Conn,
+        q: Long,
+        scope: ByteArray,
+        declared: ScopeBounds,
+        result: SubscribeResult,
+        slot: Slot,
+    ): Boolean {
+        when (result) {
+            is SubscribeResult.Subscribed -> {
+                noteReclaimed(result.reclaimed)
+                // The *applied* bounds, so the push-recreate path below re-subscribes with them.
+                conn.subscriptions[slot.scopeHex] = declared
+                slot.admit(conn)
+                // A room this connection's hello described that a reload has since retired or
+                // reshaped: after the subscriber entry, so the reload's own scan or this check
+                // sees the other (S-7.4-21). The rest of the batch would be answered to a
+                // connection that is closing, so it is dropped.
+                if (conn.rooms.roomOf(scope) != null && synchronized(roomLock) { toldOtherwise(conn, scope) }) {
+                    closeForNewHello(conn)
+                    return false
+                }
+                conn.out.send(binary(RecordCodec.encode(digestRecord(scope, result.digest))))
+            }
+
+            SubscribeResult.QuotaExceeded -> {
+                metrics.newScopesQuotaRefusedTotal.increment()
+                sendErr(conn, ErrCode.QUOTA, q = q, scope = scope)
+            }
+        }
+        return true
+    }
+
+    /**
+     * One `sub` entry's place in a scope, from [reserveSubscriber] until [admit] makes it a subscriber
+     * or [release] gives it back. [held] is whether the place is counted in [subscribing]: a refresh by a
+     * connection that already holds the scope takes no new place, so it holds none.
+     */
+    private inner class Slot(
+        val scopeHex: String,
+        private var held: Boolean,
+    ) {
+        /**
+         * Adds [conn] to the scope's [subscribers] and gives back the place in the same `compute` on
+         * [subscribing], so [reserveSubscriber] never sees it both pending and live, nor neither.
+         */
+        fun admit(conn: Conn) {
+            val release = held
+            subscribing.compute(scopeHex) { _, pending ->
+                subscribers.computeIfAbsent(scopeHex) { ConcurrentHashMap.newKeySet() }.add(conn)
+                if (release) pending?.let { (it - 1).takeIf { n -> n > 0 } } else pending
+            }
+            held = false
+        }
+
+        /** Gives back a place that never became a subscriber: a store refusal, an error or an early return. No-op once admitted. */
+        fun release() {
+            if (!held) return
+            subscribing.computeIfPresent(scopeHex) { _, n -> (n - 1).takeIf { it > 0 } }
+            held = false
+        }
+    }
+
+    /**
+     * Takes one of [scopeHex]'s places for this `sub`, or returns null because the scope is full (spec
+     * S-6.4-6; ADR 2026-10.fxcs). Every record a scope carries leaves once per other subscriber, and
+     * anyone who learns a scope id may subscribe (§10.4), so the cap is what bounds a scope's fan-out
+     * multiplier for pushes, casts and sigs at once.
+     *
+     * The count is the live [subscribers] plus the in-flight [subscribing] places, checked and taken in
+     * one `compute` on [subscribing]'s entry, so concurrent subs cannot all take the last place.
+     * [Slot.admit] moves a place into [subscribers] under the same entry's lock, so no connection is
+     * ever counted twice and no place is ever counted by nobody.
+     *
+     * Exempt: a commons room, which holds many members by design and whose pushes pay its own budgets,
+     * and a connection re-subscribing to a scope it already holds, which takes no new place and holds
+     * the scope against a reclaim already ([isHeld]). The check runs after the creation gates, so a
+     * crowded scope the store has shed may charge a gate before refusing: rare, and it keeps
+     * [subscribing] meaning what ADR 2026-10.ywkw relies on.
+     */
+    private fun reserveSubscriber(
+        conn: Conn,
+        scope: ByteArray,
+        scopeHex: String,
+    ): Slot? {
+        if (subscribers[scopeHex]?.contains(conn) == true) return Slot(scopeHex, held = false)
+        val exempt = roomOf(scope) != null
+        val cap = config.maxScopeSubscribers
+        var reserved = false
+        subscribing.compute(scopeHex) { _, pending ->
+            val inFlight = pending ?: 0
+            val live = subscribers[scopeHex]?.size ?: 0
+            if (exempt || live + inFlight < cap) {
+                reserved = true
+                inFlight + 1
+            } else {
+                pending
+            }
+        }
+        return if (reserved) Slot(scopeHex, held = true) else null
     }
 
     private suspend fun handleList(
