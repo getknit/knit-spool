@@ -74,13 +74,11 @@ readelf -h "$bin" | grep -q "Machine:.*$machine" || fail "not a $machine binary"
 
 if [ "$host" = aarch64 ]; then
   step "no LSE atomics outside GCC's outline-atomics helpers (the Cortex-A53 has none)"
-  # -march=armv8-a leaves the helpers (`__aarch64_ldadd4_acq_rel` and friends) in, because the JDK's
-  # static libraries were compiled with -moutline-atomics; those bodies pick LSE or LL/SC at run time
-  # behind a HWCAP check and are safe. Anything else using an LSE mnemonic would abort on the device.
-  lse=$(objdump -d --no-show-raw-insn "$bin" | awk '
-    /^[0-9a-f]+ <.*>:$/ { skip = ($0 ~ /<__aarch64_/) ; next }
-    !skip && $2 ~ /^(cas|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|swp)[a-z]*$/ { print; n++ }
-    END { print n + 0 > "/dev/stderr" }' 2>"$work/lse-count")
+  # -march=armv8-a leaves the helpers (`__aarch64_cas4_acq_rel` and friends) in, because the JDK's
+  # static libraries were compiled with -moutline-atomics; their bodies pick LSE or LL/SC at run time
+  # behind a HWCAP byte and are safe, and lse-scan.awk knows them by shape, since the image ships
+  # without their names. Anything else using an LSE mnemonic would abort on the device.
+  lse=$(objdump -d --no-show-raw-insn "$bin" | awk -f "$root/scripts/native/lse-scan.awk" 2>"$work/lse-count")
   count=$(cat "$work/lse-count")
   echo "LSE instructions outside the helpers: $count"
   [ "$count" = 0 ] || { echo "$lse" | head -20; fail "the image was not built with -march=armv8-a"; }
