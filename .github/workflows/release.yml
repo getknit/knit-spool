@@ -116,7 +116,7 @@ jobs:
       digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -305,7 +305,7 @@ jobs:
           restore-keys: native-gradle-
       - name: Build the native archive and the conformance runner
         run: scripts/native/build.sh -PspoolVersion="$VERSION" -PspoolCommit="$GITHUB_SHA"
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
