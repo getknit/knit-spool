@@ -8,7 +8,7 @@
 #
 # Pin by digest when bumping, with the tag kept beside it for the reader; the tag moves under you and
 # a native build is only as reproducible as its toolchain.
-FROM bellsoft/liberica-native-image-kit-container:jdk-21-nik-23.1.12.1-musl@sha256:7e1ee134f399792b726caaf352713c27cccf7a2277d4ea821fbe74dba6ef91fa
+FROM bellsoft/liberica-native-image-kit-container:jdk-25-nik-25.0.4.1-musl@sha256:27f41e0cf0d1683ddb6015a45f8431d865b51d0019b08134b751f91c27f56397
 
 # What native-image links with, and what the acceptance script's static checks read. `apk` is a
 # no-op for anything the base image already carries.
