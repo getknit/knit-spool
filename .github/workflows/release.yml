@@ -11,11 +11,12 @@ name: Release
 # workflow only affects tags cut afterwards; to apply a change to an existing unpushed tag, move the
 # tag.
 #
-# Three jobs:
+# Four jobs:
 #
-#   preflight  cheap invariants (tag shape, changelog section) before spending a build on a bad tag
-#   build      gate on `check`, build the dist once, layer it into an amd64+arm64 image, push, attest
-#   publish    checksum the archives and open a draft Release — the one irreversible step is manual
+#   preflight       cheap invariants (tag shape, changelog section) before spending a build on a bad tag
+#   build           gate on `check`, build the dist once, layer it into an amd64+arm64 image, push, attest
+#   native-aarch64  the aarch64 musl native archive, built and proved on an arm64 runner (ADR 2026-11.bxce)
+#   publish         checksum the archives and open a draft Release — the one irreversible step is manual
 #
 # Why the image is built from Dockerfile.dist rather than Dockerfile: knit-spool is pure JVM, so the
 # installDist output is architecture-independent. Compiling once natively and layering the result
@@ -273,9 +274,71 @@ jobs:
             spool-daemon.log
           if-no-files-found: ignore
 
+  # The aarch64 musl native archive (ADR 2026-11.bxce): the build and acceptance ci.yml runs on every
+  # pull request, stamped with the tag. Parallel to `build`; `publish` waits for both.
+  native-aarch64:
+    name: Native binary (aarch64 musl)
+    needs: preflight
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write # sigstore signing for the provenance attestation
+      attestations: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      SPOOL_PORT: '9470'
+      ACCEPTANCE_OUT: native-acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - name: Must be an arm64 runner
+        run: |
+          if [ "$(uname -m)" != aarch64 ]; then
+            echo "::error::native-aarch64 needs an arm64 runner, got $(uname -m)"; exit 1
+          fi
+      # Gradle's home lives inside the workspace so the container sees it (scripts/native/build.sh);
+      # gradle/actions/setup-gradle would cache the host's, which the container never reads.
+      - uses: actions/cache@v4
+        with:
+          path: .gradle-home
+          key: native-gradle-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/*.gradle.kts') }}
+          restore-keys: native-gradle-
+      - name: Build the native archive and the conformance runner
+        run: scripts/native/build.sh -PspoolVersion="$VERSION" -PspoolCommit="$GITHUB_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Acceptance against the archive
+        run: |
+          scripts/native-acceptance.sh \
+            daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz "$GITHUB_SHA"
+
+      # The same verifiable provenance the image carries:
+      #   gh attestation verify knit-spool-<version>-linux-aarch64-musl.tar.gz --repo getknit/knit-spool
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz
+
+      - name: Upload native archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-aarch64
+          path: daemon/build/distributions/*-linux-aarch64-musl.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload acceptance output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-acceptance
+          path: native-acceptance/
+          if-no-files-found: ignore
+
   publish:
     name: Publish draft Release
-    needs: [preflight, build]
+    needs: [preflight, build, native-aarch64]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the Release and upload assets
@@ -288,13 +351,17 @@ jobs:
         with:
           name: distributions
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-aarch64
+          path: dist
 
       - name: Collect assets and checksums
         run: |
           mkdir -p out
-          find dist -type f \( -name '*.tar' -o -name '*.zip' \) -exec cp {} out/ \;
+          find dist -type f \( -name '*.tar' -o -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} out/ \;
           cd out
-          sha256sum ./*.tar ./*.zip > SHA256SUMS
+          sha256sum ./*.tar ./*.zip ./*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       # Notes are the CHANGELOG section preflight already proved exists, plus how to actually get
@@ -331,7 +398,19 @@ jobs:
           ### Standalone archives
 
           For running the daemon without Docker. \`SHA256SUMS\` covers every archive attached here.
-          Both need a JDK 21 runtime on the host; unpack and run \`bin/knit-spool\`.
+          The \`.tar\` and \`.zip\` archives need a JDK 21 runtime on the host; unpack and run
+          \`bin/knit-spool\`.
+
+          ### Native binary (aarch64, musl)
+
+          \`knit-spool-$VERSION-linux-aarch64-musl.tar.gz\` runs with no JVM on 64-bit Arm Linux with
+          musl — OpenWrt (the OpenWrt One first) and Alpine. It needs the host's \`libz\` and nothing
+          else; unpack and run \`knit-spool\`, keeping \`libsqlitejdbc.so\` beside it. It carries the
+          same signed provenance as the image:
+
+          \`\`\`sh
+          gh attestation verify knit-spool-$VERSION-linux-aarch64-musl.tar.gz --repo $repo
+          \`\`\`
 
           Upgrading a live spool? \`HOSTING.md\` covers the operational side, and \`CHANGELOG.md\` calls
           out anything that moves the wire, the on-disk store, or a configuration default.
@@ -352,5 +431,5 @@ jobs:
           cd out
           args=(--draft --title "knit-spool $VERSION" --notes-file notes.md)
           if [ "$PRERELEASE" = 'true' ]; then args+=(--prerelease); fi
-          gh release create "$TAG" "${args[@]}" ./*.tar ./*.zip SHA256SUMS
+          gh release create "$TAG" "${args[@]}" ./*.tar ./*.zip ./*.tar.gz SHA256SUMS
           echo "::notice::Draft release created for $TAG — review and publish it."
