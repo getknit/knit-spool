@@ -41,3 +41,14 @@ indent_size = unset
 # Verbatim upstream license text — reproduced exactly, never reformatted.
 [LICENSE]
 indent_size = unset
+
+# OpenWrt's own style (ADR 2026-11.zmc3): make recipes must be tabs, and the packages feed indents
+# procd init scripts and UCI files with tabs too. The `define Package/...` metadata blocks inside the
+# Makefile are two spaces by the same convention, so its indentation belongs to make and the feed.
+[deploy/openwrt/**/Makefile]
+indent_style = unset
+indent_size = unset
+
+[deploy/openwrt/**/*.{init,config}]
+indent_style = tab
+indent_size = unset
