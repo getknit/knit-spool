@@ -183,6 +183,53 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The aarch64 musl native binary (ADR 2026-11.bxce), built inside the Liberica NIK musl container
+  # and proved against a plain Alpine container. On every pull request, not just main: the build runs
+  # on GitHub's free arm64 runners, and a Ktor or sqlite-jdbc bump is the likeliest thing to break it.
+  # No job-level `container:` — the runner's JavaScript actions do not run inside a musl image, so
+  # scripts/native/build.sh does the `docker run` itself. The conformance runner stays a JVM program
+  # on the host; setup-java is for it, not for the build.
+  native-aarch64:
+    name: Native binary (aarch64 musl)
+    runs-on: ubuntu-24.04-arm
+    env:
+      SPOOL_PORT: '9470'
+      ACCEPTANCE_OUT: native-acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - name: Must be an arm64 runner
+        run: |
+          if [ "$(uname -m)" != aarch64 ]; then
+            echo "::error::native-aarch64 needs an arm64 runner, got $(uname -m)"; exit 1
+          fi
+      # Gradle's home lives inside the workspace so the container sees it (scripts/native/build.sh);
+      # gradle/actions/setup-gradle would cache the host's, which the container never reads.
+      - uses: actions/cache@v4
+        with:
+          path: .gradle-home
+          key: native-gradle-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/*.gradle.kts') }}
+          restore-keys: native-gradle-
+      - name: Build the native archive and the conformance runner
+        run: scripts/native/build.sh -PspoolCommit="$GITHUB_SHA"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Acceptance against the archive
+        run: |
+          scripts/native-acceptance.sh \
+            daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz "$GITHUB_SHA"
+      - name: Upload native archive and acceptance output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-aarch64
+          path: |
+            daemon/build/distributions/*-linux-aarch64-musl.tar.gz
+            native-acceptance/
+          if-no-files-found: ignore
+          retention-days: 7
+
   badge:
     name: Publish coverage badge
     # Default-branch pushes only. A pull_request run cannot write to the repo (and a fork's token
