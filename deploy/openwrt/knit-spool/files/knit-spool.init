@@ -86,7 +86,8 @@ start_service() {
 	# stop() closes every session 1001 one at a time, then gives the engine 2 s of grace and 5 s to
 	# finish: enough for a home spool. A box holding thousands of connections needs more.
 	procd_set_param term_timeout 15
-	procd_set_param no_new_privs 1
+	# No no_new_privs: procd implements it as a ujail flag (instance.c hands it to ujail as -c), so
+	# without a jail it is a claim the kernel never sees. Confinement is ADR 2026-11.zmc3's follow-up.
 	procd_close_instance
 }
 

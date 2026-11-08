@@ -100,4 +100,14 @@ define Package/knit-spool/postinst
 exit 0
 endef
 
+# The binary names its libc the way the NIK container's musl does, `libc.musl-aarch64.so.1`, where
+# OpenWrt's toolchain writes `libc.so`. musl's loader answers every `libc.*` request with the libc it
+# already is (ldso/dynlink.c, the reserved names), so the name needs no file on the box and the daemon
+# boots on a stock OpenWrt One. OpenWrt's packaging check compares each NEEDED entry against what the
+# package and its dependencies install, knows nothing of that rule, and refuses the package without
+# this line. It is the one way to tell it (include/package-pack.mk reads it into the provides list).
+define Package/knit-spool/extra_provides
+	echo 'libc.musl-aarch64.so.1';
+endef
+
 $(eval $(call BuildPackage,knit-spool))
