@@ -11,11 +11,12 @@ name: Release
 # workflow only affects tags cut afterwards; to apply a change to an existing unpushed tag, move the
 # tag.
 #
-# Four jobs:
+# Five jobs:
 #
 #   preflight       cheap invariants (tag shape, changelog section) before spending a build on a bad tag
 #   build           gate on `check`, build the dist once, layer it into an amd64+arm64 image, push, attest
 #   native-aarch64  the aarch64 musl native archive, built and proved on an arm64 runner (ADR 2026-11.bxce)
+#   openwrt-package the .apk and .ipk around that archive, stable releases only (ADR 2026-11.zmc3)
 #   publish         checksum the archives and open a draft Release — the one irreversible step is manual
 #
 # Why the image is built from Dockerfile.dist rather than Dockerfile: knit-spool is pure JVM, so the
@@ -336,9 +337,75 @@ jobs:
           path: native-acceptance/
           if-no-files-found: ignore
 
+  # The .apk (OpenWrt 25.12) and .ipk (24.10) around the native archive (ADR 2026-11.zmc3), built
+  # with the OpenWrt SDK images for mediatek/filogic. The SDK is amd64-only and compiles nothing
+  # here: the package installs the archive native-aarch64 just proved, pre-seeded into the SDK's dl/
+  # with its hash passed in. Stable versions only: apk's version grammar refuses `-rc.1`, and OpenWrt
+  # has no notion of a prerelease. The SDK runs as its own `buildbot` user, so the output directory
+  # is world-writable for the length of the job rather than the whole tree being chowned.
+  openwrt-package:
+    name: OpenWrt package (${{ matrix.format }})
+    needs: [preflight, native-aarch64]
+    if: needs.preflight.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - format: apk
+            sdk: openwrt/sdk:mediatek-filogic-v25.12.6
+          - format: ipk
+            sdk: openwrt/sdk:mediatek-filogic-24.10.8
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      SDK_IMAGE: ${{ matrix.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-aarch64
+          path: archive
+
+      - name: Build the package in the SDK container
+        run: |
+          tarball=$(ls archive/knit-spool-*-linux-aarch64-musl.tar.gz)
+          hash=$(sha256sum "$tarball" | cut -d' ' -f1)
+          mkdir -p out && chmod 777 out
+          docker run --rm \
+            -v "$PWD/deploy/openwrt:/feed:ro" \
+            -v "$PWD/$tarball:/dl/$(basename "$tarball"):ro" \
+            -v "$PWD/out:/out" \
+            -e KNIT_SPOOL_VERSION="$VERSION" -e KNIT_SPOOL_HASH="$hash" \
+            "$SDK_IMAGE" bash -euo pipefail -c '
+              if [ -x ./setup.sh ]; then ./setup.sh; fi
+              echo "src-link knitspool /feed" >> feeds.conf.default
+              ./scripts/feeds update base knitspool
+              ./scripts/feeds install zlib knit-spool
+              mkdir -p dl && cp /dl/*.tar.gz dl/
+              make defconfig
+              make package/knit-spool/compile V=s \
+                KNIT_SPOOL_VERSION="$KNIT_SPOOL_VERSION" KNIT_SPOOL_HASH="$KNIT_SPOOL_HASH"
+              cp bin/packages/*/knitspool/knit-spool* /out/
+            '
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-${{ matrix.format }}
+          path: out/knit-spool*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish draft Release
-    needs: [preflight, build, native-aarch64]
+    needs: [preflight, build, native-aarch64, openwrt-package]
+    # openwrt-package is skipped on a prerelease, which must not skip the release itself.
+    if: >-
+      always()
+      && needs.preflight.result == 'success'
+      && needs.build.result == 'success'
+      && needs.native-aarch64.result == 'success'
+      && (needs.openwrt-package.result == 'success' || needs.openwrt-package.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the Release and upload assets
@@ -355,13 +422,21 @@ jobs:
         with:
           name: native-aarch64
           path: dist
+      - if: needs.preflight.outputs.prerelease == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openwrt-*
+          path: dist
+          merge-multiple: true
 
       - name: Collect assets and checksums
         run: |
           mkdir -p out
-          find dist -type f \( -name '*.tar' -o -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} out/ \;
+          find dist -type f \( -name '*.tar' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.apk' -o -name '*.ipk' \) -exec cp {} out/ \;
           cd out
-          sha256sum ./*.tar ./*.zip ./*.tar.gz > SHA256SUMS
+          # nullglob: a prerelease has no packages, and an unmatched glob must not become a file name.
+          shopt -s nullglob
+          sha256sum ./*.tar ./*.zip ./*.tar.gz ./*.apk ./*.ipk > SHA256SUMS
           cat SHA256SUMS
 
       # Notes are the CHANGELOG section preflight already proved exists, plus how to actually get
@@ -371,6 +446,8 @@ jobs:
       # `extract` prints the entry without its heading. The footer's heredoc is unquoted so the
       # variables expand, which is why its backticks are escaped.
       - name: Compose release notes
+        env:
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
         run: |
           repo="$GITHUB_REPOSITORY"
           {
@@ -412,6 +489,25 @@ jobs:
           gh attestation verify knit-spool-$VERSION-linux-aarch64-musl.tar.gz --repo $repo
           \`\`\`
 
+          EOF
+            if [ "$PRERELEASE" = 'false' ]; then cat <<EOF
+          ### OpenWrt
+
+          The \`.apk\` (OpenWrt 25.12) and \`.ipk\` (24.10) packages wrap that binary in a procd service for
+          \`aarch64\` boxes, the OpenWrt One first. They are signed with the SDK's own key, which the box
+          does not know:
+
+          \`\`\`sh
+          apk add --allow-untrusted ./knit-spool-$VERSION-r1.apk
+          opkg install ./knit-spool_$VERSION-1_aarch64_cortex-a53.ipk
+          \`\`\`
+
+          Then \`/etc/knit-spool/env\`, \`/etc/config/knit-spool\`, \`service knit-spool start\`. HOSTING.md's
+          "OpenWrt One" section is the whole recipe.
+
+          EOF
+            fi
+            cat <<EOF
           Upgrading a live spool? \`HOSTING.md\` covers the operational side, and \`CHANGELOG.md\` calls
           out anything that moves the wire, the on-disk store, or a configuration default.
 
@@ -431,5 +527,6 @@ jobs:
           cd out
           args=(--draft --title "knit-spool $VERSION" --notes-file notes.md)
           if [ "$PRERELEASE" = 'true' ]; then args+=(--prerelease); fi
-          gh release create "$TAG" "${args[@]}" ./*.tar ./*.zip ./*.tar.gz SHA256SUMS
+          shopt -s nullglob
+          gh release create "$TAG" "${args[@]}" ./*.tar ./*.zip ./*.tar.gz ./*.apk ./*.ipk SHA256SUMS
           echo "::notice::Draft release created for $TAG — review and publish it."
