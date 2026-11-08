@@ -38,6 +38,25 @@ document:
   boot. Boot-only. The first startup line and `knit-spool check` now also name the runtime (`jvm`,
   or `native` for a GraalVM native image; ADR 2026-11.bxce). The development version moves to
   `0.9.0-dev.3` with the new variable.
+- **A native aarch64 binary** (ADR 2026-11.bxce). Every release now also ships
+  `knit-spool-<version>-linux-aarch64-musl.tar.gz`, a GraalVM native image of the daemon built on
+  musl, for boxes with no JVM: OpenWrt on the OpenWrt One first, Alpine on any 64-bit Arm host. It
+  needs the host's `zlib` and nothing else, keeps `libsqlitejdbc.so` beside it, caps its heap at
+  128 MB unless `-Xmx` says otherwise, and reports `native` on its first log line. Built and proved
+  on arm64 runners against the full conformance suite; the JVM dist and the container images stay
+  the reference.
+- **An OpenWrt package** (ADR 2026-11.zmc3). Stable releases attach an `.apk` (OpenWrt 25.12) and
+  an `.ipk` (24.10) that install that binary as a procd service: the box side in
+  `/etc/config/knit-spool`, every other setting in `/etc/knit-spool/env`, which is the daemon's
+  reload file, so `service knit-spool reload` is a `SIGHUP`. Loopback by default behind an
+  `nginx-ssl` snippet the package installs; the store on a disk, or in memory.
+
+### Changed
+
+- **The serialization plugin applies to every module.** The record codec inlined into `:daemon`
+  and `:conformance` now compiles to `T.serializer()` instead of a reflective lookup by type. No
+  behaviour changes on the JVM; it is what lets the native image find every serializer at build
+  time, and `NoReflectiveSerializerLookupTest` keeps it so.
 
 ## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
 

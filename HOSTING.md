@@ -26,6 +26,7 @@ the [README](README.md#-deploy) has the rest.
 - [Linode, where the canonical instance runs](#linode-where-the-canonical-instance-runs)
 - [Poor fits](#poor-fits)
 - [Home and self-hosted](#home-and-self-hosted)
+- [OpenWrt One, an appliance](#openwrt-one-an-appliance)
 - [Architecture](#architecture)
 - [What a commons costs](#what-a-commons-costs)
 - [What TURN costs](#what-turn-costs)
@@ -213,6 +214,40 @@ and a Spool doesn't hold your data. It holds ciphertext it can't open, for scope
 anyone, and drops it on a timer. The design already assumes the Spool is untrusted, so hosting it
 yourself buys less privacy here than it would for nearly anything else you'd run at home.
 
+## OpenWrt One, an appliance
+
+A router can be the box. The OpenWrt One (MediaTek MT7981B, two Cortex-A53 cores, 1 GB of RAM, an
+M.2 slot) runs the native build of the daemon (ADR 2026-11.bxce), one aarch64 binary that needs no
+JVM, as a procd service from the OpenWrt package each stable release attaches (ADR 2026-11.zmc3).
+What changes against the sizing above: the binary runs under a 128 MB heap cap by default (`heap_mb`
+in `/etc/config/knit-spool`), and its resident memory is expected to be a fraction of the JVM's. The
+figures measured on the device land in this section with the first release that ships the package.
+
+What it looks like, end to end:
+
+1. **A disk for the store, or none.** SQLite's write-ahead log churns on every push, which is the
+   wrong workload for the router's SPI NAND. Mount the M.2 drive or a USB disk (`block-mount`,
+   `/etc/config/fstab`) and point `data_dir` at it. Leave `data_dir` empty and the store is the
+   heap: nothing wears, and every frame is forgotten on a restart, which the design tolerates (a
+   missing Spool is a missing Spool) but the people relying on it may not expect. The init script
+   warns in `logread` when `data_dir` sits on the flash overlay.
+2. **Install and configure.** `apk add --allow-untrusted ./knit-spool-<version>-r1.apk` on OpenWrt
+   25.12 (`opkg install` the `.ipk` on 24.10). Put a token and anything else from the README's
+   configuration table in `/etc/knit-spool/env`; the box side (`port`, `bind`, `data_dir`,
+   `heap_mb`) is UCI. `service knit-spool check` prints what boot will resolve.
+3. **TLS on the router.** The daemon binds `127.0.0.1` and speaks plain WebSocket. `nginx-ssl` with
+   a certificate from the `acme` package terminates TLS, using the server block the package installs
+   as `/etc/nginx/conf.d/knit-spool.conf.example`; `ddns-scripts` keeps the name pointed at a
+   dynamic address. Open 443 from `wan` in the firewall, never 9470.
+4. **Run.** `service knit-spool enable && service knit-spool start`, then `logread -e knit-spool`
+   for the startup line, which says `native`. `service knit-spool reload` re-reads the env file
+   without dropping a connection; a UCI change is a `restart`, and the reconnect-storm section
+   below applies to it as to any restart.
+
+Two things to know. Lines in `logread` carry two timestamps, logback's and logd's. And the service's
+stop budget (`term_timeout 15`) is sized for a home spool's handful of connections; a router holding
+hundreds needs it raised along with `SPOOL_MAX_CONNS`.
+
 ## Architecture
 
 Published images are multi-arch — `linux/amd64` and `linux/arm64` — so Oracle's Ampere, Graviton,
@@ -221,6 +256,12 @@ architectures carry the same bytecode over the matching `eclipse-temurin` JRE ba
 
 If you build from source instead, the Gradle build stage wants more memory than a 1 GB box has:
 build on a machine with room and move the result over. The README covers how.
+
+The native binary is the exception to "pure JVM": `knit-spool-<version>-linux-aarch64-musl.tar.gz`
+on each release is a GraalVM native image of the same daemon, built on musl, so it runs on OpenWrt
+and Alpine on 64-bit Arm with no JVM at all (ADR 2026-11.bxce). It is built only on arm64 hosts;
+`scripts/native/build.sh` is the whole recipe, and `scripts/native-acceptance.sh` is what every
+pull request proves it against.
 
 ## What a commons costs
 
