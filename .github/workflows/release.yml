@@ -256,7 +256,7 @@ jobs:
           push-to-registry: true
 
       - name: Upload distribution archives
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: distributions
           path: |
@@ -267,7 +267,7 @@ jobs:
 
       - name: Upload conformance output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-conformance
           path: |
@@ -322,7 +322,7 @@ jobs:
           subject-path: daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz
 
       - name: Upload native archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-aarch64
           path: daemon/build/distributions/*-linux-aarch64-musl.tar.gz
@@ -331,7 +331,7 @@ jobs:
 
       - name: Upload acceptance output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-acceptance
           path: native-acceptance/
@@ -389,7 +389,7 @@ jobs:
             '
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: openwrt-${{ matrix.format }}
           path: out/knit-spool*
