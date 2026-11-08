@@ -1,10 +1,16 @@
 // The reference daemon: WSS server, scope store (in-memory + SQLite), rate limiting, ops.
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // Not for records of its own -- those live in :protocol -- but because RecordCodec.encode<T>()
+    // and decode<T>() are inline and compile here: with the plugin, to T.serializer(); without it,
+    // to a reflective lookup by KType that a native image cannot do (ADR 2026-11.bxce).
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.detekt)
     alias(libs.plugins.kover)
     application
+    // After `application`: it reads mainClass from it.
+    alias(libs.plugins.graalvm.native)
 }
 
 kotlin {
@@ -83,6 +89,85 @@ application {
     mainClass.set("app.getknit.spool.MainKt")
     // Sizing target (README): idles in ~128–256 MB on the cheapest VPS tier.
     applicationDefaultJvmArgs = listOf("-Xmx256m")
+}
+
+// ---- native image ----
+// The aarch64 musl binary for boxes with no JVM, the OpenWrt One first (ADR 2026-11.bxce). Built only
+// inside the Liberica NIK musl container on an arm64 host (scripts/native/build.sh): native-image
+// cannot cross-compile, and no other native-image distribution runs on musl aarch64. The JVM dist
+// above stays the reference artifact. `./gradlew check` never touches any of this; the plugin
+// resolves `native-image` only when `nativeCompile` runs.
+val nativeOut = layout.buildDirectory.dir("native/nativeCompile")
+val hostArch: String = System.getProperty("os.arch")
+
+graalvmNative {
+    // GRAALVM_HOME, else JAVA_HOME: the container's JDK. Toolchain detection would otherwise go
+    // looking for a GraalVM installation on a developer box that has none.
+    toolchainDetection.set(false)
+    // Off, so the test runtime classpath is exactly what `check` has always run with.
+    testSupport.set(false)
+    // Reflection, resource and JNI metadata for logback, Ktor, kotlinx and sqlite-jdbc, matched to
+    // the versions on the classpath. On by default; named here so the dependency on it is visible,
+    // since a Ktor or sqlite-jdbc bump past what it has tested is the likeliest native break.
+    metadataRepository { enabled.set(true) }
+    binaries {
+        named("main") {
+            imageName.set("knit-spool")
+            buildArgs.addAll(
+                // A build that could not analyse everything must fail, not fall back to a bundled JVM.
+                "--no-fallback",
+                // SIGTERM and SIGINT run the shutdown hook: the 1001 closes and the store close
+                // (Main.kt's `serve`). A native image installs no such handlers on its own.
+                "--install-exit-handlers",
+                // The counterpart of applicationDefaultJvmArgs above: without it Serial GC takes 80%
+                // of the box, which on a 1 GB router is everything. `-Xmx` at run time still wins.
+                "-R:MaxHeapSize=128m",
+                "-H:+ReportExceptionStackTraces",
+                // sqlite-jdbc's build-time Feature copies the musl aarch64 libsqlitejdbc.so here
+                // instead of embedding it, so the archive ships it beside the binary and no boot
+                // extracts a library to a temp dir. The loader finds it next to the executable or
+                // under `org.sqlite.lib.path`.
+                "-Dorg.sqlite.lib.exportPath=${nativeOut.get().asFile.absolutePath}",
+                // A reflection, resource or JNI access nothing registered is a crash naming the
+                // missing entry, not a silent null: the acceptance run catches it, production never
+                // sees it. The GraalVM-for-JDK-21 spelling; from 24.1 it is --exact-reachability-metadata.
+                "-H:+UnlockExperimentalVMOptions",
+                "-H:ThrowMissingRegistrationErrors=",
+                "-H:MissingRegistrationReportingMode=Exit",
+                "-H:-UnlockExperimentalVMOptions",
+            )
+            // The OpenWrt One's Cortex-A53 has no LSE atomics, and native-image's AArch64 default
+            // (armv8.1-a) assumes them: a default build refuses to start there. Host-gated so an x86
+            // box can still run `nativeCompile` to see what breaks.
+            buildArgs.add(if (hostArch == "aarch64") "-march=armv8-a+aes" else "-march=compatibility")
+        }
+    }
+}
+
+tasks.named("nativeCompile") {
+    // The Feature writes into the export directory; it does not create it.
+    doFirst { nativeOut.get().asFile.mkdirs() }
+}
+
+// The archive a release ships, and scripts/native-acceptance.sh proves: the binary, its sqlite
+// library, and the two files every distribution of this program carries.
+val nativeDistTar by tasks.registering(Tar::class) {
+    dependsOn(tasks.named("nativeCompile"))
+    doFirst {
+        check(hostArch == "aarch64") { "the native archive is named aarch64, and this host is $hostArch" }
+    }
+    archiveFileName.set("knit-spool-${project.version}-linux-aarch64-musl.tar.gz")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    compression = Compression.GZIP
+    into("knit-spool-${project.version}") {
+        from(nativeOut) {
+            include("knit-spool", "libsqlitejdbc.so")
+            filePermissions { unix("0755") }
+        }
+        from(rootProject.layout.projectDirectory) {
+            include("LICENSE", "THIRD-PARTY-NOTICES.md")
+        }
+    }
 }
 
 tasks.test {

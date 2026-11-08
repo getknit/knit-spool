@@ -75,7 +75,7 @@ internal fun ticketMint(
         try {
             Tickets.decodeSigningKey(Files.readString(Path.of(keyFile)))
         } catch (e: IOException) {
-            return fail(err, "cannot read --key-file $keyFile: ${e.message ?: e::class.simpleName}")
+            return fail(err, "cannot read --key-file $keyFile: ${e.message ?: e.javaClass.simpleName}")
         } ?: return fail(err, "--key-file $keyFile does not hold a knit-ticket-key:v1: signing key")
     val account = options["--account"]
     if (account != null && account.toByteArray().size !in 1..MAX_ACCOUNT_BYTES) {

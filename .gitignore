@@ -1,4 +1,6 @@
 .gradle/
+# Gradle's home when scripts/native/build.sh runs it inside the NIK container; CI caches it.
+.gradle-home/
 build/
 .idea/
 .kotlin/

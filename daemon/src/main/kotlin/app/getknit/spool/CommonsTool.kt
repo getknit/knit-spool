@@ -78,7 +78,7 @@ private fun withToken(
         try {
             Files.readString(Path.of(tokenFile)).trim()
         } catch (e: IOException) {
-            throw IllegalArgumentException("cannot read --token-file $tokenFile: ${e.message ?: e::class.simpleName}", e)
+            throw IllegalArgumentException("cannot read --token-file $tokenFile: ${e.message ?: e.javaClass.simpleName}", e)
         }
     require(token.isNotEmpty()) { "--token-file $tokenFile is empty" }
     return "$url${if ('?' in url) '&' else '?'}k=$token"

@@ -24,6 +24,14 @@ conformance/build/install/knit-spool-conformance/bin/knit-spool-conformance \
 
 Ports 9470 and 9471 may already be in use on a dev box; set `SPOOL_PORT` for a local run.
 
+The native aarch64 musl binary (ADR 2026-11.bxce) builds only on an arm64 host, inside the Liberica
+NIK musl container, and is proved against a plain Alpine container:
+
+```sh
+scripts/native/build.sh -PspoolCommit="$(git rev-parse HEAD)"   # -> daemon/build/distributions/*-linux-aarch64-musl.tar.gz
+scripts/native-acceptance.sh daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz "$(git rev-parse HEAD)"
+```
+
 Architecture decision records (see [`../rules/decisions.md`](../rules/decisions.md)):
 
 ```sh

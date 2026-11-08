@@ -1,0 +1,8 @@
+{
+  "resources": {
+    "includes": [
+      { "pattern": "\\Qapp/getknit/spool/build-info.properties\\E" },
+      { "pattern": "\\Qlogback.xml\\E" }
+    ]
+  }
+}
