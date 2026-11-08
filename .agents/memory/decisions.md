@@ -36,3 +36,5 @@ the same number. Cite an ADR by its id, exactly as its heading spells it.
 | [2026-10.zm4z](decisions/2026-10-zm4z-public-copy-names-supporters.md) | Public copy names supporters, never payers | docs, tickets, support |
 | [2026-10.2q49](decisions/2026-10-2q49-a-signal-lane.md) | A signal lane: live fan-out that no ticket gates | sigs, casts, tickets, typing |
 | [2026-10.fxcs](decisions/2026-10-fxcs-live-subscribers-per-scope-are.md) | live subscribers per scope are capped, the commons exempt | scopes, fan-out, abuse, egress |
+| [2026-11.bxce](decisions/2026-11-bxce-a-native-aarch64-musl-binary.md) | a native aarch64 musl binary is built with GraalVM, and the JVM dist stays the reference | build, deploy, native |
+| [2026-11.zmc3](decisions/2026-11-zmc3-openwrt-gets-a-procd-service.md) | OpenWrt gets a procd service around the prebuilt binary, bound to loopback behind nginx | deploy, openwrt, config |
