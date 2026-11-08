@@ -412,7 +412,7 @@ jobs:
       #   gh attestation verify oci://ghcr.io/getknit/knit-spool:edge --repo getknit/knit-spool
       # GHCR only, as in release.yml — Docker Hub's OCI referrers support is inconsistent.
       - name: Attest build provenance (GHCR)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
