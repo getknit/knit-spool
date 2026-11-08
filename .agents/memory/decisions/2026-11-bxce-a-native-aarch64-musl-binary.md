@@ -48,7 +48,11 @@ is for boxes that cannot run them.
   a static musl executable could not `dlopen` sqlite-jdbc's JNI library anyway. The binary needs
   `libc.musl-aarch64.so.1` and `libz.so.1` from the host and nothing else.
 - **`-march=armv8-a+aes`**, host-gated in the Gradle block (`-march=compatibility` elsewhere), so the
-  image runs on the Cortex-A53. The AES extension the SoC does have stays in use.
+  image runs on the Cortex-A53. The AES extension the SoC does have stays in use. The JDK's static
+  libraries still call libgcc's outline-atomics helpers, which choose LSE or LL/SC at run time behind
+  AT_HWCAP; they read it through `__getauxval`, a name the NIK container's Alpaquita musl exports and
+  stock musl does not, so a one-line C shim over `getauxval` is linked into the aarch64 image
+  (`daemon/src/main/c/getauxval_shim.c`).
 - **One binary is both tested and shipped.** `--no-fallback`; `--install-exit-handlers`, so SIGTERM
   runs the shutdown hook (the 1001 closes and the store close); `-R:MaxHeapSize=128m` as the
   counterpart of the start script's `-Xmx256m` (the executable still takes `-Xmx` at run time); and

@@ -112,6 +112,23 @@ application {
 val nativeOut = layout.buildDirectory.dir("native/nativeCompile")
 val hostArch: String = System.getProperty("os.arch")
 
+// libgcc's outline-atomics helpers (the JDK's static libraries call them) read AT_HWCAP through
+// `__getauxval`, a glibc-internal name that the NIK container's Alpaquita musl exports and stock musl
+// (Alpine, OpenWrt) does not: the image links in the container and fails to load on the router. A
+// one-line C shim over the public `getauxval`, compiled with the container's gcc and linked into the
+// aarch64 image; src/main/c/getauxval_shim.c says more. x86_64 has no such reference.
+val getauxvalShim = layout.buildDirectory.file("native/shim/getauxval_shim.o")
+val compileGetauxvalShim =
+    tasks.register<Exec>("compileGetauxvalShim") {
+        onlyIf { hostArch == "aarch64" }
+        val source = layout.projectDirectory.file("src/main/c/getauxval_shim.c")
+        inputs.file(source)
+        outputs.file(getauxvalShim)
+        val output = getauxvalShim.get().asFile
+        doFirst { output.parentFile.mkdirs() }
+        commandLine("gcc", "-c", "-O2", "-fPIC", "-o", output.absolutePath, source.asFile.absolutePath)
+    }
+
 graalvmNative {
     // GRAALVM_HOME, else JAVA_HOME: the container's JDK. Toolchain detection would otherwise go
     // looking for a GraalVM installation on a developer box that has none.
@@ -155,8 +172,18 @@ graalvmNative {
             )
             // The OpenWrt One's Cortex-A53 has no LSE atomics, and native-image's AArch64 default
             // (armv8.1-a) assumes them: a default build refuses to start there. Host-gated so an x86
-            // box can still run `nativeCompile` to see what breaks.
-            buildArgs.add(if (hostArch == "aarch64") "-march=armv8-a+aes" else "-march=compatibility")
+            // box can still run `nativeCompile` to see what breaks. The `__getauxval` shim rides
+            // along on aarch64 (see compileGetauxvalShim above).
+            if (hostArch == "aarch64") {
+                buildArgs.addAll(
+                    "-march=armv8-a+aes",
+                    "-H:+UnlockExperimentalVMOptions",
+                    "-H:NativeLinkerOption=${getauxvalShim.get().asFile.absolutePath}",
+                    "-H:-UnlockExperimentalVMOptions",
+                )
+            } else {
+                buildArgs.add("-march=compatibility")
+            }
             // Extra native-image options for one diagnostic build, never for a shipped one:
             // -PspoolNativeArgs="--trace-class-initialization=a.b.C -H:+PrintClassInitialization".
             providers
@@ -170,6 +197,7 @@ graalvmNative {
 }
 
 tasks.named("nativeCompile") {
+    dependsOn(compileGetauxvalShim)
     // The Feature writes into the export directory; it does not create it.
     doFirst { nativeOut.get().asFile.mkdirs() }
 }

@@ -90,6 +90,17 @@ fi
 run() { docker run --rm --network host --user "$(id -u):$(id -g)" -v "$dist:/opt/ks:ro" -v "$work:/work" "$@"; }
 ks() { run "$image" /opt/ks/knit-spool "$@"; }
 
+step "every undefined symbol resolves against the run image's musl and zlib"
+# The NIK container's Alpaquita musl exports more than stock musl does (`__getauxval`, for one), so
+# a binary that linked there can still fail to load here. Compared by name against the run image's
+# own libraries, before any boot, so the failure names the symbol rather than "exec format error".
+run "$image" sh -c 'cp /lib/ld-musl-*.so.1 /work/libc.so && cp /usr/lib/libz.so.1 /work/libz.so'
+provided=$(readelf -W --dyn-syms "$work/libc.so" "$work/libz.so" | awk '$7 != "UND" && $8 != "" { sub(/@.*/, "", $8); print $8 }' | sort -u)
+undefined=$(readelf -W --dyn-syms "$bin" | awk '$7 == "UND" && $5 != "WEAK" && $8 != "" { sub(/@.*/, "", $8); print $8 }' | sort -u)
+missing=$(comm -23 <(echo "$undefined") <(echo "$provided"))
+[ -z "$missing" ] || fail "symbols no library in the run image provides: $(echo "$missing" | xargs)"
+echo "$(echo "$undefined" | wc -l) undefined symbols, every one provided"
+
 step "check: the runtime option is consumed before main, and the build says native"
 out=$(run -e SPOOL_PORT="$port" "$image" /opt/ks/knit-spool -Xmx64m check)
 echo "$out"
