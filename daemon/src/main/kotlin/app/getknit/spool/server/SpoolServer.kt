@@ -222,6 +222,12 @@ class SpoolServer(
 
     class Config(
         val port: Int,
+        /**
+         * The address the listener binds. `0.0.0.0` is every interface, as every spool before the
+         * knob ran; `127.0.0.1` keeps the plaintext listener off the LAN on a box that terminates
+         * TLS itself (ADR 2026-11.zmc3). Boot-only: the listener is built from it, like the port.
+         */
+        val bind: String = DEFAULT_BIND,
         val token: String?,
         /**
          * A second connect credential, accepted alongside [token] and never announced.
@@ -355,6 +361,7 @@ class SpoolServer(
         internal fun bootOnly(): Map<String, Any?> =
             linkedMapOf(
                 "port" to port,
+                "bind" to bind,
                 "maxBlob" to hardLimits.maxBlob,
                 "maxFrames" to hardLimits.maxFramesCap,
                 "maxTtlMs" to hardLimits.maxTtlMs,
@@ -443,6 +450,7 @@ class SpoolServer(
         ): Config =
             Config(
                 port = port,
+                bind = bind,
                 hardLimits = hardLimits,
                 sweepMs = sweepMs,
                 statusMs = statusMs,
@@ -477,6 +485,11 @@ class SpoolServer(
             )
 
         private fun secret(value: String?): String = if (value == null) "unset" else "set"
+
+        companion object {
+            /** Every interface, which is what every spool bound before `SPOOL_BIND` existed. */
+            const val DEFAULT_BIND = "0.0.0.0"
+        }
     }
 
     /**
@@ -894,7 +907,7 @@ class SpoolServer(
     fun start(wait: Boolean = true): EmbeddedServer<*, *> {
         createRooms()
         val server =
-            embeddedServer(CIO, port = config.port) {
+            embeddedServer(CIO, host = config.bind, port = config.port) {
                 appScope = this
                 install(WebSockets) {
                     maxFrameSize = config.maxRecord + FRAME_SLACK
@@ -993,9 +1006,9 @@ class SpoolServer(
                 }
             }
         engine = server
-        log.info("knit-spool {} (commit {}) — source {}", BuildInfo.version, BuildInfo.commit, config.sourceUrl)
+        log.info("knit-spool {} (commit {}, {}) — source {}", BuildInfo.version, BuildInfo.commit, BuildInfo.runtime, config.sourceUrl)
         log.info("effective config: {}", config.describe())
-        log.info("knit-spool listening on :{} (pow={} bits, token={})", config.port, config.powBits, config.token != null)
+        log.info("knit-spool listening on {}:{} (pow={} bits, token={})", config.bind, config.port, config.powBits, config.token != null)
         logWithheldNames(config)
         return server.start(wait = wait)
     }

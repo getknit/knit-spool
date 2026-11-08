@@ -4,6 +4,7 @@ package app.getknit.spool
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -18,6 +19,12 @@ class BuildInfoTest {
     fun theStampIsPresentAndNeverBlank() {
         assertTrue(BuildInfo.version.isNotBlank())
         assertTrue(BuildInfo.commit.isNotBlank())
+    }
+
+    /** The test JVM is a JVM; the native build proves the other value in `scripts/native-acceptance.sh`. */
+    @Test
+    fun theRuntimeIsTheJvmHere() {
+        assertEquals("jvm", BuildInfo.runtime)
     }
 
     /** Both values are rendered into JSON and into a Prometheus label, so neither may carry a quote. */

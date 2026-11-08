@@ -40,5 +40,12 @@ object BuildInfo {
 
     val commit: String = stamp.value("commit")
 
+    /**
+     * `native` inside a GraalVM native image, `jvm` otherwise (ADR 2026-11.bxce). The two builds are
+     * told apart nowhere else: version and commit are the same by construction, and the first log
+     * line is where a support question starts. The property is the one GraalVM documents for this.
+     */
+    val runtime: String = if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) "native" else "jvm"
+
     private fun Properties.value(key: String): String = getProperty(key)?.trim()?.takeIf { it.isNotEmpty() } ?: UNKNOWN
 }

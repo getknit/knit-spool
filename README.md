@@ -194,6 +194,7 @@ logged as a probable typo. Defaults follow the spec's §12 constants.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SPOOL_PORT` | `9470` | listen port |
+| `SPOOL_BIND` | `0.0.0.0` | the address the listener binds, a literal IPv4 or IPv6 address; `127.0.0.1` keeps the plaintext listener off the LAN behind a reverse proxy on the same host. A name is refused |
 | `SPOOL_TOKEN` | unset | bearer token; unset = public Spool |
 | `SPOOL_TOKEN_NEXT` | unset | a second accepted token, for rotating without a cutover: set it, let clients migrate, promote it into `SPOOL_TOKEN`, unset it. Requires `SPOOL_TOKEN`, and must differ from it |
 | `SPOOL_RELOAD_FILE` | unset | a `KEY=value` file layered over the environment, read at boot and again on every `SIGHUP`, so a restart keeps what a reload installed. A missing file is no overrides; an unreadable or invalid one refuses to boot. Unset means `SIGHUP` has nothing to read and says so |
@@ -758,8 +759,8 @@ this feature exists to avoid.
 | `SPOOL_COMMONS_*`, `SPOOL_COMMONS_<n>_*`, `SPOOL_COMMONS_RATE_TOTAL` | immediately, as one unit. A room it adds is in every `hello` after it. The members of a room it rotates to a new id, removes, or gives new bounds or attachments are closed `1001` and reconnect to the new `hello`; a name or a rate closes nobody. A room the store has no slot for (`SPOOL_MAX_SCOPES` full, nothing bare to reclaim) keeps every room as it was, and is logged |
 
 **What it cannot**, because something is already built from it — the store from the blob and scope
-limits, the sweeper and status line from their cadences, the listener from the port: `SPOOL_PORT`,
-`SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`, `SPOOL_MAX_SCOPES`,
+limits, the sweeper and status line from their cadences, the listener from the address and port:
+`SPOOL_BIND`, `SPOOL_PORT`, `SPOOL_MAX_BLOB`, `SPOOL_MAX_FRAMES`, `SPOOL_MAX_TTL_MS`, `SPOOL_MAX_SCOPES`,
 `SPOOL_MAX_ATTACH_BYTES`, `SPOOL_MAX_A_CHUNK`, `SPOOL_SWEEP_MS`, `SPOOL_STATUS_MS`,
 `SPOOL_TRUST_PROXY`, every `SPOOL_TURN_*` setting (server 1's and `SPOOL_TURN_<n>_*` alike),
 `SPOOL_SOURCE_URL`, `SPOOL_DATA_DIR`. A room is checked against the limits the Spool booted with,
