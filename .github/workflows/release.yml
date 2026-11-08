@@ -249,7 +249,7 @@ jobs:
       # GHCR only: Docker Hub's support for the OCI referrers API that carries the attestation is
       # inconsistent, and a failed push here would fail a release whose image is already live.
       - name: Attest build provenance (GHCR)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.GHCR_IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -317,7 +317,7 @@ jobs:
       # The same verifiable provenance the image carries:
       #   gh attestation verify knit-spool-<version>-linux-aarch64-musl.tar.gz --repo getknit/knit-spool
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz
 
