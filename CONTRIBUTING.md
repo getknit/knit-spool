@@ -148,7 +148,8 @@ image build for the internal registry — those never gate a contribution.
 Maintainer-only, and worth knowing about because two things in the tree exist for it. A `v*` tag
 runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which re-runs `check` and the
 conformance suite against the tagged commit, publishes a multi-arch image to GHCR and Docker Hub,
-and opens a **draft** GitHub Release with the distribution archives.
+builds the aarch64 musl native archive and, for a stable version, the OpenWrt packages around it,
+and opens a **draft** GitHub Release with all of them.
 
 - The release version is not stored in the tree. The release passes `-PspoolVersion=<version>`
   from the tag, so nothing needs bumping to cut one. `-PspoolCommit=<sha>` rides alongside it; both
@@ -172,6 +173,12 @@ and opens a **draft** GitHub Release with the distribution archives.
   [`Dockerfile`](Dockerfile) is the from-source one. They share a byte-identical runtime stage;
   keep it that way, or an operator's published image and their locally built one stop behaving
   the same.
+- The native archive and the OpenWrt packages come from GitHub's arm64 runners only (ADR
+  2026-11.bxce): native-image cannot cross-compile, and the internal GitLab runners are x86_64.
+  Every pull request builds and proves the archive too, so release day holds no surprise there.
+  After a stable release, a `chore(openwrt): point the package at vX.Y.Z` commit moves
+  `KNIT_SPOOL_VERSION` and `KNIT_SPOOL_HASH` in `deploy/openwrt/knit-spool/Makefile`, so the feed
+  builds the release that exists (ADR 2026-11.zmc3).
 
 ## Security
 

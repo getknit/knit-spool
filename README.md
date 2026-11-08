@@ -581,6 +581,16 @@ network; clients get `wss://$SPOOL_DOMAIN/spool/v1`.
 > `save`/`load`, not `export`/`import`, which flattens the image and drops its ENTRYPOINT and
 > HEALTHCHECK.
 
+**No JVM, or a router?** Each release also ships `knit-spool-<version>-linux-aarch64-musl.tar.gz`,
+a native build of the same daemon for 64-bit Arm Linux on musl: OpenWrt and Alpine, with the host's
+`zlib` as its only dependency. Unpack it, keep `libsqlitejdbc.so` beside the binary, and run
+`knit-spool` with the same `SPOOL_*` environment; `-Xmx` on its command line moves the 128 MB heap
+cap. For the OpenWrt One there is a package, `.apk` for 25.12 and `.ipk` for 24.10, that installs
+it as a procd service bound to loopback behind `nginx-ssl`;
+[`HOSTING.md`](HOSTING.md#openwrt-one-an-appliance) walks through it, and
+[`deploy/openwrt/`](deploy/openwrt/knit-spool/README.md) is the package. The JVM dist and the
+images stay the reference (ADR 2026-11.bxce).
+
 ## 🐳 Docker
 
 Images go to two registries, and they are the same bytes: one multi-arch manifest, pushed to both.
@@ -872,6 +882,14 @@ JDK 21 — the Gradle wrapper pins Gradle 9.8.2.
 
 `check` runs the §13 spec-vector pins, the store contract against both backends (in-memory and
 SQLite), and the full server integration tests.
+
+The native aarch64 binary builds only on an arm64 host with Docker, inside the Liberica NIK musl
+container, and is proved against a plain Alpine container the way every pull request proves it:
+
+```sh
+scripts/native/build.sh -PspoolCommit="$(git rev-parse HEAD)"   # -> daemon/build/distributions/*-linux-aarch64-musl.tar.gz
+scripts/native-acceptance.sh daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz "$(git rev-parse HEAD)"
+```
 
 ### Coverage
 

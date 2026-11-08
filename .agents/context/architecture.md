@@ -9,7 +9,7 @@ The README's "How it works" section has the diagram.
 | Module | Artifact | What |
 | --- | --- | --- |
 | `:protocol` | library | Records, PoW, digest (spec §2, §6.3, §7, §8). No server code |
-| `:daemon` | `knit-spool` | The reference daemon: WSS server, in-memory and SQLite stores, rate limits, ops |
+| `:daemon` | `knit-spool` (JVM dist, and a native aarch64 musl binary) | The reference daemon: WSS server, in-memory and SQLite stores, rate limits, ops |
 | `:conformance` | `knit-spool-conformance` | CLI that validates any live Spool over WebSocket (TAP) |
 
 Dependency arrows: `:daemon` and `:conformance` both depend on `:protocol`. `:daemon`'s tests
@@ -19,6 +19,9 @@ cross.
 ## Elsewhere in the tree
 
 - `deploy/`: Compose files (tiny, TLS, TURN overlays), Caddy and nginx configs, coturn.
+- `deploy/openwrt/`: the OpenWrt package around the native binary (ADR 2026-11.zmc3).
+- `scripts/native/`, `scripts/native-acceptance.sh`: the native build inside the NIK musl container
+  and what every pull request proves the archive against (ADR 2026-11.bxce).
 - `config/detekt/`: the detekt overlay; every departure from a default carries its reason.
 - `.githooks/`: DCO trailer and ADR router check.
 - `bench/`: local load-test scratch, gitignored.

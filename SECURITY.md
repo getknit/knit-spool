@@ -156,6 +156,11 @@ vulnerabilities** — they are documented and out of scope for reports:
   secret reaches can read and write the room, and there is no per-member identity, ban list, or
   revocation short of rotating the invite. Whether a member can forge another's display name is a property of
   the sealed frame, which this daemon never opens — it belongs to the client and the spec, not here.
+- **The native aarch64 binary is built with a toolchain its vendor rates for evaluation.** Liberica
+  NIK's musl aarch64 build is the only native-image distribution for that platform (ADR
+  2026-11.bxce). The JVM dist and the container images are the reference; every release proves
+  the native binary against the same conformance suite, but a fault reproducible only there may
+  be the toolchain's, and is reported upstream as well as here.
 
 Novel issues **beyond** these documented trade-offs are in scope and welcome, in particular:
 
@@ -180,7 +185,10 @@ Not a substitute for the above, but the short list operators ask for: terminate 
 `SPOOL_POW_BITS` on a public Spool, set `SPOOL_TOKEN` on a private one and pass it with
 `--token-file` rather than argv, keep `/metrics` off the public internet, leave
 `SPOOL_TRUST_PROXY=false` unless a proxy you control appends `X-Forwarded-For`, and cap the process
-(the shipped compose overlays do). See the README's *Deploy* and *Operating* sections.
+(the shipped compose overlays do). See the README's *Deploy* and *Operating* sections. On a box
+that also serves a LAN, such as a router, set `SPOOL_BIND=127.0.0.1` so the plaintext listener is
+reachable only through the proxy: the token rides in the URL, and `0.0.0.0` puts it on the LAN
+wire for anyone who tries `ws://` (the OpenWrt package defaults to loopback).
 
 Running the experimental TURN overlay adds two: keep `SPOOL_TURN_SECRET` out of anything but
 `deploy/.env` (mode 0600) — anyone holding it can mint relay credentials — and keep the
