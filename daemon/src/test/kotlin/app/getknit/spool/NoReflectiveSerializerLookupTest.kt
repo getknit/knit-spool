@@ -8,6 +8,7 @@ import kotlin.io.path.extension
 import kotlin.io.path.readBytes
 import kotlin.streams.asSequence
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -19,6 +20,12 @@ import kotlin.test.assertTrue
  * `kotlin-reflect`, which a native image cannot satisfy without per-class metadata. Before the plugin
  * was applied here, `SpoolServer.class` held 33 such sites, each a crash in the native build. This
  * reads the compiled classes rather than the source, because the source looks identical either way.
+ *
+ * The second test keeps `kotlin-reflect` itself off the classpath. Ktor's server core declares it and
+ * nothing here calls it; with it present every `typeOf<T>()`, Ktor's own attribute keys included,
+ * resolves through kotlin-reflect, which probes the classpath by class name and expects
+ * `ClassNotFoundException` back. A native image built with strict registration answers with an
+ * error instead, and the first native boot died in the WebSockets plugin's class initializer.
  */
 class NoReflectiveSerializerLookupTest {
     @Test
@@ -46,5 +53,12 @@ class NoReflectiveSerializerLookupTest {
             "these classes look a serializer up by KType at run time; the serialization plugin is " +
                 "applied to :daemon exactly so that decode<T>() compiles to T.serializer(): $offenders",
         )
+    }
+
+    @Test
+    fun kotlinReflectIsNotOnTheDaemonClasspath() {
+        assertFailsWith<ClassNotFoundException>("kotlin-reflect is back on the classpath; daemon/build.gradle.kts excludes it") {
+            Class.forName("kotlin.reflect.jvm.internal.ReflectionFactoryImpl")
+        }
     }
 }

@@ -41,6 +41,18 @@ dependencies {
     testImplementation(project(":conformance"))
 }
 
+// Ktor's server core declares kotlin-reflect; nothing here calls it, and with it on the classpath
+// every `typeOf<T>()` (Ktor's own AttributeKeys included) goes through kotlin-reflect, which probes
+// the classpath by class name and expects ClassNotFoundException back. A native image built with
+// strict registration answers with an error instead, and the first native boot died in Ktor's
+// WebSockets class initializer (ADR 2026-11.bxce). Without it `typeOf` is a stdlib intrinsic and
+// the image is 9 MB smaller. On `implementation`, which every compile and test classpath extends,
+// so `check` runs without it too and a Ktor path that came to need it fails a test here before it
+// fails a boot anywhere. Not on every configuration: the Kotlin compiler's own classpath needs it.
+configurations.implementation {
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
+}
+
 // ---- build stamp ----
 // What the daemon reports about itself at runtime: the startup log line, GET /source (the AGPL §13
 // offer), and knit_spool_build_info on /metrics.
@@ -135,11 +147,24 @@ graalvmNative {
                 "-H:ThrowMissingRegistrationErrors=",
                 "-H:MissingRegistrationReportingMode=Exit",
                 "-H:-UnlockExperimentalVMOptions",
+                // GraalVM 23.1 reads every class's annotations while registering it, and parsing
+                // Kotlin's `@Deprecated(level = DeprecationLevel.WARNING)` default initializes this
+                // enum in the builder, which the run-time-initialization check then reports as an
+                // error. Three constants and no state: build-time initialization changes nothing.
+                "--initialize-at-build-time=kotlin.DeprecationLevel",
             )
             // The OpenWrt One's Cortex-A53 has no LSE atomics, and native-image's AArch64 default
             // (armv8.1-a) assumes them: a default build refuses to start there. Host-gated so an x86
             // box can still run `nativeCompile` to see what breaks.
             buildArgs.add(if (hostArch == "aarch64") "-march=armv8-a+aes" else "-march=compatibility")
+            // Extra native-image options for one diagnostic build, never for a shipped one:
+            // -PspoolNativeArgs="--trace-class-initialization=a.b.C -H:+PrintClassInitialization".
+            providers
+                .gradleProperty("spoolNativeArgs")
+                .orNull
+                ?.split(' ')
+                ?.filter { it.isNotBlank() }
+                ?.let { buildArgs.addAll(it) }
         }
     }
 }

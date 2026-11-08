@@ -56,12 +56,21 @@ is for boxes that cannot run them.
   acceptance run rather than a `null` in production.
 - **The serialization plugin is applied to every module**, so `RecordCodec.encode<T>()` compiles to
   `T.serializer()` wherever it is inlined. No per-class reflection metadata is needed for records.
+- **`kotlin-reflect` stays off the daemon's classpath.** Ktor's server core declares it and nothing
+  here calls it. With it present every `typeOf<T>()`, Ktor's own attribute keys included, resolves
+  through kotlin-reflect, which probes the classpath by class name and expects
+  `ClassNotFoundException` back; under strict registration that probe is an error, and the first
+  native boot died in the WebSockets plugin's class initializer. Without it `typeOf` is a stdlib
+  intrinsic, and the image is 9 MB smaller (54 MB to 45 MB).
 - **Logback stays, initialised at run time**, from the same `logback.xml`, through the reachability
   metadata repository. `${SPOOL_LOG_LEVEL:-INFO}` and the `io.ktor` INFO pin that keeps the bearer
   token out of the log work exactly as on the JVM.
 - **`libsqlitejdbc.so` is exported beside the binary** at build time (`org.sqlite.lib.exportPath`)
-  instead of being extracted to a temp directory at every boot. The loader finds it next to the
-  executable, or wherever `org.sqlite.lib.path` points.
+  instead of being extracted to a temp directory at every boot. sqlite-jdbc looks only where
+  `org.sqlite.lib.path` points (its fallback is a classpath resource the image does not carry, a
+  crash under strict registration), so before the store opens the daemon points it at the
+  executable's own directory through `/proc/self/exe`, symlink in PATH or not. An explicit
+  `-Dorg.sqlite.lib.path` wins.
 - **Built on GitHub's arm64 runners only.** The internal GitLab runners are x86_64 and
   unprivileged, and native-image cannot cross-compile. A `native-aarch64` job runs on every PR and
   on every release.
@@ -97,7 +106,10 @@ natively (`nativeTest`). The daemon's measured footprint on the OpenWrt One is r
 HOSTING.md's appliance section, not here, and this ADR moves to Accepted once that pass is done.
 
 The trap is a `--initialize-at-build-time` entry that reaches logback. It makes the build pass and
-freezes `SPOOL_LOG_LEVEL` at whatever the build host had, and the `io.ktor` pin with it. Guards:
+freezes `SPOOL_LOG_LEVEL` at whatever the build host had, and the `io.ktor` pin with it. The one
+entry there is `kotlin.DeprecationLevel`, a three-constant enum: GraalVM 23.1 parses every class's
+annotations while registering it, Kotlin's `@Deprecated` carries `DeprecationLevel.WARNING` as a
+default, and the enum is initialised in the builder whatever the policy says. Guards:
 
 - The `native-aarch64` CI job runs `scripts/native-acceptance.sh` against the extracted archive on a
   plain Alpine arm64 container: the `NEEDED` set, an LSE-instruction scan outside GCC's

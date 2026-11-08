@@ -434,6 +434,12 @@ private fun serve() {
                 log.info("no SPOOL_DATA_DIR — in-memory store (a restart drops every scope)")
                 InMemoryScopeStore(config.hardLimits)
             } else {
+                // The native binary's library lives beside it, and sqlite-jdbc has to be told so.
+                val library = pointSqliteAtTheExecutable()
+                if (library == null && BuildInfo.runtime == "native" && System.getProperty("org.sqlite.lib.path") == null) {
+                    log.error("libsqlitejdbc.so is not beside the executable: keep it there, or pass -Dorg.sqlite.lib.path=<its directory>")
+                    exitProcess(1)
+                }
                 SqliteScopeStore.open(Path.of(dataDir), config.hardLimits)
             }
         } catch (e: Exception) {

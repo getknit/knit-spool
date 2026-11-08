@@ -185,7 +185,9 @@ for _ in $(seq 30); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:$port/healthz" | grep -q '"ok"' || { docker logs "$container"; fail "the symlinked daemon never became healthy"; }
-if docker logs "$container" 2>&1 | grep -q ' INFO '; then fail "SPOOL_LOG_LEVEL=WARN still printed INFO lines: the level was frozen at build time"; fi
+# io.ktor is pinned at INFO whatever the root level says (logback.xml), so Ktor's three startup
+# lines are expected here; SPOOL_LOG_LEVEL governs the daemon's own loggers.
+if docker logs "$container" 2>&1 | grep -Eq ' INFO +(a\.g\.s\.|app\.getknit\.)'; then fail "SPOOL_LOG_LEVEL=WARN still printed the daemon's INFO lines: the level was frozen at build time"; fi
 docker kill --signal=TERM "$container" >/dev/null
 timeout 10 docker wait "$container" >/dev/null || fail "the symlinked daemon did not stop on SIGTERM"
 

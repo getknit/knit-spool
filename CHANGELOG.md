@@ -57,6 +57,11 @@ document:
   and `:conformance` now compiles to `T.serializer()` instead of a reflective lookup by type. No
   behaviour changes on the JVM; it is what lets the native image find every serializer at build
   time, and `NoReflectiveSerializerLookupTest` keeps it so.
+- **`kotlin-reflect` is no longer on the daemon's classpath** (ADR 2026-11.bxce). Ktor's server
+  core declares it and the daemon never called it; with it present every `typeOf<T>()` went
+  through kotlin-reflect's classpath probing, which a native image built with strict registration
+  refuses. The dist archives and the image lose one jar; behaviour on the JVM is unchanged, and
+  the same test keeps it off.
 
 ## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
 

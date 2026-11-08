@@ -20,7 +20,7 @@ modules) whenever a dependency changes.
 
 | Component | Project | License |
 |---|---|---|
-| Kotlin standard library, `kotlin-reflect`, `org.jetbrains:annotations` | [JetBrains — Kotlin](https://github.com/JetBrains/kotlin) | Apache-2.0 |
+| Kotlin standard library, `org.jetbrains:annotations` | [JetBrains — Kotlin](https://github.com/JetBrains/kotlin) | Apache-2.0 |
 | kotlinx.coroutines (`-core`, `-jdk8`, `-slf4j`) | [JetBrains — kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Apache-2.0 |
 | kotlinx.serialization (`-core`, `-cbor`) — the CBOR wire format | [JetBrains — kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) | Apache-2.0 |
 | kotlinx-io (`-core`, `-bytestring`) | [JetBrains — kotlinx-io](https://github.com/Kotlin/kotlinx-io) | Apache-2.0 |
