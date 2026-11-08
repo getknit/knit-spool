@@ -3,6 +3,9 @@
 // spec's wire contract, not against this repo's server internals.
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // RecordCodec.encode<T>()/decode<T>() are inline and compile here; the plugin turns them into
+    // T.serializer() instead of a reflective lookup by KType, as in :daemon (ADR 2026-11.bxce).
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.detekt)
     alias(libs.plugins.kover)
