@@ -220,8 +220,20 @@ A router can be the box. The OpenWrt One (MediaTek MT7981B, two Cortex-A53 cores
 M.2 slot) runs the native build of the daemon (ADR 2026-11.bxce), one aarch64 binary that needs no
 JVM, as a procd service from the OpenWrt package each stable release attaches (ADR 2026-11.zmc3).
 What changes against the sizing above: the binary runs under a 128 MB heap cap by default (`heap_mb`
-in `/etc/config/knit-spool`), and its resident memory is expected to be a fraction of the JVM's. The
-figures measured on the device land in this section with the first release that ships the package.
+in `/etc/config/knit-spool`), and its resident memory is a fraction of the JVM's. Measured on an
+OpenWrt One running 25.12.5 on 2026-11-08, package installed with `apk add`, service started by procd,
+no load beyond the conformance suite:
+
+| Figure | Measured |
+| --- | --- |
+| Installed | 44 MB under `/usr/lib/knit-spool`, about 20 MB of the overlay once UBIFS has compressed it |
+| Resident, idle | 35 MB with the in-memory store; 39 MB with a SQLite store and tickets, TURN and a commons room on |
+| Resident after the conformance suite | 46 MB in memory; 59 MB with the SQLite store and every feature on |
+| Cold start to a healthy `/healthz` | 0.2 s through procd; `service knit-spool restart` is answering again in 0.25 s |
+| Stop | SIGTERM to exit in under 0.1 s with no session open, the SQLite WAL checkpointed and gone |
+| Conformance | 60 of 60 against the loopback listener, from a LAN host over an SSH tunnel |
+
+The archive alone also runs, unpacked under `/tmp`, for a look before installing anything.
 
 What it looks like, end to end:
 

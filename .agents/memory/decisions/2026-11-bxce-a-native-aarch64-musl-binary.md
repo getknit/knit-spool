@@ -8,7 +8,7 @@ topics: [build, deploy, native]
 
 # ADR 2026-11.bxce — a native aarch64 musl binary is built with GraalVM, and the JVM dist stays the reference
 
-Status: Proposed (2026-11-07)
+Status: Accepted (2026-11-08)
 
 **Context:** The daemon is pure JVM. HOSTING.md sizes it at `-Xmx256m` and about 450 MB resident on
 a 1 GB VPS, and the install paths are the container image and the JVM dist archives. The OpenWrt
@@ -107,7 +107,10 @@ every PR rather than on tags alone.
 Not covered: an x86_64 native binary (nearly free once this exists, since musl x86_64 is fully
 supported), a native conformance CLI, a native container image, and running the JVM test suite
 natively (`nativeTest`). The daemon's measured footprint on the OpenWrt One is recorded in
-HOSTING.md's appliance section, not here, and this ADR moves to Accepted once that pass is done.
+HOSTING.md's appliance section, not here. The device pass on 2026-11-08 (an OpenWrt One on 25.12.5,
+Cortex-A53) booted the archive from `/tmp` and then the package's service, with the full conformance
+suite green against both and nothing to change in the image; that is what moved this ADR to
+Accepted.
 
 The trap is a `--initialize-at-build-time` entry that reaches logback. It makes the build pass and
 freezes `SPOOL_LOG_LEVEL` at whatever the build host had, and the `io.ktor` pin with it. The one

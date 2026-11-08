@@ -65,8 +65,16 @@ alternative was a store on the NAND by default. Lines in `logread` carry two tim
 and logd's. `term_timeout 15` fits the sequential 1001 closes of a home spool: `stop()` closes
 sessions one at a time with a per-session timeout before the engine's grace period, so a router
 holding thousands of connections needs more, raised with `SPOOL_MAX_CONNS`. Prereleases ship the
-archive and no package. The exact nginx, acme and firewall steps are written into HOSTING.md from
-the device pass, and this ADR moves to Accepted with it.
+archive and no package. The device pass on 2026-11-08 (an OpenWrt One on 25.12.5) installed the
+`.apk`, ran the service as its user, reloaded a token live and passed the conformance suite over
+loopback, and found two things. OpenWrt's packaging check compares every `NEEDED` entry with what
+the package and its dependencies install, and the binary's libc is `libc.musl-aarch64.so.1`,
+Alpaquita's SONAME, where OpenWrt writes `libc.so`; musl's loader answers any `libc.*` name with
+itself, so the Makefile declares that one name in `extra_provides` and nothing else changes. And
+procd's `no_new_privs` is a flag it passes to ujail, inert without a jail, so the script no longer
+claims it; confinement is the ujail follow-up above. The exact nginx, acme and firewall steps are
+still to be written into HOSTING.md from a device with a public name, and this ADR moves to
+Accepted with them.
 
 The trap is a `SPOOL_*` name in the init script or the example env file that the daemon does not
 read: the daemon warns about it on every boot and the setting silently never happens. Guards:
