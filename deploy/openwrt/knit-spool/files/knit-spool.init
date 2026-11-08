@@ -1,0 +1,103 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# procd service for the knit-spool native binary (ADR 2026-11.zmc3).
+#
+# Two files configure it, and the rule for which is which is one sentence: /etc/config/knit-spool
+# (UCI) holds what the box decides and becomes the daemon's environment; /etc/knit-spool/env holds
+# every other SPOOL_* setting as KEY=value lines and is the daemon's own reload file, so
+# `service knit-spool reload` re-reads it without a restart, and a restart keeps what the last reload
+# installed. A UCI change needs `service knit-spool restart`. The README's configuration table is the
+# contract for the env file; this script never parses a SPOOL_* line itself.
+
+# shellcheck disable=SC2034,SC2154  # START/STOP/USE_PROCD are read by rc.common; config_get assigns the globals
+START=95
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/lib/knit-spool/knit-spool
+LIB=/usr/lib/knit-spool
+
+extra_command "check" "Validate the configuration exactly as the service would boot it"
+
+load_config() {
+	config_load knit-spool
+	config_get_bool enabled main enabled 0
+	config_get port main port 9470
+	config_get bind main bind 127.0.0.1
+	config_get data_dir main data_dir ""
+	config_get env_file main env_file /etc/knit-spool/env
+	config_get heap_mb main heap_mb 128
+	config_get log_level main log_level INFO
+	config_get nofile main nofile 8192
+}
+
+# The UCI half of the environment. Every name here is in the daemon's KNOWN_VARS, and
+# OpenWrtPackageTest in the repository keeps it so.
+export_env() {
+	export SPOOL_PORT="$port"
+	export SPOOL_BIND="$bind"
+	export SPOOL_LOG_LEVEL="$log_level"
+	if [ -n "$data_dir" ]; then
+		export SPOOL_DATA_DIR="$data_dir"
+	else
+		# In-memory store: frames live in the heap, so the watermark has to sit well under it.
+		# 48 MiB against the default 128 MB heap; the env file can still override it.
+		export SPOOL_MAX_BYTES=50331648
+	fi
+	[ -f "$env_file" ] && export SPOOL_RELOAD_FILE="$env_file"
+	return 0
+}
+
+prepare_data_dir() {
+	[ -n "$data_dir" ] || return 0
+	mkdir -p "$data_dir"
+	chown knit-spool:knit-spool "$data_dir"
+	chmod 0750 "$data_dir"
+	# SQLite's WAL churn on every push is the wrong workload for SPI NAND. The NVMe or a USB disk is
+	# where a store belongs; the service runs either way, and says so once.
+	case "$(df -P "$data_dir" 2>/dev/null | awk 'NR == 2 { print $1 }')" in
+		overlayfs:* | /dev/ubi* | /dev/mtdblock*)
+			logger -t knit-spool -p daemon.warn "data_dir $data_dir is on the flash overlay; every push is a flash write. Mount a disk for it."
+			;;
+	esac
+}
+
+start_service() {
+	load_config
+	[ "$enabled" = 1 ] || return 0
+	prepare_data_dir
+	export_env
+
+	procd_open_instance main
+	# The native executable consumes -Xmx and -D before main sees its arguments: the heap cap, and
+	# where the package put the sqlite library.
+	procd_set_param command "$PROG" "-Xmx${heap_mb}m" "-Dorg.sqlite.lib.path=$LIB" "-Dorg.sqlite.lib.name=libsqlitejdbc.so"
+	procd_set_param env SPOOL_PORT="$SPOOL_PORT" SPOOL_BIND="$SPOOL_BIND" SPOOL_LOG_LEVEL="$SPOOL_LOG_LEVEL"
+	[ -n "${SPOOL_DATA_DIR:-}" ] && procd_append_param env SPOOL_DATA_DIR="$SPOOL_DATA_DIR"
+	[ -n "${SPOOL_MAX_BYTES:-}" ] && procd_append_param env SPOOL_MAX_BYTES="$SPOOL_MAX_BYTES"
+	[ -n "${SPOOL_RELOAD_FILE:-}" ] && procd_append_param env SPOOL_RELOAD_FILE="$SPOOL_RELOAD_FILE"
+	procd_set_param user knit-spool
+	procd_set_param group knit-spool
+	procd_set_param limits nofile="$nofile $nofile" core="0"
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# stop() closes every session 1001 one at a time, then gives the engine 2 s of grace and 5 s to
+	# finish: enough for a home spool. A box holding thousands of connections needs more.
+	procd_set_param term_timeout 15
+	procd_set_param no_new_privs 1
+	procd_close_instance
+}
+
+# SIGHUP re-reads the env file (SPOOL_RELOAD_FILE). UCI changes need `restart`, which is why there is
+# no procd_add_reload_trigger here: it would answer a port change with a reload of the wrong file.
+reload_service() {
+	procd_send_signal knit-spool main HUP
+}
+
+check() {
+	load_config
+	export_env
+	"$PROG" check
+}

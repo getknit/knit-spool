@@ -28,6 +28,9 @@ class ProxyConfigTest {
             "deploy/Caddyfile" to Regex("""^\s*respond /metrics 404\s*$""", RegexOption.MULTILINE),
             "deploy/Caddyfile.compose" to Regex("""^\s*respond /metrics 404\s*$""", RegexOption.MULTILINE),
             "deploy/nginx.conf" to Regex("""location = /metrics \{\s*return 404;""", RegexOption.MULTILINE),
+            // Below deploy/, where the listing test does not look, so it is named here by hand (ADR 2026-11.zmc3).
+            "deploy/openwrt/knit-spool/files/nginx-knit-spool.conf" to
+                Regex("""location = /metrics \{\s*return 404;""", RegexOption.MULTILINE),
         )
 
     @Test
