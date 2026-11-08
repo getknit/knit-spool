@@ -33,9 +33,11 @@ class DeployConfigTest {
     /**
      * Deliberately not reachable from `.env`, because compose itself is built from them: it
      * publishes the port and mounts the volume, so letting `.env` move either would break the
-     * proxy or the store rather than configure it. The image pins `SPOOL_DATA_DIR=/data`.
+     * proxy or the store rather than configure it. The image pins `SPOOL_DATA_DIR=/data`, and the
+     * container has to bind every interface for the compose network to reach it, so `SPOOL_BIND`
+     * stays at its default there (ADR 2026-11.zmc3).
      */
-    private val exempt = setOf("SPOOL_PORT", "SPOOL_DATA_DIR")
+    private val exempt = setOf("SPOOL_PORT", "SPOOL_DATA_DIR", "SPOOL_BIND")
 
     private val repoRoot: Path =
         generateSequence(Path.of("").toAbsolutePath()) { it.parent }

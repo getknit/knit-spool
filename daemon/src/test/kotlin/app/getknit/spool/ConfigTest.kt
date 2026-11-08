@@ -108,6 +108,25 @@ class ConfigTest {
         assertEquals("scrape", config(mapOf("SPOOL_METRICS_TOKEN" to "scrape")).metricsToken)
     }
 
+    /**
+     * `SPOOL_BIND` is a literal or nothing (ADR 2026-11.zmc3). A name would make boot wait on a
+     * resolver, so the one failure unrelated to the spool could keep it down; and the case this
+     * exists for, `127.0.0.1` behind a proxy on the same box, never needs one.
+     */
+    @Test
+    fun bindDefaultsToEveryInterfaceAndAcceptsOnlyLiterals() {
+        assertEquals("0.0.0.0", config(emptyMap()).bind)
+        assertEquals("0.0.0.0", config(mapOf("SPOOL_BIND" to "")).bind)
+        listOf("0.0.0.0", "127.0.0.1", "192.168.1.1", "::", "::1", "fe80::1", "::ffff:10.0.0.1").forEach { literal ->
+            assertEquals(literal, config(mapOf("SPOOL_BIND" to literal)).bind, literal)
+        }
+        listOf("localhost", "spool.example", "999.1.1.1", "0.0.0.0:9470", "fe80::1%eth0", "1:2:3:4:5:6:7:8:9", "[::1]")
+            .forEach { bad ->
+                val failure = assertFailsWith<IllegalArgumentException>(bad) { config(mapOf("SPOOL_BIND" to bad)) }
+                assertTrue(failure.message!!.contains("SPOOL_BIND"), failure.message!!)
+            }
+    }
+
     @Test
     fun commonsIsOffByDefault() {
         assertNull(config(emptyMap()).commons)

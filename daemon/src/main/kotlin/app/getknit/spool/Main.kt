@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory
 import sun.misc.Signal
 import sun.misc.SignalHandler
 import java.io.IOException
+import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
@@ -41,6 +42,7 @@ private val TURN_SERVER_KEYS = listOf("SECRET", "URLS")
 internal val KNOWN_VARS =
     setOf(
         "SPOOL_PORT",
+        "SPOOL_BIND",
         "SPOOL_TOKEN",
         "SPOOL_TOKEN_NEXT",
         "SPOOL_METRICS_TOKEN",
@@ -270,7 +272,7 @@ internal fun checkConfig(environment: Map<String, String>): Int {
             }
             "sqlite:$dataDir"
         }
-    println("${config.describe()} store=$store")
+    println("${config.describe()} store=$store runtime=${BuildInfo.runtime}")
     return 0
 }
 
@@ -527,6 +529,7 @@ internal fun configFromEnv(
     }
     return SpoolServer.Config(
         port = intVar(env, "SPOOL_PORT", default = 9470, min = 1, max = 65_535),
+        bind = bindFromEnv(env),
         token = token,
         tokenNext = tokenNext,
         metricsToken = env("SPOOL_METRICS_TOKEN")?.takeIf { it.isNotEmpty() },
@@ -955,6 +958,32 @@ private fun commonsRateTotalFromEnv(
 }
 
 private fun unhex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(radix = 16).toByte() }
+
+/**
+ * What `SPOOL_BIND` may be: a dotted quad with every octet in range, or something shaped like an
+ * IPv6 literal. The IPv4 half is strict so that nothing it matches ever reaches a resolver; the IPv6
+ * half is loose and leaves the parsing to the JDK, bracketed so a near-miss is refused as a bad
+ * literal rather than looked up as a name.
+ */
+private val BIND_LITERAL = Regex("""^((25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}|[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*)$""")
+
+/**
+ * `SPOOL_BIND`: the address the listener binds, a literal only. `0.0.0.0`, the default, is every
+ * interface, as every spool before this knob ran; `127.0.0.1` keeps a plaintext listener off the LAN
+ * on a box that terminates TLS itself, which is the appliance shape (ADR 2026-11.zmc3). A name is
+ * refused rather than resolved: a boot that waits on a resolver fails for reasons unrelated to the
+ * spool, and the one case this exists for never needs one.
+ */
+private fun bindFromEnv(env: (String) -> String?): String {
+    val raw = env("SPOOL_BIND")?.takeIf { it.isNotEmpty() } ?: return SpoolServer.Config.DEFAULT_BIND
+    // Brackets make the JDK treat a colon-bearing string as an IPv6 literal or nothing; without
+    // them a malformed one falls through to a DNS lookup of the text.
+    val probe = if (':' in raw) "[$raw]" else raw
+    require(BIND_LITERAL.matches(raw) && runCatching { InetAddress.getByName(probe) }.isSuccess) {
+        "SPOOL_BIND must be a literal IPv4 or IPv6 address such as 0.0.0.0, 127.0.0.1 or ::1, got \"$raw\""
+    }
+    return raw
+}
 
 private fun intVar(
     env: (String) -> String?,

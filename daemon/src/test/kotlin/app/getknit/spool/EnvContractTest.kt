@@ -61,10 +61,10 @@ class EnvContractTest {
 
     private companion object {
         /**
-         * The development version and the contract's fingerprint at it. 0.9.0-dev.2 adds
-         * `SPOOL_MAX_SCOPE_SUBSCRIBERS` to the reloadable half (ADR 2026-10.fxcs).
+         * The development version and the contract's fingerprint at it. 0.9.0-dev.3 adds `SPOOL_BIND`
+         * to the boot-only half (ADR 2026-11.zmc3).
          */
-        val PINNED = "0.9.0-dev.2" to "935d54a5693f45c3"
+        val PINNED = "0.9.0-dev.3" to "2e5155c08235a2f4"
 
         /** RFC 8032 §7.1 TEST 1's public key, unpadded base64url, as `ticket-keygen` prints one. */
         val TICKET_KEY: String =

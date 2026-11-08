@@ -32,6 +32,12 @@ document:
   immediately; a lower cap closes nobody already subscribed. New metric
   `knit_spool_subs_crowded_total`. No record, error code or `hello` key changed. The development
   version moves to `0.9.0-dev.2` with the new variable.
+- **A bind address** (`SPOOL_BIND`, default `0.0.0.0`; ADR 2026-11.zmc3). A Spool that terminates
+  TLS on the same box, an appliance such as a router, can keep its plaintext listener on
+  `127.0.0.1` instead of every interface. A literal IPv4 or IPv6 address only; a name refuses to
+  boot. Boot-only. The first startup line and `knit-spool check` now also name the runtime (`jvm`,
+  or `native` for a GraalVM native image; ADR 2026-11.bxce). The development version moves to
+  `0.9.0-dev.3` with the new variable.
 
 ## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
 

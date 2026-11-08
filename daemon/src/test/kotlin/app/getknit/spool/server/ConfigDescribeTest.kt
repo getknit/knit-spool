@@ -20,6 +20,9 @@ class ConfigDescribeTest {
         val fields = fields(testConfig().describe())
         // The harness configures port 0 and reads the bound port back; SPOOL_PORT itself is >= 1.
         assertEquals("0", fields["port"])
+        // Boot-only like the port: the listener is built from it (ADR 2026-11.zmc3).
+        assertEquals("0.0.0.0", fields["bind"])
+        assertTrue("bind" in testConfig().bootOnly())
         assertEquals("0", fields["pow"])
         assertEquals("1024", fields["maxBlob"])
         assertEquals("4", fields["maxScopes"])
