@@ -32,6 +32,8 @@ growing an explanation, that explanation belongs in the ADR.
 | several TURN servers: `SPOOL_TURN_<n>_*`, `turnFromEnv`, `TurnConfig.select`, `TurnUris`, `hello`'s `turnHosts`, `turnreq`'s `host`, or `knit_spool_turn_issued_total`'s `server` label | [ADR 2026-10.u5f4](../memory/decisions/2026-10-u5f4-a-spool-signs-for-up.md) |
 | the conformance runner's HTTP engine, `conformanceHttpClient`, a `ktor-client-*` dependency in `:conformance`, or how `SpoolClient` classifies a dead connection | [ADR 2026-10.3kgr](../memory/decisions/2026-10-3kgr-the-conformance-runner-speaks-websocket.md) |
 | public wording about money, supporters or ticket holders: the README's Support section, "hobby", or prose that says who pays for TURN or files | [ADR 2026-10.zm4z](../memory/decisions/2026-10-zm4z-public-copy-names-supporters.md) |
+| `graalvmNative`, `nativeCompile`, `nativeDistTar`, `-march`, `META-INF/native-image`, `scripts/native*`, the serialization plugin outside `:protocol`, `--install-exit-handlers` or `BuildInfo.runtime` | [ADR 2026-11.bxce](../memory/decisions/2026-11-bxce-a-native-aarch64-musl-binary.md) |
+| `deploy/openwrt/`, `knit-spool.init`, `USERID`, an `.apk` or `.ipk`, `SPOOL_BIND`, or nginx on the router | [ADR 2026-11.zmc3](../memory/decisions/2026-11-zmc3-openwrt-gets-a-procd-service.md) |
 
 ## Where they live
 
