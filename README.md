@@ -884,7 +884,8 @@ JDK 21 — the Gradle wrapper pins Gradle 9.8.2.
 SQLite), and the full server integration tests.
 
 The native aarch64 binary builds only on an arm64 host with Docker, inside the Liberica NIK musl
-container, and is proved against a plain Alpine container the way every pull request proves it:
+container, and is proved against a plain Alpine container the way every pull request proves it (an
+x86_64 box compiles the image for itself with the same script, archive aside; its header says how):
 
 ```sh
 scripts/native/build.sh -PspoolCommit="$(git rev-parse HEAD)"   # -> daemon/build/distributions/*-linux-aarch64-musl.tar.gz

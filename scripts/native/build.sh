@@ -1,25 +1,35 @@
 #!/usr/bin/env bash
 # Builds the aarch64 musl native binary inside the Liberica NIK musl container (ADR 2026-11.bxce).
 #
-# native-image cannot cross-compile and no musl toolchain for it exists outside BellSoft's, so this
-# runs only on an arm64 host with Docker: a GitHub `ubuntu-24.04-arm` runner, or a Hetzner CAX box
-# for the dev loop. Not a job-level `container:` in CI, because the runner's JavaScript actions do
-# not run inside a musl container; the build is the only thing that happens in there.
+# native-image cannot cross-compile and no musl toolchain for it exists outside BellSoft's, so the
+# archive comes only from an arm64 host with Docker: a GitHub `ubuntu-24.04-arm` runner, or a Hetzner
+# CAX box for the dev loop. Not a job-level `container:` in CI, because the runner's JavaScript
+# actions do not run inside a musl container; the build is the only thing that happens in there.
+#
+# On an x86_64 box the same container compiles the same image for that box (`:daemon:nativeCompile`,
+# no archive): everything but the instruction set breaks there first, in about a minute. Tar
+# daemon/build/native/nativeCompile/{knit-spool,libsqlitejdbc.so} plus LICENSE and
+# THIRD-PARTY-NOTICES.md under knit-spool-<version>/ and scripts/native-acceptance.sh takes it.
 #
 # The container runs as the invoking user, so the workspace does not come back root-owned, and keeps
 # Gradle's home inside the workspace (`.gradle-home/`, gitignored) so CI can cache it.
 #
 #   scripts/native/build.sh [extra gradle args]
 #   scripts/native/build.sh -PspoolVersion=0.9.0 -PspoolCommit="$(git rev-parse HEAD)"
+#   scripts/native/build.sh "-PspoolNativeArgs=--trace-class-initialization=a.b.C"   # one diagnostic build
 #
 # Output: daemon/build/distributions/knit-spool-<version>-linux-aarch64-musl.tar.gz, and
 # conformance/build/install/knit-spool-conformance/ (the JVM runner scripts/native-acceptance.sh drives).
 set -euo pipefail
 
 case "$(uname -m)" in
-  aarch64 | arm64) ;;
+  aarch64 | arm64) targets=(:daemon:nativeDistTar :conformance:installDist) ;;
+  x86_64)
+    echo "scripts/native/build.sh: x86_64 host, so :daemon:nativeCompile for this box and no aarch64 archive" >&2
+    targets=(:daemon:nativeCompile :conformance:installDist)
+    ;;
   *)
-    echo "scripts/native/build.sh: builds the aarch64 archive, so it must run on an arm64 host, not $(uname -m)" >&2
+    echo "scripts/native/build.sh: no musl native-image toolchain exists for $(uname -m)" >&2
     exit 2
     ;;
 esac
@@ -43,4 +53,4 @@ exec docker run --rm \
   -v "$root:/w" -w /w \
   "$image" \
   ./gradlew --no-daemon --no-watch-fs -Pkotlin.compiler.execution.strategy=in-process \
-  :daemon:nativeDistTar :conformance:installDist "$@"
+  "${targets[@]}" "$@"

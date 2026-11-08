@@ -32,6 +32,18 @@ scripts/native/build.sh -PspoolCommit="$(git rev-parse HEAD)"   # -> daemon/buil
 scripts/native-acceptance.sh daemon/build/distributions/knit-spool-*-linux-aarch64-musl.tar.gz "$(git rev-parse HEAD)"
 ```
 
+On an x86_64 box `build.sh` compiles the same image for that box instead (no archive), and the
+acceptance script takes it once tarred up in the archive's layout: everything but the instruction
+set breaks here first, in about a minute. `-PspoolNativeArgs` passes extra native-image options to
+one diagnostic build.
+
+```sh
+scripts/native/build.sh                            # x86_64: -> daemon/build/native/nativeCompile/{knit-spool,libsqlitejdbc.so}
+d=/tmp/ks/knit-spool-local; mkdir -p "$d" && cp daemon/build/native/nativeCompile/{knit-spool,libsqlitejdbc.so} LICENSE THIRD-PARTY-NOTICES.md "$d"
+tar -czf /tmp/ks/local.tar.gz -C /tmp/ks knit-spool-local && SPOOL_PORT=9477 scripts/native-acceptance.sh /tmp/ks/local.tar.gz unknown
+scripts/native/build.sh "-PspoolNativeArgs=--trace-class-initialization=kotlin.DeprecationLevel"
+```
+
 Architecture decision records (see [`../rules/decisions.md`](../rules/decisions.md)):
 
 ```sh

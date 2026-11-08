@@ -10,6 +10,10 @@
 # build lost nothing on the way — the build stamp, run-time log levels, signal handling, the JNI
 # store, the crypto providers and the whole conformance suite.
 #
+# An x86_64 box gets the same run against its own `nativeCompile` output (tarred up by hand in the
+# archive's layout), with musl's x86_64 libc name expected and no LSE scan: everything but the
+# instruction set is the same question, and it answers in a minute instead of a CI round trip.
+#
 # Environment: SPOOL_PORT (default 9470), RUN_IMAGE (default alpine:3.21, pinned by digest below),
 # CONFORMANCE (the runner's bin script, default the installDist path), ACCEPTANCE_OUT (a directory to
 # copy the TAP, the daemon log and the RSS figures into, for a CI artifact), KEEP=1 to keep the work dir.
@@ -55,23 +59,32 @@ echo "archive: $(du -h "$tarball" | cut -f1), binary: $(du -h "$bin" | cut -f1),
 
 # ---- static facts about the binary ----------------------------------------------------------------
 
+host=$(uname -m)
+case "$host" in
+  aarch64) machine=AArch64 ;;
+  x86_64) machine='Advanced Micro Devices X86-64' ;;
+  *) echo "native-acceptance: no musl native build exists for $host" >&2; exit 2 ;;
+esac
+
 step "NEEDED: only musl's libc and zlib, which the OpenWrt package depends on"
 needed=$(readelf -d "$bin" | awk '/\(NEEDED\)/ { gsub(/[][]/, "", $NF); print $NF }' | sort | xargs)
 echo "$needed"
-[ "$needed" = "libc.musl-aarch64.so.1 libz.so.1" ] || fail "unexpected NEEDED set: $needed"
-readelf -h "$bin" | grep -q 'Machine:.*AArch64' || fail "not an AArch64 binary"
+[ "$needed" = "libc.musl-$host.so.1 libz.so.1" ] || fail "unexpected NEEDED set: $needed"
+readelf -h "$bin" | grep -q "Machine:.*$machine" || fail "not a $machine binary"
 
-step "no LSE atomics outside GCC's outline-atomics helpers (the Cortex-A53 has none)"
-# -march=armv8-a leaves the helpers (`__aarch64_ldadd4_acq_rel` and friends) in, because the JDK's
-# static libraries were compiled with -moutline-atomics; those bodies pick LSE or LL/SC at run time
-# behind a HWCAP check and are safe. Anything else using an LSE mnemonic would abort on the device.
-lse=$(objdump -d --no-show-raw-insn "$bin" | awk '
-  /^[0-9a-f]+ <.*>:$/ { skip = ($0 ~ /<__aarch64_/) ; next }
-  !skip && $2 ~ /^(cas|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|swp)[a-z]*$/ { print; n++ }
-  END { print n + 0 > "/dev/stderr" }' 2>"$work/lse-count")
-count=$(cat "$work/lse-count")
-echo "LSE instructions outside the helpers: $count"
-[ "$count" = 0 ] || { echo "$lse" | head -20; fail "the image was not built with -march=armv8-a"; }
+if [ "$host" = aarch64 ]; then
+  step "no LSE atomics outside GCC's outline-atomics helpers (the Cortex-A53 has none)"
+  # -march=armv8-a leaves the helpers (`__aarch64_ldadd4_acq_rel` and friends) in, because the JDK's
+  # static libraries were compiled with -moutline-atomics; those bodies pick LSE or LL/SC at run time
+  # behind a HWCAP check and are safe. Anything else using an LSE mnemonic would abort on the device.
+  lse=$(objdump -d --no-show-raw-insn "$bin" | awk '
+    /^[0-9a-f]+ <.*>:$/ { skip = ($0 ~ /<__aarch64_/) ; next }
+    !skip && $2 ~ /^(cas|ldadd|ldclr|ldeor|ldset|ldsmax|ldsmin|ldumax|ldumin|swp)[a-z]*$/ { print; n++ }
+    END { print n + 0 > "/dev/stderr" }' 2>"$work/lse-count")
+  count=$(cat "$work/lse-count")
+  echo "LSE instructions outside the helpers: $count"
+  [ "$count" = 0 ] || { echo "$lse" | head -20; fail "the image was not built with -march=armv8-a"; }
+fi
 
 # ---- the binary on a plain musl box -----------------------------------------------------------------
 
