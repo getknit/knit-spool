@@ -16,3 +16,10 @@ updates:
     groups:
       gradle:
         patterns: ['*']
+
+  # The FROM line of the native build's toolchain image (scripts/native/Dockerfile): a reference
+  # inside a shell script would be invisible here, which is why the image has a Dockerfile at all.
+  - package-ecosystem: docker
+    directory: /scripts/native
+    schedule:
+      interval: weekly
