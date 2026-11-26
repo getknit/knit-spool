@@ -1,16 +1,16 @@
 [versions]
 kotlin = "2.4.21"
-ktor = "3.6.0"
-kotlinxSerialization = "1.12.0"
+ktor = "3.6.1"
+kotlinxSerialization = "1.13.0"
 kotlinxCoroutines = "1.11.0"
-logback = "1.6.6"
-sqliteJdbc = "3.53.4.0"
+logback = "1.6.8"
+sqliteJdbc = "3.54.1.0"
 ktlintPlugin = "14.2.0"
 ktlintTool = "1.8.0"
 kover = "0.9.11"
 # native-build-tools: the Gradle side of GraalVM native-image (ADR 2026-11.bxce). Only :daemon:nativeCompile
 # and :daemon:nativeDistTar use it, and only inside the Liberica NIK musl container on an arm64 host.
-graalvmBuildtools = "1.1.18"
+graalvmBuildtools = "1.1.19"
 # detekt's 2.0 line is the first that runs on Gradle 9 (1.23.x caps at Gradle 8.12.1), so an alpha it
 # is — pinned exactly, since the rule set and the config schema can still move between alphas. The
 # plugin id moved to `dev.detekt` with 2.0 (was io.gitlab.arturbosch.detekt). Kept on the same version
