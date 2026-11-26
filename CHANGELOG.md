@@ -10,7 +10,7 @@ product:
   versioning: semver
   category: Developer Tools
 document:
-  updated: 2026-10-28T11:49:25Z
+  updated: 2026-11-26T10:52:19Z
   coverage: complete
   canonical: https://github.com/getknit/knit-spool/blob/main/CHANGELOG.md
   locale: en
@@ -53,12 +53,7 @@ document:
 
 ### Changed
 
-- **Dependencies updated, and images rebuilt on a JDK that fixes Java4Shell.** Ktor 3.6.2,
-  kotlinx.serialization 1.13.0, Logback 1.6.8, sqlite-jdbc 3.54.1.0 (SQLite 3.54.1) and the GraalVM
-  native build tools 1.1.20; the build runs on Gradle 9.9.2. Images built from now on carry Temurin
-  21.0.13.1, which fixes CVE-2026-114938 in the JVM's AVX-512 Base64 decoder (x86-64 hosts with
-  AVX-512 VBMI only). The Spool only decodes base64 in its own configuration and command-line tools,
-  never from the network. The wire is unchanged: the spec vectors still match byte for byte.
+- **GraalVM native build tools 1.1.20.** The rest of this round of updates shipped in 0.8.1.
 - **The serialization plugin applies to every module.** The record codec inlined into `:daemon`
   and `:conformance` now compiles to `T.serializer()` instead of a reflective lookup by type. No
   behaviour changes on the JVM; it is what lets the native image find every serializer at build
@@ -68,6 +63,26 @@ document:
   through kotlin-reflect's classpath probing, which a native image built with strict registration
   refuses. The dist archives and the image lose one jar; behaviour on the JVM is unchanged, and
   the same test keeps it off.
+
+## [0.8.1](https://github.com/getknit/knit-spool/releases/tag/v0.8.1) — 2026-11-26T10:52:19Z
+
+> A security maintenance release. The images are rebuilt on Temurin 21.0.13.1, which fixes
+> CVE-2026-114938 ("Java4Shell"), a heap overflow in the JVM's AVX-512 Base64 decoder on x86-64
+> hosts with AVX-512 VBMI. The Spool only decodes base64 in its own configuration and command-line
+> tools, never from the network, but every image before this one ships the affected JVM. The wire
+> and the environment contract are unchanged from 0.8.0, so a 0.8.0 Spool upgrades in place.
+
+### Changed
+
+- **Dependencies updated.** Ktor 3.6.2, kotlinx.serialization 1.13.0, Logback 1.6.8 and
+  sqlite-jdbc 3.54.1.0 (SQLite 3.54.1); the build runs on Gradle 9.9.2. The wire is unchanged: the
+  spec vectors still match byte for byte.
+
+### Security
+
+- **The images carry Temurin 21.0.13.1** (CVE-2026-114938). An operator who cannot move to this
+  image yet can start the JVM with `JAVA_TOOL_OPTIONS=-XX:-UseBASE64Intrinsics`, which takes the
+  affected code path out of use.
 
 ## [0.8.0](https://github.com/getknit/knit-spool/releases/tag/v0.8.0) — 2026-10-28T11:49:25Z
 
