@@ -53,6 +53,12 @@ document:
 
 ### Changed
 
+- **Dependencies updated, and images rebuilt on a JDK that fixes Java4Shell.** Ktor 3.6.2,
+  kotlinx.serialization 1.13.0, Logback 1.6.8, sqlite-jdbc 3.54.1.0 (SQLite 3.54.1) and the GraalVM
+  native build tools 1.1.20; the build runs on Gradle 9.9.2. Images built from now on carry Temurin
+  21.0.13.1, which fixes CVE-2026-114938 in the JVM's AVX-512 Base64 decoder (x86-64 hosts with
+  AVX-512 VBMI only). The Spool only decodes base64 in its own configuration and command-line tools,
+  never from the network. The wire is unchanged: the spec vectors still match byte for byte.
 - **The serialization plugin applies to every module.** The record codec inlined into `:daemon`
   and `:conformance` now compiles to `T.serializer()` instead of a reflective lookup by type. No
   behaviour changes on the JVM; it is what lets the native image find every serializer at build
